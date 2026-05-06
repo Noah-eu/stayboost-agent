@@ -17,6 +17,30 @@ export type OfferAngle =
     | 'guest-communication'
     | 'guest-guide';
 
+export interface LeadCandidate {
+    id: string;
+    name: string;
+    city: string;
+    accommodationType: AccommodationType;
+    email: string;
+    url: string;
+    sourceNotes: string;
+    reviewSnippets: string;
+    signals: string[];
+    score: number;
+    recommendedOfferAngle: OfferAngle;
+    addedLeadId?: string;
+}
+
+export interface LeadSearchSession {
+    cityOrArea: string;
+    accommodationType: AccommodationType | '';
+    targetSegment: string;
+    notes: string;
+    sourceText: string;
+    candidates: LeadCandidate[];
+}
+
 export interface Lead {
     id: string;
     name: string;

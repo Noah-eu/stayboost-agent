@@ -1,12 +1,23 @@
-import { Clipboard, ClipboardCheck, LayoutDashboard, Mail, Plus, Save, Send, Sparkles, Users } from 'lucide-react';
+import { Clipboard, ClipboardCheck, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
+import { leadFinderMockText, parseLeadCandidates, recommendedSearchQueries } from './leadScoring';
 import { mockLeads } from './mockData';
-import { accommodationTypes, Lead, leadStatuses, LeadStatus, offerAngleLabels, OfferAngle } from './types';
+import {
+    accommodationTypes,
+    Lead,
+    LeadCandidate,
+    LeadSearchSession,
+    leadStatuses,
+    LeadStatus,
+    offerAngleLabels,
+    OfferAngle,
+} from './types';
 
-type Screen = 'dashboard' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
+type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
 
 const storageKey = 'stayboost-agent-leads';
+const finderStorageKey = 'stayboost-agent-lead-finder';
 
 const emptyLead = (): Lead => ({
     id: `lead-${crypto.randomUUID()}`,
@@ -40,6 +51,7 @@ const emptyLead = (): Lead => ({
 
 const screenLabels: Record<Screen, string> = {
     dashboard: 'Dashboard',
+    finder: 'Lead Finder',
     leads: 'Leady',
     detail: 'Detail leadu',
     audit: 'Mini-audit',
@@ -49,6 +61,7 @@ const screenLabels: Record<Screen, string> = {
 
 const screenIcons: Record<Screen, typeof LayoutDashboard> = {
     dashboard: LayoutDashboard,
+    finder: Search,
     leads: Users,
     detail: ClipboardCheck,
     audit: Sparkles,
@@ -73,6 +86,21 @@ const normalizeLead = (lead: Partial<Lead>): Lead => ({
     selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
 });
 
+const emptyLeadSearchSession = (): LeadSearchSession => ({
+    cityOrArea: '',
+    accommodationType: '',
+    targetSegment: '',
+    notes: '',
+    sourceText: leadFinderMockText,
+    candidates: [],
+});
+
+const normalizeSearchSession = (session: Partial<LeadSearchSession>): LeadSearchSession => ({
+    ...emptyLeadSearchSession(),
+    ...session,
+    candidates: session.candidates ?? [],
+});
+
 function App() {
     const [leads, setLeads] = useState<Lead[]>(() => {
         const storedLeads = localStorage.getItem(storageKey);
@@ -92,10 +120,27 @@ function App() {
     const [draftLead, setDraftLead] = useState<Lead>(() => leads[0] ?? emptyLead());
     const [isCreating, setIsCreating] = useState(false);
     const [copiedTextId, setCopiedTextId] = useState('');
+    const [leadSearchSession, setLeadSearchSession] = useState<LeadSearchSession>(() => {
+        const storedSession = localStorage.getItem(finderStorageKey);
+
+        if (!storedSession) {
+            return emptyLeadSearchSession();
+        }
+
+        try {
+            return normalizeSearchSession(JSON.parse(storedSession) as Partial<LeadSearchSession>);
+        } catch {
+            return emptyLeadSearchSession();
+        }
+    });
 
     useEffect(() => {
         localStorage.setItem(storageKey, JSON.stringify(leads));
     }, [leads]);
+
+    useEffect(() => {
+        localStorage.setItem(finderStorageKey, JSON.stringify(leadSearchSession));
+    }, [leadSearchSession]);
 
     const selectedLead = useMemo(
         () => leads.find((lead) => lead.id === selectedLeadId) ?? leads[0],
@@ -158,6 +203,70 @@ function App() {
         persistLead(draftLead);
     };
 
+    const updateLeadSearchSession = <Field extends keyof LeadSearchSession>(field: Field, value: LeadSearchSession[Field]) => {
+        setLeadSearchSession((currentSession) => ({ ...currentSession, [field]: value }));
+    };
+
+    const parseCandidates = () => {
+        setLeadSearchSession((currentSession) => ({
+            ...currentSession,
+            candidates: parseLeadCandidates(currentSession.sourceText, currentSession),
+        }));
+    };
+
+    const loadMockCandidates = () => {
+        setLeadSearchSession((currentSession) => ({
+            ...currentSession,
+            cityOrArea: currentSession.cityOrArea || 'Praha / Cesky Krumlov / Brno',
+            accommodationType: currentSession.accommodationType || 'Apartman',
+            targetSegment: currentSession.targetSegment || 'mensi ubytovani s verejnym kontaktem a operacnimi signaly',
+            sourceText: leadFinderMockText,
+            candidates: parseLeadCandidates(leadFinderMockText, currentSession),
+        }));
+    };
+
+    const addCandidateToLeads = (candidate: LeadCandidate) => {
+        const nextLead: Lead = {
+            ...emptyLead(),
+            id: `lead-${crypto.randomUUID()}`,
+            name: candidate.name,
+            accommodationType: candidate.accommodationType,
+            city: candidate.city,
+            websiteOrOtaUrl: candidate.url,
+            publicProfileUrl: candidate.url,
+            email: candidate.email,
+            status: 'Novy',
+            notes: `Lead Finder kandidat. Segment: ${leadSearchSession.targetSegment || 'neuvedeno'}. ${candidate.sourceNotes}`,
+            publicSignals: candidate.signals,
+            quickWins: [
+                'Zkontrolovat prvni dojem verejne nabidky.',
+                'Projit prvnich pet fotografii a hlavni popis.',
+                'Overit, jestli jsou jasne instrukce k prijezdu, parkovani a check-inu.',
+            ],
+            proposedQuickWins: [
+                'Zkontrolovat prvni dojem verejne nabidky.',
+                'Projit prvnich pet fotografii a hlavni popis.',
+                'Overit, jestli jsou jasne instrukce k prijezdu, parkovani a check-inu.',
+            ],
+            reviewSignals: candidate.reviewSnippets,
+            guestFrictionSignals: candidate.signals.join('\n'),
+            risks: candidate.sourceNotes,
+            selectedOfferAngle: candidate.recommendedOfferAngle,
+        };
+
+        setLeads((currentLeads) => [nextLead, ...currentLeads]);
+        setSelectedLeadId(nextLead.id);
+        setDraftLead(nextLead);
+        setIsCreating(false);
+        setLeadSearchSession((currentSession) => ({
+            ...currentSession,
+            candidates: currentSession.candidates.map((currentCandidate) =>
+                currentCandidate.id === candidate.id ? { ...currentCandidate, addedLeadId: nextLead.id } : currentCandidate,
+            ),
+        }));
+        setActiveScreen('leads');
+    };
+
     const generateText = (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => {
         const generators = {
             generatedMiniAudit: generateMiniAudit,
@@ -203,6 +312,18 @@ function App() {
     const renderScreen = () => {
         if (activeScreen === 'dashboard') {
             return <Dashboard leads={leads} stats={stats} onSelectLead={selectLead} />;
+        }
+
+        if (activeScreen === 'finder') {
+            return (
+                <LeadFinderPanel
+                    onAddCandidate={addCandidateToLeads}
+                    onLoadMockCandidates={loadMockCandidates}
+                    onParseCandidates={parseCandidates}
+                    onUpdateSession={updateLeadSearchSession}
+                    session={leadSearchSession}
+                />
+            );
         }
 
         if (activeScreen === 'leads') {
@@ -358,6 +479,166 @@ function Dashboard({ leads, stats, onSelectLead }: DashboardProps) {
                         </button>
                     ))}
                 </div>
+            </div>
+        </section>
+    );
+}
+
+interface LeadFinderPanelProps {
+    session: LeadSearchSession;
+    onUpdateSession: <Field extends keyof LeadSearchSession>(field: Field, value: LeadSearchSession[Field]) => void;
+    onParseCandidates: () => void;
+    onLoadMockCandidates: () => void;
+    onAddCandidate: (candidate: LeadCandidate) => void;
+}
+
+function LeadFinderPanel({ onAddCandidate, onLoadMockCandidates, onParseCandidates, onUpdateSession, session }: LeadFinderPanelProps) {
+    return (
+        <section className="finder-layout">
+            <div className="panel form-panel finder-form">
+                <div className="panel-header">
+                    <div>
+                        <p className="eyebrow">Rucni/poloautomaticky vstup</p>
+                        <h2>Lead Finder</h2>
+                    </div>
+                    <div className="button-group">
+                        <button className="secondary-button" onClick={onLoadMockCandidates} type="button">
+                            <Sparkles size={18} aria-hidden="true" />
+                            Nacist mock priklady
+                        </button>
+                        <button className="primary-button" onClick={onParseCandidates} type="button">
+                            <Search size={18} aria-hidden="true" />
+                            Vytvorit kandidaty
+                        </button>
+                    </div>
+                </div>
+
+                <div className="scope-note">
+                    Kandidati jsou pouze navrhy ke schvaleni clovekem. Aplikace nic nescrapuje, nikam se nepripojuje a nikoho automaticky nekontaktuje.
+                </div>
+
+                <div className="form-grid">
+                    <label>
+                        Mesto / oblast
+                        <input value={session.cityOrArea} onChange={(event) => onUpdateSession('cityOrArea', event.target.value)} />
+                    </label>
+                    <label>
+                        Typ ubytovani
+                        <select
+                            value={session.accommodationType}
+                            onChange={(event) => onUpdateSession('accommodationType', event.target.value as LeadSearchSession['accommodationType'])}
+                        >
+                            <option value="">Libovolny</option>
+                            {accommodationTypes.map((type) => (
+                                <option key={type} value={type}>
+                                    {type}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label>
+                        Cilovy segment
+                        <input value={session.targetSegment} onChange={(event) => onUpdateSession('targetSegment', event.target.value)} />
+                    </label>
+                    <label>
+                        Poznamky
+                        <input value={session.notes} onChange={(event) => onUpdateSession('notes', event.target.value)} />
+                    </label>
+                    <label className="full-width">
+                        Zdrojovy text nebo rucne vlozene vysledky hledani
+                        <textarea
+                            value={session.sourceText}
+                            onChange={(event) => onUpdateSession('sourceText', event.target.value)}
+                            rows={14}
+                        />
+                    </label>
+                </div>
+            </div>
+
+            <aside className="panel query-box">
+                <p className="eyebrow">Inspirace</p>
+                <h2>Doporucene vyhledavaci dotazy</h2>
+                <div className="query-list">
+                    {recommendedSearchQueries.map((query) => (
+                        <button
+                            className="query-chip"
+                            key={query}
+                            onClick={() => onUpdateSession('notes', `${session.notes ? `${session.notes}\n` : ''}${query}`)}
+                            type="button"
+                        >
+                            {query}
+                        </button>
+                    ))}
+                </div>
+            </aside>
+
+            <div className="panel finder-results">
+                <div className="panel-header">
+                    <div>
+                        <p className="eyebrow">Kandidati ke schvaleni</p>
+                        <h2>Vyhodnocene nalezy</h2>
+                    </div>
+                    <span className="status-pill">{session.candidates.length} kandidatu</span>
+                </div>
+
+                {session.candidates.length === 0 ? (
+                    <div className="empty-state compact-empty">
+                        <h2>Zatim nejsou vytvoreni zadni kandidati</h2>
+                        <p>Vloz zdrojovy text nebo nacti mock priklady a spust vytvoreni kandidatu.</p>
+                    </div>
+                ) : (
+                    <div className="table-wrap">
+                        <table className="candidate-table">
+                            <thead>
+                                <tr>
+                                    <th>Nazev</th>
+                                    <th>Mesto</th>
+                                    <th>Typ</th>
+                                    <th>Kontakt</th>
+                                    <th>URL</th>
+                                    <th>Signaly</th>
+                                    <th>Skore</th>
+                                    <th>Uhel</th>
+                                    <th>Akce</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {session.candidates.map((candidate) => (
+                                    <tr key={candidate.id}>
+                                        <td>
+                                            <strong>{candidate.name}</strong>
+                                            <small>{candidate.sourceNotes.slice(0, 120)}</small>
+                                        </td>
+                                        <td>{candidate.city || 'Neuvedeno'}</td>
+                                        <td>{candidate.accommodationType}</td>
+                                        <td>{candidate.email || 'Nenalezen'}</td>
+                                        <td>{candidate.url || 'Nenalezeno'}</td>
+                                        <td>
+                                            <div className="signal-list">
+                                                {candidate.signals.length > 0 ? candidate.signals.map((signal) => <span key={signal}>{signal}</span>) : <span>Bez signalu</span>}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <strong className="score-value">{candidate.score}</strong>
+                                        </td>
+                                        <td>{offerAngleLabels[candidate.recommendedOfferAngle]}</td>
+                                        <td>
+                                            <button
+                                                className="secondary-button compact-button"
+                                                disabled={Boolean(candidate.addedLeadId)}
+                                                onClick={() => onAddCandidate(candidate)}
+                                                type="button"
+                                            >
+                                                <Plus size={16} aria-hidden="true" />
+                                                {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
         </section>
     );

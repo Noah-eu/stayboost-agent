@@ -176,6 +176,22 @@ h2 {
     gap: 18px;
 }
 
+.finder-layout {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.finder-form,
+.finder-results {
+    max-width: none;
+    min-width: 0;
+}
+
+.finder-results {
+    grid-column: 1 / -1;
+}
+
 .screen-grid {
     display: grid;
     gap: 16px;
@@ -302,6 +318,45 @@ tbody tr:hover,
     padding: 6px 10px;
 }
 
+.score-value {
+    color: #176b57;
+    font-size: 1.18rem;
+}
+
+.signal-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 220px;
+}
+
+.signal-list span {
+    background: #f1f6f4;
+    border: 1px solid #dce5e6;
+    border-radius: 999px;
+    color: #314147;
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 5px 8px;
+}
+
+.candidate-table {
+    min-width: 1180px;
+}
+
+.compact-button {
+    min-height: 36px;
+    padding: 7px 10px;
+    white-space: nowrap;
+}
+
+.compact-button:disabled {
+    color: #7c8b8f;
+    cursor: not-allowed;
+    opacity: 0.72;
+}
+
 .form-panel {
     max-width: 1100px;
 }
@@ -367,6 +422,54 @@ textarea:focus {
     min-height: 260px;
 }
 
+.compact-empty {
+    box-shadow: none;
+    min-height: 150px;
+    padding: 18px;
+}
+
+.compact-empty p {
+    color: #607178;
+    margin-bottom: 0;
+}
+
+.scope-note {
+    background: #f1f6f4;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    color: #314147;
+    font-weight: 700;
+    line-height: 1.5;
+    margin-bottom: 18px;
+    padding: 12px 14px;
+}
+
+.query-box {
+    align-self: start;
+    min-width: 0;
+}
+
+.query-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.query-chip {
+    background: #fbfdfd;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    color: #17323a;
+    min-height: 38px;
+    padding: 8px 10px;
+    text-align: left;
+}
+
+.query-chip:hover {
+    border-color: #84cbb7;
+    background: #f0f7f5;
+}
+
 .generated-grid {
     display: grid;
     gap: 16px;
@@ -421,6 +524,7 @@ textarea:focus {
     }
 
     .screen-grid,
+    .finder-layout,
     .form-grid,
     .generated-grid {
         grid-template-columns: 1fr;
