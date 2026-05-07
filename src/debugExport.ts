@@ -69,6 +69,37 @@ export function slugifyForFileName(value = 'export') {
 
 const dateStamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
 
+const leadWorkflowState = (lead: Lead) => {
+    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
+    const hasAgentAnalysis = Boolean(lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
+    const hasQuickWins = (lead.structuredQuickWins ?? []).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).length === 3;
+    const hasClientOutputs = Boolean((lead.clientMiniAudit || lead.generatedMiniAudit).trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
+
+    return {
+        hasWebsiteExtraction,
+        hasAgentAnalysis,
+        hasQuickWins,
+        hasClientOutputs,
+        nextRecommendedAction: hasWebsiteExtraction && !hasAgentAnalysis
+            ? 'analyze-from-extracted-website'
+            : !hasWebsiteExtraction
+                ? 'extract-website-or-add-evidence'
+                : !hasQuickWins
+                    ? 'complete-agent-analysis'
+                    : !hasClientOutputs
+                        ? 'generate-client-outputs'
+                        : 'ready-to-review',
+    };
+};
+
+const candidateWorkflowState = (candidate: LeadAgentCandidate, analysis?: LeadAgentAnalysis) => ({
+    hasWebsiteExtraction: Boolean(candidate.websiteExtraction && ['completed', 'partial'].includes(candidate.websiteExtraction.status)),
+    hasAgentAnalysis: Boolean(analysis),
+    hasQuickWins: (analysis?.quickWins ?? []).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).length === 3,
+    hasClientOutputs: false,
+    nextRecommendedAction: candidate.websiteExtraction && !analysis ? 'analyze-from-extracted-website' : analysis ? 'add-analyzed-lead-to-crm' : 'extract-website-or-run-analysis',
+});
+
 export const debugFileNames = {
     run: (runId: string) => `stayboost-run-${slugifyForFileName(runId)}-${dateStamp()}.json`,
     candidate: (name: string) => `stayboost-candidate-${slugifyForFileName(name)}-${dateStamp()}.json`,
@@ -112,6 +143,8 @@ export function createRunDebugExport(session: LeadAgentSession, options: DebugEx
             healthMessage: session.healthMessage,
         },
         diagnostics: session.diagnostic,
+        latestAnalysisDiagnostic: session.diagnostic?.analyzeProvider ? session.diagnostic : undefined,
+        websiteExtractionDiagnostic: undefined,
         candidates: session.candidates,
         analyses: session.analyses,
         dismissedCandidateIds: session.dismissedCandidateIds,
@@ -123,6 +156,9 @@ export function createCandidateDebugExport(candidate: LeadAgentCandidate, contex
         candidate,
         analysis: context.analysis,
         diagnostics: context.diagnostic ?? context.session?.diagnostic,
+        latestAnalysisDiagnostic: context.analysis ? context.diagnostic ?? context.session?.diagnostic : undefined,
+        websiteExtractionDiagnostic: candidate.websiteExtraction?.debug,
+        workflowState: candidateWorkflowState(candidate, context.analysis),
         run: context.session ? {
             runId: context.session.runId,
             createdAt: context.session.createdAt,
@@ -139,6 +175,9 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     return withMetadata('lead', {
         lead,
         diagnostics: context.diagnostics,
+        latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic ?? context.diagnostics,
+        websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic ?? lead.websiteExtraction?.debug,
+        workflowState: leadWorkflowState(lead),
         analysis: context.analysis,
         sourceLimitations: lead.sourceLimitations,
         agentMetadata: {
@@ -161,6 +200,8 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
 export function createWebsiteExtractionDebugExport(extraction: WebsiteExtractionResult, context: { candidate?: LeadAgentCandidate; lead?: Lead; diagnostic?: LeadAgentDiagnostic } = {}, options: DebugExportOptions = {}) {
     return withMetadata('website-extraction', {
         websiteExtraction: extraction,
+        websiteExtractionDiagnostic: context.lead?.websiteExtractionDiagnostic ?? extraction.debug,
+        workflowState: context.lead ? leadWorkflowState(context.lead) : context.candidate ? candidateWorkflowState(context.candidate) : undefined,
         candidate: context.candidate,
         lead: context.lead,
         diagnostics: context.diagnostic,

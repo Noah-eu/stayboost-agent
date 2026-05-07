@@ -250,6 +250,76 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
 
 const fallbackAnalysis = (candidate: CandidateInput) => {
     const name = candidate.name || 'Vybrany kandidat';
+    const websiteExtraction = candidate.websiteExtraction;
+    if (websiteExtraction && ['completed', 'partial'].includes(websiteExtraction.status)) {
+        const contacts = [...(websiteExtraction.contact?.emails || []), ...(websiteExtraction.contact?.phones || [])];
+        const contactSignals = [
+            ...(websiteExtraction.contact?.emails || []).map((email) => `E-mail nalezen na vlastním webu: ${email}`),
+            ...(websiteExtraction.contact?.phones || []).map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
+        ];
+        const allWebsiteText = [
+            websiteExtraction.summary,
+            ...(websiteExtraction.automationSignals || []),
+            ...(websiteExtraction.guestGuideSignals || []),
+            ...(candidate.sourceSnippets || []),
+        ].join(' ').toLowerCase();
+        const targetOffer: TargetOffer = candidate.targetOffer === 'self-checkin-setup' && !allWebsiteText.includes('self check-in')
+            ? 'guest-guide'
+            : candidate.targetOffer === 'skip' || !candidate.targetOffer ? 'guest-guide' : candidate.targetOffer;
+        const pages = (websiteExtraction.pagesExtracted || []).map((page) => page.url).join(', ') || websiteExtraction.websiteUrl;
+
+        return {
+            firstImpression: `${name} má vlastní veřejný web, který Website Extractor přečetl ve stavu ${websiteExtraction.status}. Kontakt je ${contacts.length > 0 ? 'nalezený' : 'zatím slabý'}; obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
+            strengths: [...new Set([...(websiteExtraction.strengths || []), ...contactSignals, ...(candidate.signals || [])])].slice(0, 5),
+            risks: [...new Set([...(websiteExtraction.risks || []), 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
+            guestFrictionSignals: (websiteExtraction.missingPublicInfoSignals || []).length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
+            quickWins: [
+                {
+                    title: 'Zpřehlednit stránku „Před příjezdem“',
+                    why: 'Z přečtených veřejných stránek není jasně vidět jeden kompaktní blok pro příjezd, check-in, parkování a první kontakt.',
+                    action: 'Přidat krátkou stránku nebo sekci s tím, kdy host dostane instrukce, kde zaparkuje a koho kontaktuje v den příjezdu.',
+                    sourceEvidence: websiteExtraction.summary,
+                },
+                {
+                    title: 'Dodat krátkou FAQ sekci pro hosty',
+                    why: 'Z přečtených veřejných stránek není jasně vidět přehled nejčastějších předpříjezdových otázek.',
+                    action: 'Sepsat 5 až 7 odpovědí: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a vybavení pokoje.',
+                    sourceEvidence: pages,
+                },
+                {
+                    title: 'Zviditelnit praktické informace u kontaktu',
+                    why: (websiteExtraction.contact?.emails || []).length > 0 ? 'E-mail je na vlastním webu nalezený; hostovi může pomoct vědět, kdy ho použít.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
+                    action: 'Vedle kontaktu doplnit krátkou větu pro situace jako příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
+                    sourceEvidence: websiteExtraction.contact?.contactPageUrl || websiteExtraction.websiteUrl,
+                },
+            ],
+            miniAudit: `Mini-audit veřejného webu: ${name}\n\nPrvní dojem: vlastní web je dohledatelný a kontakt je ${contacts.length > 0 ? 'viditelný' : 'potřeba ještě ověřit'}.\n\nCo působí dobře: ${[...(websiteExtraction.strengths || []), ...contactSignals].slice(0, 3).join(', ') || 'základní prezentace je dostupná'}.\n\nCo bych zlepšil: z veřejných stránek není jasně vidět jedno místo pro příjezd, parkování, check-in a nejčastější otázky hostů.\n\nDalší krok: poslat tři krátké návrhy, které lze ověřit proti webu.`,
+            outreachEmail: `Dobrý den,\n\nnarazil jsem na veřejný web ${name} a první dojem působí dobře. Zaujalo mě hlavně: ${(websiteExtraction.strengths || [])[0] || contactSignals[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosta by šly na webu poskládat víc do jednoho krátkého bloku před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech. Má smysl vám to poslat?\n\nDavid`,
+            followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k veřejnému webu ${name}: příjezd, parkování, check-in a praktické informace pro hosta.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
+            offerRecommendation: 'Začít krátkým auditem veřejného webu a předpříjezdových informací. Pokud už interní guest guide existuje, ověřit hlavně jeho návaznost na zprávy hostům.',
+            confidence: 'low' as const,
+            fitVerdict: candidate.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : candidate.fitVerdict || 'moderate-opportunity',
+            opportunityScore: Math.min(candidate.opportunityScore || 58, 64),
+            opportunityType: 'setup-automation' as const,
+            automationNeedScore: Math.max(candidate.automationNeedScore || 0, 58),
+            publicMaturityScore: candidate.publicMaturityScore || 0,
+            reviewFrictionScore: 0,
+            painSignals: [],
+            positiveSolvedSignals: [...(websiteExtraction.strengths || []), ...(websiteExtraction.arrivalSignals || []), ...(websiteExtraction.parkingSignals || []), ...(websiteExtraction.faqSignals || [])],
+            noPainReason: 'Website extraction nenašla jednoznačný veřejný pain signal; jde o opatrný setup lead.',
+            targetOffer,
+            offerHypothesis: 'Setup příležitost: z veřejného webu lze navrhnout zpřehlednění předpříjezdových informací a FAQ, bez tvrzení, že proces neexistuje interně.',
+            websiteSignals: [...new Set([...(candidate.websiteSignals || []), ...(websiteExtraction.websiteSignals || []), ...(websiteExtraction.arrivalSignals || []), ...(websiteExtraction.faqSignals || [])])],
+            contactSignals,
+            missingAutomationSignals: websiteExtraction.missingPublicInfoSignals || [],
+            likelyManualProcessSignals: websiteExtraction.likelyManualProcessSignals || [],
+            qualificationReason: 'Fallback analýza z Website Extractoru: vlastní web a kontakt existují, ale konkrétní obchodní výstup má nízkou jistotu bez OpenAI nebo ručního ověření.',
+            alreadySolvedSignals: [...(websiteExtraction.arrivalSignals || []), ...(websiteExtraction.parkingSignals || []), ...(websiteExtraction.faqSignals || []), ...(websiteExtraction.guestGuideSignals || [])],
+            missingEvidence: websiteExtraction.evidenceLimits || [],
+            contradictionWarnings: [],
+            evidenceLimits: ['Fallback analýza bez OpenAI; výstup je interní návrh s nízkou jistotou.', 'Website Extractor četl pouze vlastní veřejný web provozu.', 'Guest guide může existovat neveřejně po rezervaci.', 'E-maily se automaticky neposílají.'],
+        };
+    }
     const signals = candidate.signals || [];
     const risks = candidate.risks || [];
     const evidence = candidate.sourceSnippets?.[0] || candidate.evidenceSummary || 'Omezeny verejny search snippet.';
@@ -567,12 +637,14 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych podkladu. Pokud je prilozeno websiteExtraction, preferuj ji pred search snippety: je to kvalitnejsi evidence z verejneho vlastniho webu provozu.
     Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Internalni pole jako evidenceLimits, missingEvidence, contradictionWarnings, scoring a quickWins.sourceEvidence mohou obsahovat limity evidence. Klientska pole miniAudit, outreachEmail, followUp a offerRecommendation musi byt napsana pro majitele ubytovani: bez slov OpenAI, Tavily, fallback, evidenceLimits, sourceEvidence, setup automation, public snippet, search snippet, aplikace odkazy necetla, interni analyza, Vychodisko, FIX, SETUP.
     V internich polich evidenceLimits/missingEvidence jasne rozlis: "Vychazime z verejneho vlastniho webu a search snippetu." pokud websiteExtraction existuje, jinak "Vychazime jen ze search snippetu." Klientske oslovení tohle nevysvetluje.
+    Website Extractor pouze shromazdil evidence. Tvym ukolem je z websiteExtraction vytvorit skutecny obchodni vystup: presne 3 quickWins, klientsky miniAudit, kratke studene outreachEmail, followUp, offerRecommendation a interni kvalifikaci. Pokud websiteExtraction najde e-mail nebo telefon, finalni contactSignals musi rict, ze kontakt byl nalezen na vlastnim webu, a risks/guestFrictionSignals nesmi tvrdit, ze e-mail neni videt.
     Guest guide neni casto verejny: pokud neni videt, nesmis psat "nemaji guest guide" ani to davat do painSignals. Pouzij missingEvidence: "Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci." nebo "Guest guide muze existovat neverejne." Jako obchodni prilezitost to formuluj jen opatrne: "Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide." Quick win nesmi byt jiste "Zavest guest guide"; pouzij prirozenou podminenou cestinu: "Pokud hoste nedostavaji pred prijezdem jednoduchy prehled, pripravil bych kratky QR/pruvodce; pokud ho uz maji, zkontroloval bych, jestli je dobre napojeny na zpravy hostum." V outreachEmail guest guide nezminuj, pokud hlavni evidence mluvi hlavne o fotkach, galerii, popisu nebo recenzich.
     Pokud websiteExtraction ukazuje jasnou FAQ/prijezd/parkovani/check-in sekci, neprodavej obecne "zlepsit instrukce", pokud neni konkretni mezera. Pokud vlastni web nema zadne prakticke prijezdove informace, muze to byt setup opportunity. Pokud je web moderni a dobre strukturovany, kandidat muze byt benchmark/weak.
     Presne 3 quickWins. miniAudit je klientsky mini-audit max 5-7 kratkych bodu nebo kratkych odstavcu, bez technickych disclaimeru. outreachEmail je skutecny studeny prvni kontakt 120-160 slov: neodpovida na poptavku, zacina prirozene, obsahuje jednu pozitivni konkretni observaci, jeden konkretni navrh, vetu "Nejde o kritiku" nebo podobnou, a konci lehkou otazkou typu "Ma smysl vam to poslat?" followUp ma 60-90 slov a neni natlakovy. offerRecommendation je klientsky citelny dalsi krok. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
     Nejdriv klasifikuj opportunityType: fix-existing-process, setup-automation, ota-profile-audit, benchmark, nebo skip.
     FIX: pouzij jen kdyz existuje painSignals / reviewFrictionScore: spatny check-in, nejasny prijezd, parkovani, komunikace, recenzni problem. Outreach muze pojmenovat konkretni pain signal.
     SETUP: muze byt strong/moderate i bez painu, pokud jde o maly penzion/apartman s vlastnim webem nebo kontaktem a z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide / QR instrukce / FAQ / automatizovany predprijezdovy workflow. Setup outreach nesmi tvrdit, ze maji problem nebo ze neco delaji spatne. Pouzij formulaci: "Z verejne prezentace neni jasne, zda hoste dostavaji jednoduchy predprijezdovy guide; ten muze existovat neverejne po rezervaci. U podobnych penzionu casto pomaha overit, jestli je dobre napojeny na zpravy hostum."
+    U setup leadu bez recenzniho painu a bez hotovych quickWins nepouzivej strong-opportunity. Strong je dovoleny az kdyz mas konkretni kvalitni evidence pro 3 quickWins. TargetOffer "self-checkin-setup" pouzij jen pokud je self-check-in explicitne hlavni tema a neni zjevne vyreseny; jinak pouzij "guest-guide" nebo "guest-communication-fix".
     BENCHMARK/SKIP: pokud je vse zjevne vyresene nebo chybi kontakt/web/evidence, outreachEmail je interni poznamka, ne obchodni email. Self-check-in bez painu neni fix lead; muze byt benchmark nebo slaby setup jen pri jasne setup mezere.
     JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"opportunityType":"fix-existing-process"|"setup-automation"|"ota-profile-audit"|"benchmark"|"skip","automationNeedScore":number,"publicMaturityScore":number,"reviewFrictionScore":number,"painSignals":string[],"positiveSolvedSignals":string[],"noPainReason":string,"targetOffer":"guest-communication-fix"|"guest-guide"|"ota-profile-audit"|"review-response-improvement"|"self-checkin-setup"|"skip","offerHypothesis":string,"websiteSignals":string[],"contactSignals":string[],"missingAutomationSignals":string[],"likelyManualProcessSignals":string[],"qualificationReason":string,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
 Lead: ${JSON.stringify(compactInput)}

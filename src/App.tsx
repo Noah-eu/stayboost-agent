@@ -94,6 +94,8 @@ const emptyLead = (): Lead => ({
     screenshots: [],
     screenshotAnalysis: undefined,
     screenshotAnalysisDiagnostic: { status: 'idle' },
+    latestAnalysisDiagnostic: undefined,
+    websiteExtractionDiagnostic: undefined,
     extractionStatus: 'idle',
     firstImpression: '',
     mainPhotoVerdict: 'unknown',
@@ -148,6 +150,64 @@ const splitLines = (value: string) =>
         .filter(Boolean);
 
 const joinLines = (value: string[]) => value.join('\n');
+
+const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+const emailMissingSignalPattern = /(e-?mail|email).*(nen[ií]|chyb[ií]|nenalezen|nen[íi] vid[eě]t|nen[ií] vid[eě]t|neni videt|není vidět|chyb[ií] ve[řr]ejn[yý])/i;
+const removeContactContradictions = (values: string[], hasWebsiteEmail: boolean) => uniqueStrings(values.filter((value) => !(hasWebsiteEmail && emailMissingSignalPattern.test(value))));
+
+const hasCompletedWebsiteExtraction = (lead: Pick<Lead, 'websiteExtraction'>) => Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
+const hasLeadClientOutputs = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => Boolean((lead.clientMiniAudit || lead.generatedMiniAudit).trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
+const hasLeadQuickWins = (lead: Pick<Lead, 'structuredQuickWins'>) => (lead.structuredQuickWins ?? []).filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).length === 3;
+const needsWebsiteAnalysis = (lead: Lead) => hasCompletedWebsiteExtraction(lead) && lead.needsAgentAnalysis && !lead.createdFromAgentAnalysis;
+
+const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'confidence' | 'structuredQuickWins' | 'fitVerdict'>) => {
+    const hasNoQuickWins = (lead.structuredQuickWins ?? []).length === 0;
+
+    if (lead.needsAgentAnalysis && lead.confidence === 'low' && hasNoQuickWins && lead.fitVerdict === 'strong-opportunity') {
+        return 'moderate-opportunity';
+    }
+
+    return lead.fitVerdict ?? '';
+};
+
+const workflowNextAction = (lead: Lead) => {
+    if (needsWebsiteAnalysis(lead)) return 'analyze-from-extracted-website';
+    if (!hasCompletedWebsiteExtraction(lead)) return 'extract-website-or-add-evidence';
+    if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
+    if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
+    return 'ready-to-review';
+};
+
+const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => [
+    {
+        id: `quick-win-${crypto.randomUUID()}`,
+        title: 'Zpřehlednit stránku před příjezdem',
+        why: 'Z přečtených veřejných stránek není jasně vidět jeden samostatný blok pro příjezd, check-in a první orientaci hosta.',
+        action: 'Přidat krátkou stránku nebo sekci s tím, kdy dorazí instrukce, kde host zaparkuje, kudy přijde a koho kontaktuje v den příjezdu.',
+        sourceEvidence: lead.websiteExtraction?.summary || lead.firstImpression || 'Website Extractor evidence.',
+    },
+    {
+        id: `quick-win-${crypto.randomUUID()}`,
+        title: 'Dodat krátkou FAQ sekci pro hosty',
+        why: 'Z přečtených veřejných stránek není jasně vidět kompaktní odpověď na nejčastější předpříjezdové otázky.',
+        action: 'Sepsat 5 až 7 otázek: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a základní vybavení.',
+        sourceEvidence: lead.websiteExtraction?.pagesExtracted.map((page) => page.url).join(', ') || 'Přečtené veřejné stránky.',
+    },
+    {
+        id: `quick-win-${crypto.randomUUID()}`,
+        title: 'Zviditelnit praktický kontakt',
+        why: lead.websiteExtraction?.contact.emails.length ? 'E-mail je na vlastním webu nalezený; dává smysl ho doplnit kontextem, kdy a proč ho host použije.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
+        action: 'Vedle kontaktu doplnit krátkou větu, pro jaké situace je určený: příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
+        sourceEvidence: lead.websiteExtraction?.contact.contactPageUrl || lead.websiteExtraction?.websiteUrl || 'Kontaktní část veřejného webu.',
+    },
+];
+
+const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
+    const completeWins = quickWins.filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).slice(0, 3);
+    const fallbackWins = fallbackWebsiteQuickWins(lead).filter((fallbackWin) => !completeWins.some((win) => win.title === fallbackWin.title));
+
+    return [...completeWins, ...fallbackWins].slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
+};
 
 const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
 const isOtaOrAggregatorUrl = (url = '') => blockedWebsiteExtractorHosts.some((host) => url.toLowerCase().includes(host));
@@ -304,6 +364,11 @@ const hasDemoMarker = (lead: Partial<Lead> & { isMock?: boolean; runMode?: strin
 const normalizeLead = (lead: Partial<Lead>): Lead => {
     const isDemoLead = hasDemoMarker(lead);
     const baseNotes = lead.notes ?? '';
+    const hasUnanalyzedWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status) && (lead.needsAgentAnalysis ?? Boolean(lead.addedWithoutAgentAnalysis && !lead.createdFromAgentAnalysis)));
+    const guardedFitVerdict = hasUnanalyzedWebsiteExtraction && lead.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : lead.fitVerdict ?? '';
+    const guardedOpportunityScore = hasUnanalyzedWebsiteExtraction ? Math.min(lead.opportunityScore ?? 0, 64) : lead.opportunityScore ?? 0;
+    const sourceText = [lead.notes, lead.firstImpression, lead.websiteExtraction?.summary, ...(lead.sourceMaterials ?? []).map((material) => material.content)].join(' ').toLowerCase();
+    const guardedTargetOffer = hasUnanalyzedWebsiteExtraction && lead.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in') ? 'guest-guide' : lead.targetOffer ?? '';
 
     return {
         ...emptyLead(),
@@ -330,11 +395,11 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         sourceLimitations: defaultSourceLimitations(lead),
         leadAgentRunId: lead.leadAgentRunId ?? '',
         agentAnalysisProvider: lead.agentAnalysisProvider ?? '',
-        opportunityScore: lead.opportunityScore ?? 0,
+        opportunityScore: guardedOpportunityScore,
         opportunityType: lead.opportunityType ?? '',
-        fitVerdict: lead.fitVerdict ?? '',
+        fitVerdict: guardedFitVerdict,
         confidence: lead.confidence ?? '',
-        targetOffer: lead.targetOffer ?? '',
+        targetOffer: guardedTargetOffer,
         qualificationReason: lead.qualificationReason ?? '',
         offerHypothesis: lead.offerHypothesis ?? '',
         automationNeedScore: lead.automationNeedScore ?? 0,
@@ -345,6 +410,8 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         screenshots: lead.screenshots ?? [],
         screenshotAnalysis: lead.screenshotAnalysis,
         screenshotAnalysisDiagnostic: lead.screenshotAnalysisDiagnostic ?? { status: 'idle' },
+        latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic,
+        websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
         websiteExtraction: lead.websiteExtraction,
     };
 };
@@ -498,49 +565,54 @@ const candidateFromLead = (lead: Lead): LeadAgentCandidate => ({
     name: lead.name,
     location: lead.city,
     type: lead.accommodationType,
-    websiteUrl: lead.websiteOrOtaUrl || lead.publicProfileUrl,
-    sourceUrls: lead.publicLinks.map((link) => link.url).filter(Boolean),
+    websiteUrl: lead.websiteExtraction?.websiteUrl || lead.websiteOrOtaUrl || lead.publicProfileUrl,
+    sourceUrls: uniqueStrings([lead.websiteExtraction?.websiteUrl || '', ...lead.publicLinks.map((link) => link.url), ...(lead.websiteExtraction?.pagesExtracted.map((page) => page.url) ?? [])]),
     sourceSnippets: [
         lead.firstImpression,
         lead.notes,
         lead.qualificationReason || '',
         lead.offerHypothesis || '',
+        lead.websiteExtraction ? `Website extraction summary: ${lead.websiteExtraction.summary}` : '',
+        lead.websiteExtraction ? `Website contacts: ${[...lead.websiteExtraction.contact.emails, ...lead.websiteExtraction.contact.phones].join(', ') || 'nenalezeno'}` : '',
+        ...(lead.websiteExtraction?.pagesExtracted.map((page) => `${page.title}: ${page.textPreview}`) ?? []),
         ...lead.sourceMaterials.map((material) => `${material.title}: ${material.content}`),
     ].filter((value) => value.trim()),
-    possibleEmail: lead.email,
-    signals: lead.publicSignals,
-    risks: splitLines(lead.risks || lead.guestFrictionSignals),
+    possibleEmail: lead.email || lead.websiteExtraction?.contact.emails[0] || '',
+    signals: uniqueStrings([...lead.publicSignals, ...(lead.websiteExtraction?.strengths ?? []), ...(lead.websiteExtraction?.websiteSignals ?? [])]),
+    risks: removeContactContradictions(splitLines(lead.risks || lead.guestFrictionSignals), (lead.websiteExtraction?.contact.emails.length ?? 0) > 0),
     leadScore: lead.leadScore,
     opportunityScore: lead.opportunityScore ?? lead.leadScore,
     opportunityType: (lead.opportunityType as LeadAgentOpportunityType) || 'setup-automation',
     automationNeedScore: lead.automationNeedScore ?? 0,
     publicMaturityScore: lead.publicMaturityScore ?? 0,
     reviewFrictionScore: lead.reviewFrictionScore ?? 0,
-    fitVerdict: ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(lead.fitVerdict || '') ? lead.fitVerdict as LeadAgentCandidate['fitVerdict'] : 'not-enough-evidence',
+    fitVerdict: ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(guardedPreAnalysisFitVerdict(lead) || '') ? guardedPreAnalysisFitVerdict(lead) as LeadAgentCandidate['fitVerdict'] : 'not-enough-evidence',
     confidence: ['low', 'medium', 'high'].includes(lead.confidence || '') ? lead.confidence as LeadAgentCandidate['confidence'] : 'low',
-    contactMissing: !lead.email,
+    contactMissing: !lead.email && (lead.websiteExtraction?.contact.emails.length ?? 0) === 0 && (lead.websiteExtraction?.contact.phones.length ?? 0) === 0,
     painSignals: splitLines(lead.reviewSignals).filter((signal) => !signal.toLowerCase().includes('guest guide')),
     positiveSolvedSignals: [],
     noPainReason: '',
     targetOffer: ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(lead.targetOffer || '') ? lead.targetOffer as LeadAgentCandidate['targetOffer'] : 'guest-guide',
     offerHypothesis: lead.offerHypothesis || lead.businessOpportunity || 'Z dostupných veřejných podkladů zatím chybí plná agentní analýza.',
-    websiteSignals: lead.publicLinks.some((link) => link.sourceType === 'website') ? ['Vlastní web jako odkaz k ruční kontrole'] : [],
-    contactSignals: lead.email ? ['Veřejný e-mail v CRM'] : [],
-    missingAutomationSignals: ['Nelze veřejně ověřit, zda mají guest guide.', 'Guest guide může existovat neveřejně.'],
-    likelyManualProcessSignals: splitLines(lead.checkInParkingInfo),
+    websiteSignals: uniqueStrings([...(lead.publicLinks.some((link) => link.sourceType === 'website') ? ['Vlastní web jako odkaz k ruční kontrole'] : []), ...(lead.websiteExtraction?.websiteSignals ?? []), ...(lead.websiteExtraction?.arrivalSignals ?? []), ...(lead.websiteExtraction?.faqSignals ?? [])]),
+    contactSignals: uniqueStrings([lead.email ? 'Veřejný e-mail v CRM' : '', ...(lead.websiteExtraction?.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`) ?? []), ...(lead.websiteExtraction?.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`) ?? [])]),
+    missingAutomationSignals: removeContactContradictions(['Nelze veřejně ověřit, zda mají guest guide.', 'Guest guide může existovat neveřejně.', ...(lead.websiteExtraction?.missingPublicInfoSignals ?? [])], (lead.websiteExtraction?.contact.emails.length ?? 0) > 0),
+    likelyManualProcessSignals: uniqueStrings([...splitLines(lead.checkInParkingInfo), ...(lead.websiteExtraction?.likelyManualProcessSignals ?? [])]),
     qualificationReason: lead.qualificationReason || 'Lead analyzovaný z detailu CRM; dostupná evidence může být jen rychlý search snippet nebo ručně vložené podklady.',
     alreadySolvedSignals: [],
-    missingEvidence: ['Nelze veřejně ověřit, zda mají guest guide.', 'OTA URL nejsou automaticky přečtené.', ...lead.sourceLimitations],
+    missingEvidence: removeContactContradictions(['Nelze veřejně ověřit, zda mají guest guide.', 'OTA URL nejsou automaticky přečtené.', ...lead.sourceLimitations, ...(lead.websiteExtraction?.evidenceLimits ?? [])], (lead.websiteExtraction?.contact.emails.length ?? 0) > 0),
     contradictionWarnings: ['Netvrdit, že nemají guest guide, pokud to není v dodaných podkladech prokazatelné.'],
     recommendedAngle: lead.selectedOfferAngle,
-    evidenceSummary: lead.notes || lead.firstImpression || 'CRM lead bez plné agentní analýzy.',
+    evidenceSummary: lead.websiteExtraction?.summary || lead.notes || lead.firstImpression || 'CRM lead bez plné agentní analýzy.',
     websiteExtraction: lead.websiteExtraction,
     isMock: lead.isDemoLead ?? false,
     isLegacy: false,
 });
 
 const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead => {
-    const quickWins = analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
+    const hasWebsiteEmail = (lead.websiteExtraction?.contact.emails.length ?? 0) > 0;
+    const contactSignals = hasWebsiteEmail ? [`E-mail nalezen na vlastním webu: ${lead.websiteExtraction?.contact.emails[0]}`] : [];
+    const quickWins = ensureThreeQuickWins(lead, analysis.quickWins);
     const analyzedLead: Lead = {
         ...lead,
         status: 'Audit pripraven',
@@ -560,7 +632,7 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         automationNeedScore: analysis.automationNeedScore,
         reviewFrictionScore: analysis.reviewFrictionScore,
         publicMaturityScore: analysis.publicMaturityScore,
-        publicSignals: [...new Set([...lead.publicSignals, ...analysis.strengths, ...analysis.websiteSignals, ...analysis.contactSignals])],
+        publicSignals: uniqueStrings([...removeContactContradictions(lead.publicSignals, hasWebsiteEmail), ...analysis.strengths, ...analysis.websiteSignals, ...analysis.contactSignals, ...contactSignals]),
         quickWins: quickWins.map((win) => win.title),
         proposedQuickWins: quickWins.map((win) => win.title),
         structuredQuickWins: quickWins,
@@ -568,23 +640,23 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         descriptionObservation: analysis.offerHypothesis,
         checkInParkingInfo: [...analysis.missingAutomationSignals, ...analysis.likelyManualProcessSignals].join('\n'),
         reviewSignals: [...analysis.painSignals, ...analysis.positiveSolvedSignals].join('\n'),
-        guestFrictionSignals: analysis.guestFrictionSignals.join('\n'),
-        guestConfusion: analysis.guestFrictionSignals.join('\n'),
+        guestFrictionSignals: removeContactContradictions(analysis.guestFrictionSignals, hasWebsiteEmail).join('\n'),
+        guestConfusion: removeContactContradictions(analysis.guestFrictionSignals, hasWebsiteEmail).join('\n'),
         strengths: analysis.strengths.join('\n'),
-        risks: analysis.risks.join('\n'),
+        risks: removeContactContradictions(analysis.risks, hasWebsiteEmail).join('\n'),
         businessOpportunity: `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}`,
-        internalAgentBrief: analysis.miniAudit,
         extractionStatus: 'completed',
         sourceLimitations: analysis.evidenceLimits,
     };
+    const clientMiniAudit = analysis.miniAudit.trim() || generateMiniAudit(analyzedLead);
+    const leadWithClientAudit = { ...analyzedLead, clientMiniAudit, generatedMiniAudit: clientMiniAudit };
 
     return {
-        ...analyzedLead,
-        clientMiniAudit: generateMiniAudit(analyzedLead),
-        generatedMiniAudit: generateMiniAudit(analyzedLead),
-        generatedOutreach: generateFirstOutreach(analyzedLead),
-        generatedFollowUp: generateFollowUp(analyzedLead),
-        generatedOffer: generateOffer(analyzedLead),
+        ...leadWithClientAudit,
+        internalAgentBrief: generateInternalAgentBrief(leadWithClientAudit),
+        generatedOutreach: analysis.outreachEmail.trim() || generateFirstOutreach(leadWithClientAudit),
+        generatedFollowUp: analysis.followUp.trim() || generateFollowUp(leadWithClientAudit),
+        generatedOffer: analysis.offerRecommendation.trim() || generateOffer(leadWithClientAudit),
     };
 };
 
@@ -599,6 +671,8 @@ const candidateWithWebsiteExtraction = (candidate: LeadAgentCandidate, websiteEx
     }
 
     const hasContact = websiteExtraction.contact.emails.length > 0 || websiteExtraction.contact.phones.length > 0 || Boolean(candidate.possibleEmail);
+    const hasWebsiteEmail = websiteExtraction.contact.emails.length > 0;
+    const hasWebsitePhone = websiteExtraction.contact.phones.length > 0;
     const hasStructuredArrival = websiteExtraction.arrivalSignals.length > 0 || websiteExtraction.parkingSignals.length > 0 || websiteExtraction.faqSignals.length > 0;
     const hasSetupOpportunity = websiteExtraction.setupOpportunitySignals.length > 0 && !hasStructuredArrival;
     const hasFixOpportunity = websiteExtraction.fixOpportunitySignals.length > 0;
@@ -611,10 +685,20 @@ const candidateWithWebsiteExtraction = (candidate: LeadAgentCandidate, websiteEx
             : publicMaturityScore >= 70
                 ? 'benchmark'
                 : candidate.opportunityType;
-    const opportunityScore = Math.max(candidate.opportunityScore, hasFixOpportunity ? 72 : hasSetupOpportunity ? 70 : hasContact ? 44 : 28);
+    const opportunityScore = Math.max(candidate.opportunityScore, hasFixOpportunity ? 72 : hasSetupOpportunity ? 62 : hasContact ? 44 : 28);
     const fitVerdict = hasFixOpportunity || hasSetupOpportunity
-        ? hasContact ? 'strong-opportunity' : 'moderate-opportunity'
+        ? 'moderate-opportunity'
         : publicMaturityScore >= 70 ? 'weak-opportunity' : candidate.fitVerdict;
+    const targetOffer = hasSetupOpportunity && !candidate.sourceSnippets.join(' ').toLowerCase().includes('self check-in')
+        ? 'guest-guide'
+        : candidate.targetOffer === 'self-checkin-setup' && !hasFixOpportunity
+            ? 'guest-guide'
+            : candidate.targetOffer;
+    const contactSignals = uniqueStrings([
+        ...candidate.contactSignals,
+        ...websiteExtraction.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`),
+        ...websiteExtraction.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
+    ]);
 
     return {
         ...candidate,
@@ -622,17 +706,18 @@ const candidateWithWebsiteExtraction = (candidate: LeadAgentCandidate, websiteEx
         sourceUrls: [...new Set([candidate.websiteUrl, ...candidate.sourceUrls, ...websiteExtraction.pagesExtracted.map((page) => page.url)].filter(Boolean))],
         possibleEmail: candidate.possibleEmail || websiteExtraction.contact.emails[0] || '',
         contactMissing: !hasContact,
-        signals: [...new Set([...candidate.signals, ...websiteExtraction.strengths, ...websiteExtraction.websiteSignals])],
-        risks: [...new Set([...candidate.risks, ...websiteExtraction.risks])],
-        websiteSignals: [...new Set([...candidate.websiteSignals, ...websiteExtraction.websiteSignals, ...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals])],
-        contactSignals: [...new Set([...candidate.contactSignals, ...websiteExtraction.contact.emails.map((email) => `E-mail: ${email}`), ...websiteExtraction.contact.phones.map((phone) => `Telefon: ${phone}`)])],
-        missingAutomationSignals: [...new Set([...websiteExtraction.missingPublicInfoSignals, ...candidate.missingAutomationSignals])],
-        likelyManualProcessSignals: [...new Set([...candidate.likelyManualProcessSignals, ...websiteExtraction.likelyManualProcessSignals])],
+        signals: uniqueStrings([...candidate.signals, ...websiteExtraction.strengths, ...websiteExtraction.websiteSignals, hasWebsiteEmail ? 'E-mail nalezen na vlastním webu' : '', hasWebsitePhone ? 'Telefon nalezen na vlastním webu' : '']),
+        risks: removeContactContradictions([...candidate.risks, ...websiteExtraction.risks], hasWebsiteEmail),
+        websiteSignals: uniqueStrings([...candidate.websiteSignals, ...websiteExtraction.websiteSignals, ...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals]),
+        contactSignals,
+        missingAutomationSignals: removeContactContradictions([...websiteExtraction.missingPublicInfoSignals, ...candidate.missingAutomationSignals], hasWebsiteEmail),
+        likelyManualProcessSignals: uniqueStrings([...candidate.likelyManualProcessSignals, ...websiteExtraction.likelyManualProcessSignals]),
         opportunityType,
         automationNeedScore,
         publicMaturityScore,
         opportunityScore,
         fitVerdict,
+        targetOffer,
         confidence: websiteExtraction.status === 'completed' ? 'medium' : candidate.confidence,
         qualificationReason: hasSetupOpportunity
             ? 'Website Extractor našel vlastní web a setup příležitost: praktické příjezdové informace nejsou veřejně jasně strukturované. Guest guide může existovat neveřejně.'
@@ -642,7 +727,7 @@ const candidateWithWebsiteExtraction = (candidate: LeadAgentCandidate, websiteEx
                     ? 'Website Extractor ukazuje dobře strukturovaný vlastní web; kandidát je spíš benchmark nebo slabší priorita.'
                     : candidate.qualificationReason,
         evidenceSummary: `${candidate.evidenceSummary}\nWebsite extraction: ${websiteExtraction.summary}`.trim(),
-        missingEvidence: [...new Set([...candidate.missingEvidence, ...websiteExtraction.evidenceLimits])],
+        missingEvidence: removeContactContradictions([...candidate.missingEvidence, ...websiteExtraction.evidenceLimits], hasWebsiteEmail),
     };
 };
 
@@ -1132,6 +1217,15 @@ function App() {
             websiteExtraction ? `Pages extracted:\n${websiteExtraction.pagesExtracted.map((page) => `${page.url} (${page.contentLength})`).join('\n')}` : '',
         ].filter(Boolean).join('\n');
         const selectedOfferAngle = offerAngleForAgentLead(analysis?.opportunityType ?? candidate.opportunityType, analysis?.targetOffer ?? candidate.targetOffer, candidate.recommendedAngle);
+        const hasWebsiteEmail = (websiteExtraction?.contact.emails.length ?? 0) > 0;
+        const guardedFitVerdict = !hasAgentAnalysis && candidate.confidence === 'low' && quickWins.length === 0 && candidate.fitVerdict === 'strong-opportunity'
+            ? 'moderate-opportunity'
+            : candidate.fitVerdict === 'strong-opportunity' && !hasAgentAnalysis
+                ? 'moderate-opportunity'
+                : candidate.fitVerdict;
+        const guardedTargetOffer = !hasAgentAnalysis && candidate.opportunityType === 'setup-automation' && candidate.targetOffer === 'self-checkin-setup' && !candidate.sourceSnippets.join(' ').toLowerCase().includes('self check-in')
+            ? 'guest-guide'
+            : candidate.targetOffer;
         const nextLeadBase: Lead = {
             ...emptyLead(),
             id: `lead-${crypto.randomUUID()}`,
@@ -1177,6 +1271,8 @@ function App() {
                 }] : []),
             ],
             extractionStatus: analysis ? 'completed' : 'ready',
+            latestAnalysisDiagnostic: analysis ? { mode: analysis.provider === 'openai' ? 'real-api' : 'demo-fallback', analyzeProvider: analysis.provider, userMessage: 'Lead přidán z existující agentní analýzy.' } : undefined,
+            websiteExtractionDiagnostic: websiteExtraction ? { ...websiteExtraction.debug, provider: websiteExtraction.provider, status: websiteExtraction.status, contactFound: (websiteExtraction.contact.emails.length + websiteExtraction.contact.phones.length) > 0 } : undefined,
             email: candidate.possibleEmail,
             status: analysis ? 'Audit pripraven' : 'Novy',
             notes: `${candidate.isMock ? `${demoLeadNotice}\n\n` : ''}${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Rychly nalez z Lead Finderu bez plne agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim - fiktivni kandidat, nepouzivat jako realny obchodni lead.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
@@ -1195,17 +1291,17 @@ function App() {
             agentAnalysisProvider: analysis?.provider ?? '',
             isDemoLead: candidate.isMock,
             demoReason: candidate.isMock ? demoLeadNotice : '',
-            opportunityScore: analysis?.opportunityScore ?? candidate.opportunityScore,
+            opportunityScore: analysis?.opportunityScore ?? Math.min(candidate.opportunityScore, !hasAgentAnalysis && guardedFitVerdict !== 'strong-opportunity' ? 64 : candidate.opportunityScore),
             opportunityType: analysis?.opportunityType ?? candidate.opportunityType,
-            fitVerdict: analysis?.fitVerdict ?? candidate.fitVerdict,
+            fitVerdict: analysis?.fitVerdict ?? guardedFitVerdict,
             confidence: analysis?.confidence ?? candidate.confidence,
-            targetOffer: analysis?.targetOffer ?? candidate.targetOffer,
+            targetOffer: analysis?.targetOffer ?? guardedTargetOffer,
             qualificationReason: analysis?.qualificationReason ?? candidate.qualificationReason,
             offerHypothesis: analysis?.offerHypothesis ?? candidate.offerHypothesis,
             automationNeedScore: analysis?.automationNeedScore ?? candidate.automationNeedScore,
             reviewFrictionScore: analysis?.reviewFrictionScore ?? candidate.reviewFrictionScore,
             publicMaturityScore: analysis?.publicMaturityScore ?? candidate.publicMaturityScore,
-            publicSignals: [...new Set([...candidate.signals, ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals), ...(websiteExtraction?.strengths ?? [])])],
+            publicSignals: uniqueStrings([...removeContactContradictions(candidate.signals, hasWebsiteEmail), ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals), ...(websiteExtraction?.strengths ?? []), hasWebsiteEmail ? 'E-mail nalezen na vlastním webu' : '']),
             quickWins: quickWins.map((win) => win.title),
             proposedQuickWins: quickWins.map((win) => win.title),
             firstImpression: analysis?.firstImpression ?? websiteExtraction?.summary ?? '',
@@ -1213,10 +1309,10 @@ function App() {
             descriptionObservation: analysis?.offerHypothesis ?? websiteExtraction?.summary ?? candidate.offerHypothesis,
             checkInParkingInfo: [...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals), ...(websiteExtraction?.arrivalSignals ?? []), ...(websiteExtraction?.parkingSignals ?? []), ...(websiteExtraction?.faqSignals ?? [])].join('\n'),
             reviewSignals: [...(analysis?.painSignals ?? candidate.painSignals), ...(analysis?.positiveSolvedSignals ?? candidate.positiveSolvedSignals), candidateText].filter(Boolean).join('\n'),
-            guestFrictionSignals: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
-            guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
+            guestFrictionSignals: analysis?.guestFrictionSignals.join('\n') ?? removeContactContradictions(candidate.risks, hasWebsiteEmail).join('\n'),
+            guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? removeContactContradictions(candidate.risks, hasWebsiteEmail).join('\n'),
             strengths: analysis?.strengths.join('\n') ?? [...candidate.signals, ...(websiteExtraction?.strengths ?? [])].join('\n'),
-            risks: analysis?.risks.join('\n') ?? [...candidate.risks, ...(websiteExtraction?.risks ?? [])].join('\n'),
+            risks: analysis?.risks.join('\n') ?? removeContactContradictions([...candidate.risks, ...(websiteExtraction?.risks ?? [])], hasWebsiteEmail).join('\n'),
             businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : websiteExtraction ? [...websiteExtraction.setupOpportunitySignals, ...websiteExtraction.fixOpportunitySignals].join('\n') : '',
             websiteExtraction,
             structuredQuickWins: quickWins,
@@ -1254,23 +1350,49 @@ function App() {
         const runningLead: Lead = {
             ...lead,
             needsAgentAnalysis: true,
-            sourceLimitations: [...new Set([...lead.sourceLimitations, 'Probíhá agentní analýza z dostupných CRM podkladů.'])],
+            latestAnalysisDiagnostic: {
+                mode: 'real-api',
+                analyzeProvider: 'unknown',
+                userMessage: lead.websiteExtraction ? 'Probíhá obchodní analýza z extrahovaného vlastního webu.' : 'Probíhá agentní analýza z dostupných CRM podkladů.',
+            },
+            sourceLimitations: [...new Set([...lead.sourceLimitations, lead.websiteExtraction ? 'Probíhá obchodní analýza z extrahovaného vlastního webu.' : 'Probíhá agentní analýza z dostupných CRM podkladů.'])],
         };
         setDraftLead(runningLead);
         persistLead(runningLead);
 
-        const response = await analyzeLead(candidateFromLead(runningLead), runningLead.notes);
+        try {
+            const analysisCandidate = candidateFromLead(runningLead);
+            const response = await analyzeLead(analysisCandidate, runningLead.notes);
 
-        if (!response.analysis) {
-            const nextLead: Lead = {
+            if (!response.analysis) {
+                const nextLead: Lead = {
+                    ...runningLead,
+                    latestAnalysisDiagnostic: response.diagnostic ?? { mode: 'error', analyzeProvider: 'unknown', userMessage: response.message },
+                    sourceLimitations: [...new Set([...runningLead.sourceLimitations, response.diagnostic?.userMessage || response.message])],
+                };
+                persistLead(nextLead);
+                return;
+            }
+
+            const normalizedAnalysis = normalizeAgentAnalysis(response.analysis, analysisCandidate);
+            const analyzedLead = applyAgentAnalysisToLead(runningLead, normalizedAnalysis);
+            persistLead({
+                ...analyzedLead,
+                latestAnalysisDiagnostic: response.diagnostic ?? { mode: normalizedAnalysis.provider === 'openai' ? 'real-api' : 'demo-fallback', analyzeProvider: normalizedAnalysis.provider, userMessage: response.message },
+                agentAnalysisProvider: normalizedAnalysis.provider === 'legacy' ? 'fallback' : normalizedAnalysis.provider,
+            });
+        } catch (error) {
+            persistLead({
                 ...runningLead,
-                sourceLimitations: [...new Set([...runningLead.sourceLimitations, response.diagnostic?.userMessage || response.message])],
-            };
-            persistLead(nextLead);
-            return;
+                latestAnalysisDiagnostic: {
+                    mode: 'error',
+                    analyzeProvider: 'unknown',
+                    fallbackReason: 'client_exception',
+                    userMessage: error instanceof Error ? error.message : 'Analýza z detailu leadu selhala.',
+                },
+                sourceLimitations: [...new Set([...runningLead.sourceLimitations, error instanceof Error ? error.message : 'Analýza z detailu leadu selhala.'])],
+            });
         }
-
-        persistLead(applyAgentAnalysisToLead(runningLead, normalizeAgentAnalysis(response.analysis, candidateFromLead(runningLead))));
     };
 
     const analyzeLeadScreenshots = async (lead: Lead) => {
@@ -2352,6 +2474,8 @@ interface LeadEditorProps {
 }
 
 function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
+    const showWebsiteAnalysisPanel = needsWebsiteAnalysis(draftLead);
+    const latestAnalysisDiagnostic = draftLead.latestAnalysisDiagnostic as { userMessage?: string; fallbackReason?: string; analyzeProvider?: string; debugId?: string; model?: string | null } | undefined;
     const agentBadges = [
         draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
         draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
@@ -2398,7 +2522,24 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     {includeScreenshotDataUrlsInExport ? <strong>Soubor může být velký a může obsahovat veřejné screenshoty.</strong> : <span>Screenshot dataUrl jsou v JSON exportu standardně vynechané.</span>}
                 </label>
 
-                {draftLead.createdFromAgentAnalysis ? (
+                {showWebsiteAnalysisPanel ? (
+                    <div className="scope-note warning-note website-analysis-note">
+                        <strong>Web byl přečten, ale obchodní analýza ještě neběžela.</strong>
+                        <span>Website Extractor pouze shromáždil evidence z vlastního webu. Klientský mini-audit, oslovení a nabídka vzniknou až po obchodní analýze z extrahovaného webu.</span>
+                        {latestAnalysisDiagnostic?.userMessage ? <span>{latestAnalysisDiagnostic.userMessage}</span> : null}
+                        {latestAnalysisDiagnostic?.fallbackReason ? <span>Fallback reason: {latestAnalysisDiagnostic.fallbackReason}</span> : null}
+                        <div className="button-group inline-actions">
+                            <button className="primary-button compact-button" onClick={() => onAnalyzeLead?.(draftLead)} type="button">
+                                <Sparkles size={16} aria-hidden="true" />
+                                Analyzovat z extrahovaného webu
+                            </button>
+                            <button className="secondary-button compact-button" onClick={() => document.getElementById('lead-screenshot-upload')?.click()} type="button">
+                                <Image size={16} aria-hidden="true" />
+                                Přidat screenshoty
+                            </button>
+                        </div>
+                    </div>
+                ) : draftLead.createdFromAgentAnalysis ? (
                     <div className="scope-note agent-origin-note">
                         <strong>Vytvořeno z Lead Finder Agent analýzy</strong>
                         <div className="metadata-row">
@@ -2428,6 +2569,7 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <span>{evidenceLevelLabels[draftLead.evidenceLevel]}</span>
                     {draftLead.websiteExtraction && ['completed', 'partial'].includes(draftLead.websiteExtraction.status) ? <span>Web přečten</span> : null}
                     <span>{draftLead.needsAgentAnalysis ? 'Needs agent analysis' : 'Evidence ready'}</span>
+                    <span>Další krok: {workflowNextAction(draftLead)}</span>
                 </div>
 
                 {draftLead.websiteExtraction ? (
@@ -2687,6 +2829,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
         draftLead.businessOpportunity,
     ].filter((value) => value.trim()).length;
     const completeQuickWins = structuredQuickWins.filter((win) => win.title.trim() && win.action.trim() && win.why.trim());
+    const waitingForWebsiteAnalysis = needsWebsiteAnalysis(draftLead);
     const checklist = [
         { label: 'alespon 1 verejny link', done: publicLinks.some((link) => link.url.trim()) },
         { label: 'alespon 1 silna stranka', done: Boolean(draftLead.strengths.trim()) },
@@ -2895,7 +3038,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                     <label className="secondary-button upload-button">
                         <Image size={18} aria-hidden="true" />
                         Nahrát screenshoty / fotky
-                        <input accept="image/*" multiple type="file" onChange={(event) => addScreenshots(event.target.files)} />
+                        <input accept="image/*" id="lead-screenshot-upload" multiple type="file" onChange={(event) => addScreenshots(event.target.files)} />
                     </label>
                     <button className="primary-button" disabled={screenshots.length === 0 || draftLead.screenshotAnalysisDiagnostic?.status === 'running'} onClick={() => onAnalyzeScreenshots?.(draftLead)} type="button">
                         <Sparkles size={18} aria-hidden="true" />
@@ -3191,6 +3334,12 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                 </div>
             </section>
 
+            {waitingForWebsiteAnalysis ? (
+                <div className="scope-note warning-note">
+                    <strong>Klientské výstupy čekají na obchodní analýzu.</strong>
+                    <span>Nezobrazují se tu prázdné audity ani oslovení. Nejdřív klikni na „Analyzovat z extrahovaného webu“ v detailu leadu.</span>
+                </div>
+            ) : (
             <div className="generated-grid">
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
@@ -3238,6 +3387,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                     value={draftLead.generatedOffer}
                 />
             </div>
+            )}
         </section>
     );
 }

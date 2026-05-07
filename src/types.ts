@@ -230,6 +230,8 @@ export interface Lead {
     screenshotAnalysis?: ScreenshotAnalysisResult;
     screenshotAnalysisDiagnostic?: ScreenshotAnalysisDiagnostic;
     websiteExtraction?: WebsiteExtractionResult;
+    latestAnalysisDiagnostic?: unknown;
+    websiteExtractionDiagnostic?: unknown;
     extractionStatus: ExtractionStatus;
     firstImpression: string;
     mainPhotoVerdict: MainPhotoVerdict;

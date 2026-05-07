@@ -228,6 +228,80 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
 };
 
 const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
+    const websiteExtraction = candidate.websiteExtraction;
+    const hasWebsiteEvidence = Boolean(websiteExtraction && ['completed', 'partial'].includes(websiteExtraction.status));
+    if (websiteExtraction && hasWebsiteEvidence) {
+        const pages = websiteExtraction.pagesExtracted.map((page) => page.url).join(', ') || websiteExtraction.websiteUrl;
+        const contactSignal = [
+            ...websiteExtraction.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`),
+            ...websiteExtraction.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
+        ];
+        const targetOffer = candidate.targetOffer === 'self-checkin-setup' && ![...websiteExtraction.automationSignals, ...websiteExtraction.guestGuideSignals, ...candidate.sourceSnippets].join(' ').toLowerCase().includes('self check-in')
+            ? 'guest-guide'
+            : candidate.targetOffer === 'skip' ? 'guest-guide' : candidate.targetOffer;
+        const quickWins = [
+            {
+                id: `quick-win-${crypto.randomUUID()}`,
+                title: 'Zpřehlednit stránku „Před příjezdem“',
+                why: 'Z přečtených veřejných stránek není jasně vidět jeden kompaktní blok pro příjezd, check-in, parkování a první kontakt.',
+                action: 'Přidat krátkou stránku nebo sekci s tím, kdy host dostane instrukce, kde zaparkuje a koho kontaktuje v den příjezdu.',
+                sourceEvidence: websiteExtraction.summary,
+            },
+            {
+                id: `quick-win-${crypto.randomUUID()}`,
+                title: 'Dodat krátkou FAQ sekci pro hosty',
+                why: 'Z přečtených veřejných stránek není jasně vidět přehled nejčastějších předpříjezdových otázek.',
+                action: 'Sepsat 5 až 7 odpovědí: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a vybavení pokoje.',
+                sourceEvidence: pages,
+            },
+            {
+                id: `quick-win-${crypto.randomUUID()}`,
+                title: 'Zviditelnit praktické informace u kontaktu',
+                why: websiteExtraction.contact.emails.length > 0 ? 'E-mail je na vlastním webu nalezený; hostovi může pomoct vědět, kdy ho použít.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
+                action: 'Vedle kontaktu doplnit krátkou větu pro situace jako příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
+                sourceEvidence: websiteExtraction.contact.contactPageUrl || websiteExtraction.websiteUrl,
+            },
+        ];
+
+        return {
+            runId: candidate.runId,
+            analyzedAt: new Date().toISOString(),
+            provider: candidate.isMock ? 'demo-fallback' : 'legacy',
+            model: null,
+            firstImpression: `${candidate.name} má vlastní veřejný web, který Website Extractor přečetl ve stavu ${websiteExtraction.status}. Kontakt je ${contactSignal.length > 0 ? 'nalezený' : 'zatím slabý'}; obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
+            strengths: [...new Set([...websiteExtraction.strengths, ...contactSignal, ...candidate.signals])].slice(0, 5),
+            risks: [...new Set([...websiteExtraction.risks, 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
+            guestFrictionSignals: websiteExtraction.missingPublicInfoSignals.length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
+            quickWins,
+            miniAudit: `Mini-audit veřejného webu: ${candidate.name}\n\nPrvní dojem: vlastní web je dohledatelný a kontakt je ${contactSignal.length > 0 ? 'viditelný' : 'potřeba ještě ověřit'}.\n\nCo působí dobře: ${[...websiteExtraction.strengths, ...contactSignal].slice(0, 3).join(', ') || 'základní prezentace je dostupná'}.\n\nCo bych zlepšil: z veřejných stránek není jasně vidět jedno místo pro příjezd, parkování, check-in a nejčastější otázky hostů.\n\nDalší krok: poslat tři krátké návrhy, které lze ověřit proti webu.`,
+            outreachEmail: `Dobrý den,\n\nnarazil jsem na veřejný web ${candidate.name} a první dojem působí dobře. Zaujalo mě hlavně: ${websiteExtraction.strengths[0] || contactSignal[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosta by šly na webu poskládat víc do jednoho krátkého bloku před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech. Má smysl vám to poslat?\n\nDavid`,
+            followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k veřejnému webu ${candidate.name} - příjezd, parkování, check-in a praktické informace pro hosta.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
+            offerRecommendation: 'Začít krátkým auditem veřejného webu a předpříjezdových informací. Pokud už interní guest guide existuje, ověřit hlavně jeho návaznost na zprávy hostům.',
+            confidence: 'low',
+            fitVerdict: candidate.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : candidate.fitVerdict,
+            opportunityScore: Math.min(candidate.opportunityScore || 58, 64),
+            opportunityType: 'setup-automation',
+            automationNeedScore: Math.max(candidate.automationNeedScore, 58),
+            publicMaturityScore: candidate.publicMaturityScore,
+            reviewFrictionScore: 0,
+            painSignals: [],
+            positiveSolvedSignals: [...websiteExtraction.strengths, ...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals],
+            noPainReason: 'Website extraction nenašla jednoznačný veřejný pain signal; jde o opatrný setup lead.',
+            targetOffer,
+            offerHypothesis: 'Setup příležitost: z veřejného webu lze navrhnout zpřehlednění předpříjezdových informací a FAQ, bez tvrzení, že proces neexistuje interně.',
+            websiteSignals: [...new Set([...candidate.websiteSignals, ...websiteExtraction.websiteSignals, ...websiteExtraction.arrivalSignals, ...websiteExtraction.faqSignals])],
+            contactSignals: contactSignal,
+            missingAutomationSignals: websiteExtraction.missingPublicInfoSignals,
+            likelyManualProcessSignals: websiteExtraction.likelyManualProcessSignals,
+            qualificationReason: 'Fallback analýza z Website Extractoru: vlastní web a kontakt existují, ale konkrétní obchodní výstup má nízkou jistotu bez OpenAI nebo ručního ověření.',
+            alreadySolvedSignals: [...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals, ...websiteExtraction.guestGuideSignals],
+            missingEvidence: websiteExtraction.evidenceLimits,
+            contradictionWarnings: [],
+            evidenceLimits: ['Fallback analýza bez OpenAI; výstup je interní návrh s nízkou jistotou.', 'Website Extractor četl pouze vlastní veřejný web provozu.', 'Guest guide může existovat neveřejně po rezervaci.', 'E-maily se automaticky neposílají.'],
+            isMock: candidate.isMock,
+        };
+    }
+
     const evidence = candidate.sourceSnippets[0] || candidate.evidenceSummary;
     const mainFriction = candidate.risks[0] || 'Verejne informace jsou omezeny na search snippet.';
     const isSetup = candidate.opportunityType === 'setup-automation';
