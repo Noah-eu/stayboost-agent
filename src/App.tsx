@@ -2,7 +2,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
-import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
+import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
 import {
     LeadAgentAnalysis,
@@ -109,6 +109,8 @@ const emptyLead = (): Lead => ({
     proposedQuickWins: [],
     structuredQuickWins: [],
     selectedOfferAngle: 'main-photo',
+    internalAgentBrief: '',
+    clientMiniAudit: '',
     generatedMiniAudit: '',
     generatedOutreach: '',
     generatedFollowUp: '',
@@ -310,6 +312,9 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
         structuredQuickWins: migrateQuickWins(lead),
         selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
+        internalAgentBrief: lead.internalAgentBrief ?? '',
+        clientMiniAudit: lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '',
+        generatedMiniAudit: lead.generatedMiniAudit ?? lead.clientMiniAudit ?? '',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
         addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
         agentLeadStatus: inferAgentLeadStatus(lead),
@@ -525,8 +530,7 @@ const candidateFromLead = (lead: Lead): LeadAgentCandidate => ({
 
 const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead => {
     const quickWins = analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
-
-    return {
+    const analyzedLead: Lead = {
         ...lead,
         status: 'Audit pripraven',
         createdFromAgentAnalysis: true,
@@ -558,12 +562,18 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         strengths: analysis.strengths.join('\n'),
         risks: analysis.risks.join('\n'),
         businessOpportunity: `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}`,
-        generatedMiniAudit: analysis.miniAudit,
-        generatedOutreach: analysis.outreachEmail,
-        generatedFollowUp: analysis.followUp,
-        generatedOffer: analysis.offerRecommendation,
+        internalAgentBrief: analysis.miniAudit,
         extractionStatus: 'completed',
         sourceLimitations: analysis.evidenceLimits,
+    };
+
+    return {
+        ...analyzedLead,
+        clientMiniAudit: generateMiniAudit(analyzedLead),
+        generatedMiniAudit: generateMiniAudit(analyzedLead),
+        generatedOutreach: generateFirstOutreach(analyzedLead),
+        generatedFollowUp: generateFollowUp(analyzedLead),
+        generatedOffer: generateOffer(analyzedLead),
     };
 };
 
@@ -671,7 +681,9 @@ function App() {
 
     const updateDraft = <Field extends keyof Lead>(field: Field, value: Lead[Field]) => {
         setDraftLead((current) => {
-            const nextLead = { ...current, [field]: value };
+            const nextLead = field === 'clientMiniAudit'
+                ? { ...current, clientMiniAudit: String(value), generatedMiniAudit: String(value) }
+                : { ...current, [field]: value };
 
             if (!isCreating && selectedLeadId === current.id) {
                 setLeads((currentLeads) => currentLeads.map((lead) => (lead.id === current.id ? nextLead : lead)));
@@ -1028,7 +1040,7 @@ function App() {
             candidateText,
         ].filter(Boolean).join('\n');
         const selectedOfferAngle = offerAngleForAgentLead(analysis?.opportunityType ?? candidate.opportunityType, analysis?.targetOffer ?? candidate.targetOffer, candidate.recommendedAngle);
-        const nextLead: Lead = {
+        const nextLeadBase: Lead = {
             ...emptyLead(),
             id: `lead-${crypto.randomUUID()}`,
             name: candidate.name,
@@ -1092,12 +1104,22 @@ function App() {
             risks: analysis?.risks.join('\n') ?? candidate.risks.join('\n'),
             businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : '',
             structuredQuickWins: quickWins,
-            generatedMiniAudit: analysis?.miniAudit ?? '',
-            generatedOutreach: analysis?.outreachEmail ?? '',
-            generatedFollowUp: analysis?.followUp ?? '',
-            generatedOffer: analysis?.offerRecommendation ?? '',
+            internalAgentBrief: analysis?.miniAudit ?? '',
+            clientMiniAudit: '',
+            generatedMiniAudit: '',
+            generatedOutreach: '',
+            generatedFollowUp: '',
+            generatedOffer: '',
             selectedOfferAngle,
         };
+        const nextLead: Lead = analysis ? {
+            ...nextLeadBase,
+            clientMiniAudit: generateMiniAudit(nextLeadBase),
+            generatedMiniAudit: generateMiniAudit(nextLeadBase),
+            generatedOutreach: generateFirstOutreach(nextLeadBase),
+            generatedFollowUp: generateFollowUp(nextLeadBase),
+            generatedOffer: generateOffer(nextLeadBase),
+        } : nextLeadBase;
 
         setLeads((currentLeads) => [nextLead, ...currentLeads]);
         setSelectedLeadId(nextLead.id);
@@ -1239,14 +1261,19 @@ function App() {
         persistLead(nextLead);
     };
 
-    const generateText = (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => {
+    const generateText = (field: 'internalAgentBrief' | 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => {
         const generators = {
+            internalAgentBrief: generateInternalAgentBrief,
+            clientMiniAudit: generateMiniAudit,
             generatedMiniAudit: generateMiniAudit,
             generatedOutreach: generateFirstOutreach,
             generatedFollowUp: generateFollowUp,
             generatedOffer: generateOffer,
         };
-        const nextLead = { ...draftLead, [field]: generators[field](draftLead) };
+        const generatedText = generators[field](draftLead);
+        const nextLead = field === 'clientMiniAudit' || field === 'generatedMiniAudit'
+            ? { ...draftLead, clientMiniAudit: generatedText, generatedMiniAudit: generatedText }
+            : { ...draftLead, [field]: generatedText };
 
         persistLead(nextLead);
     };
@@ -2058,7 +2085,7 @@ interface LeadEditorProps {
     onChange: <Field extends keyof Lead>(field: Field, value: Lead[Field]) => void;
     onCopyText?: (textId: string, value: string) => void;
     onDeleteLead?: (leadId: string) => void;
-    onGenerateText?: (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
+    onGenerateText?: (field: 'internalAgentBrief' | 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
     onPrepareAudit?: () => void;
     onAnalyzeLead?: (lead: Lead) => void;
     onAnalyzeScreenshots?: (lead: Lead) => void;
@@ -2716,9 +2743,13 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                     {!canGenerateAudit ? <p className="section-help">Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani.</p> : null}
                 </div>
                 <div className="button-group">
-                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedMiniAudit')} type="button">
+                    <button className="secondary-button" onClick={() => onGenerateText?.('internalAgentBrief')} type="button">
+                        <ClipboardCheck size={18} aria-hidden="true" />
+                        Vygenerovat interní poznámky agenta
+                    </button>
+                    <button className="secondary-button" onClick={() => onGenerateText?.('clientMiniAudit')} type="button">
                         <Sparkles size={18} aria-hidden="true" />
-                        Vygenerovat mini-audit
+                        Vygenerovat klientský mini-audit
                     </button>
                     <button className="secondary-button" onClick={() => onGenerateText?.('generatedOutreach')} type="button">
                         <Mail size={18} aria-hidden="true" />
@@ -2876,17 +2907,26 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
             <div className="generated-grid">
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
-                    field="generatedMiniAudit"
-                    label="Vygenerovany mini-audit"
+                    field="internalAgentBrief"
+                    label="Interní poznámky agenta"
                     onChange={onChange}
                     onCopyText={onCopyText}
-                    textId="mini-audit"
-                    value={draftLead.generatedMiniAudit}
+                    textId="internal-agent-brief"
+                    value={draftLead.internalAgentBrief}
+                />
+                <GeneratedTextArea
+                    copiedTextId={copiedTextId}
+                    field="clientMiniAudit"
+                    label="Klientský mini-audit"
+                    onChange={onChange}
+                    onCopyText={onCopyText}
+                    textId="client-mini-audit"
+                    value={draftLead.clientMiniAudit || draftLead.generatedMiniAudit}
                 />
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
                     field="generatedOutreach"
-                    label="Prvni obchodni osloveni"
+                    label="První oslovení"
                     onChange={onChange}
                     onCopyText={onCopyText}
                     textId="outreach"
@@ -2895,7 +2935,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
                     field="generatedFollowUp"
-                    label="Follow-up zprava"
+                    label="Follow-up"
                     onChange={onChange}
                     onCopyText={onCopyText}
                     textId="follow-up"
@@ -2904,7 +2944,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
                     field="generatedOffer"
-                    label="Navrh placene nabidky / dalsiho kroku"
+                    label="Nabídka dalšího kroku"
                     onChange={onChange}
                     onCopyText={onCopyText}
                     textId="offer"
@@ -2917,7 +2957,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
 
 interface GeneratedTextAreaProps {
     copiedTextId: string;
-    field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer';
+    field: 'internalAgentBrief' | 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer';
     label: string;
     onChange: LeadEditorProps['onChange'];
     onCopyText?: (textId: string, value: string) => void;
@@ -2926,17 +2966,18 @@ interface GeneratedTextAreaProps {
 }
 
 function GeneratedTextArea({ copiedTextId, field, label, onChange, onCopyText, textId, value }: GeneratedTextAreaProps) {
+    const displayValue = value ?? '';
     const handleCopy = (event: MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        onCopyText?.(textId, value);
+        onCopyText?.(textId, displayValue);
     };
 
     return (
         <div className="stacked-label generated-output">
             <div className="label-row">
                 <span>{label}</span>
-                <button className="copy-button" disabled={!value.trim()} onClick={handleCopy} type="button">
+                <button className="copy-button" disabled={!displayValue.trim()} onClick={handleCopy} type="button">
                     <Clipboard size={16} aria-hidden="true" />
                     {copiedTextId === textId ? 'Zkopirovano' : 'Zkopirovat text'}
                 </button>
@@ -2944,7 +2985,7 @@ function GeneratedTextArea({ copiedTextId, field, label, onChange, onCopyText, t
             <textarea
                 aria-label={label}
                 placeholder="Zatim neni nic vygenerovano. Vypln verejny audit a pouzij tlacitko pro generovani."
-                value={value}
+                value={displayValue}
                 onChange={(event) => onChange(field, event.target.value)}
                 rows={12}
             />

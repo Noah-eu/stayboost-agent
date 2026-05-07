@@ -96,6 +96,8 @@ export const mockLeads: Lead[] = [
             },
         ],
         selectedOfferAngle: 'main-photo',
+        internalAgentBrief: '',
+        clientMiniAudit: '',
         generatedMiniAudit: '',
         generatedOutreach:
             'Dobry den, vsiml jsem si nekolika rychlych prilezitosti, jak zlepsit prvni dojem hosta u vaseho penzionu. Rad vam poslu kratky mini-audit bez zavazku.',
@@ -167,6 +169,8 @@ export const mockLeads: Lead[] = [
             },
         ],
         selectedOfferAngle: 'description',
+        internalAgentBrief: '',
+        clientMiniAudit: '',
         generatedMiniAudit: '',
         generatedOutreach: '',
         generatedFollowUp: '',

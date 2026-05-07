@@ -205,6 +205,8 @@ export interface Lead {
     proposedQuickWins: string[];
     structuredQuickWins: QuickWin[];
     selectedOfferAngle: OfferAngle;
+    internalAgentBrief: string;
+    clientMiniAudit: string;
     generatedMiniAudit: string;
     generatedOutreach: string;
     generatedFollowUp: string;

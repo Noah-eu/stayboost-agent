@@ -227,9 +227,9 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const prompt = `Vrat pouze strict JSON bez markdownu. Analyzuj jen dodane screenshoty/fotky verejne prezentace pro StayBoost lead.
 Nesmíš tvrdit, ze jsi precetl celou Booking/Airbnb/Google/OTA stranku, nesmis scrapovat URL a nesmis odvozovat neverejne guest instrukce.
 OTA URL jsou jen odkazy k otevreni. Search snippet neni kompletni OTA profil. Screenshot je evidence jen v rozsahu toho, co je citelne videt na obrazku.
-Guest guide: pokud na screenshotu neni videt, nesmis psat "nemaji guest guide". Pouzij evidenceLimits nebo formulaci "Nelze verejne overit, zda maji guest guide" / "Guest guide muze existovat neverejne".
+Guest guide: pokud na screenshotu neni videt, nesmis psat "nemaji guest guide". Pouzij evidenceLimits nebo formulaci "Nelze verejne overit, zda maji guest guide" / "Guest guide muze existovat neverejne". Do klientsky pouzitelnych quickWins guest guide nezminuj, pokud hlavni viditelna evidence resi hlavne fotky, galerii, popis nebo social proof.
 Pokud screenshot neni citelny, uved to v evidenceLimits a drz confidence low.
-Vytvor presne 3 quickWins. Quick win pro guest guide musi byt podmineny: "Pokud jeste nemaji host guide... pokud ho maji, zkontrolovat napojeni na zpravy hostum.".
+Vytvor presne 3 quickWins prirozenou cestinou pro majitele ubytovani. Kdyz je guest guide opravdu relevantni, formuluj ho podminene a cele: "Pokud hoste nedostavaji pred prijezdem jednoduchy prehled, pripravil bych kratky QR/pruvodce; pokud ho uz maji, zkontroloval bych, jestli je dobre napojeny na zpravy hostum." Nepouzivej useknute tri tecky ani technicke interni formulace.
 Lead: ${trimText(body.leadName || 'Neznamy lead', 180)}
 Existing summary: ${trimText(body.existingCandidateSummary || '', 700)}
 Public links as references only: ${JSON.stringify((body.publicLinks || []).map((link) => ({ sourceType: link.sourceType, label: trimText(link.label, 80), url: trimText(link.url, 240), notes: trimText(link.notes, 160) })))}
