@@ -2,6 +2,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
+import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
 import {
@@ -693,6 +694,7 @@ function App() {
     const [draftLead, setDraftLead] = useState<Lead>(() => leads[0] ?? emptyLead());
     const [isCreating, setIsCreating] = useState(false);
     const [copiedTextId, setCopiedTextId] = useState('');
+    const [includeScreenshotDataUrlsInExport, setIncludeScreenshotDataUrlsInExport] = useState(false);
     const [extractingWebsiteCandidateIds, setExtractingWebsiteCandidateIds] = useState<string[]>([]);
     const [leadAgentSession, setLeadAgentSession] = useState<LeadAgentSession>(() => {
         const storedSession = localStorage.getItem(agentStorageKey);
@@ -1422,6 +1424,34 @@ function App() {
         }
     };
 
+    const exportRunJson = () => {
+        downloadJsonFile(debugFileNames.run(leadAgentSession.runId), createRunDebugExport(leadAgentSession, { includeScreenshotDataUrls: includeScreenshotDataUrlsInExport }));
+    };
+
+    const exportCandidateJson = (candidate: LeadAgentCandidate) => {
+        downloadJsonFile(
+            debugFileNames.candidate(candidate.name || candidate.id),
+            createCandidateDebugExport(candidate, { session: leadAgentSession, analysis: leadAgentSession.analyses[candidate.id], diagnostic: leadAgentSession.diagnostic }, { includeScreenshotDataUrls: includeScreenshotDataUrlsInExport }),
+        );
+    };
+
+    const exportWebsiteExtractionJson = (extraction: WebsiteExtractionResult, candidate?: LeadAgentCandidate, lead?: Lead) => {
+        downloadJsonFile(
+            debugFileNames.websiteExtraction(candidate?.name || lead?.name || extraction.websiteUrl || 'website-extraction'),
+            createWebsiteExtractionDebugExport(extraction, { candidate, lead, diagnostic: leadAgentSession.diagnostic }, { includeScreenshotDataUrls: includeScreenshotDataUrlsInExport }),
+        );
+    };
+
+    const exportLeadJson = (lead: Lead) => {
+        const analysis = lead.leadAgentRunId
+            ? Object.values(leadAgentSession.analyses).find((candidateAnalysis) => candidateAnalysis.runId === lead.leadAgentRunId)
+            : undefined;
+        downloadJsonFile(
+            debugFileNames.lead(lead.name || lead.id),
+            createLeadDebugExport(lead, { diagnostics: leadAgentSession.diagnostic, analysis }, { includeScreenshotDataUrls: includeScreenshotDataUrlsInExport }),
+        );
+    };
+
     const renderScreen = () => {
         if (activeScreen === 'dashboard') {
             return <Dashboard leads={leads} stats={stats} onSelectLead={selectLead} />;
@@ -1438,6 +1468,9 @@ function App() {
                     onContinueStoredSession={dismissStoredBanner}
                     onDeleteDemoData={deleteDemoData}
                     onDeleteResults={deleteAgentResults}
+                    onExportCandidate={exportCandidateJson}
+                    onExportRun={exportRunJson}
+                    onExportWebsiteExtraction={exportWebsiteExtractionJson}
                     onNewSearch={() => resetAgentResults(true)}
                     onRejectCandidate={rejectAgentCandidate}
                     onExtractWebsite={extractCandidateWebsite}
@@ -1513,7 +1546,11 @@ function App() {
                 onChange={updateDraft}
                 onCopyText={copyText}
                 onDeleteLead={deleteLead}
+                onExportLead={exportLeadJson}
+                onExportWebsiteExtraction={exportWebsiteExtractionJson}
                 onGenerateText={generateText}
+                includeScreenshotDataUrlsInExport={includeScreenshotDataUrlsInExport}
+                onToggleIncludeScreenshotDataUrls={setIncludeScreenshotDataUrlsInExport}
                 onPrepareAudit={prepareAuditObservations}
                 onSave={saveDraft}
             />
@@ -1635,6 +1672,9 @@ interface LeadFinderPanelProps {
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
     onClearAnalysis: (candidateId: string) => void;
     onExtractWebsite: (candidate: LeadAgentCandidate) => void;
+    onExportRun: () => void;
+    onExportCandidate: (candidate: LeadAgentCandidate) => void;
+    onExportWebsiteExtraction: (extraction: WebsiteExtractionResult, candidate?: LeadAgentCandidate) => void;
     extractingWebsiteCandidateIds: string[];
     onAddCandidate: (candidate: LeadAgentCandidate) => void;
     onRejectCandidate: (candidateId: string) => void;
@@ -1650,6 +1690,9 @@ function LeadFinderPanel({
     onDeleteResults,
     onDeleteDemoData,
     onExtractWebsite,
+    onExportCandidate,
+    onExportRun,
+    onExportWebsiteExtraction,
     onNewSearch,
     onRejectCandidate,
     onRunSearch,
@@ -1710,6 +1753,10 @@ function LeadFinderPanel({
                         </button>
                         <button className="secondary-button" onClick={onDeleteResults} type="button">
                             Smazat výsledky hledání
+                        </button>
+                        <button className="secondary-button" disabled={session.candidates.length === 0 && !session.diagnostic} onClick={onExportRun} type="button">
+                            <Clipboard size={18} aria-hidden="true" />
+                            Exportovat run JSON
                         </button>
                         <button className="secondary-button" onClick={onCheckHealth} type="button">
                             <Sparkles size={18} aria-hidden="true" />
@@ -2024,6 +2071,10 @@ function LeadFinderPanel({
                                                 {!canAddCandidate ? (
                                                     <div className="scope-note warning-note compact-warning">Slaby/skip kandidat. Neposilat osloveni bez dalsiho overeni kontaktu, painu nebo setup mezery.</div>
                                                 ) : null}
+                                                <button className="secondary-button compact-button" onClick={() => onExportCandidate(candidate)} type="button">
+                                                    <Clipboard size={16} aria-hidden="true" />
+                                                    Exportovat kandidáta JSON
+                                                </button>
                                                 <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId) || !canAddCandidate} onClick={addCandidate} type="button">
                                                     <Plus size={16} aria-hidden="true" />
                                                     {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
@@ -2032,7 +2083,7 @@ function LeadFinderPanel({
                                                     Odebrat z výsledků
                                                 </button>
                                             </div>
-                                            {candidate.websiteExtraction ? <WebsiteExtractionPanel extraction={candidate.websiteExtraction} /> : null}
+                                            {candidate.websiteExtraction ? <WebsiteExtractionPanel extraction={candidate.websiteExtraction} onExport={() => onExportWebsiteExtraction(candidate.websiteExtraction as WebsiteExtractionResult, candidate)} /> : null}
                                             {analysis ? <AgentAnalysisPreview analysis={analysis} diagnostic={session.diagnostic} onClear={() => onClearAnalysis(candidate.id)} /> : null}
                                         </td>
                                     </tr>
@@ -2047,7 +2098,7 @@ function LeadFinderPanel({
     );
 }
 
-function WebsiteExtractionPanel({ extraction }: { extraction: WebsiteExtractionResult }) {
+function WebsiteExtractionPanel({ extraction, onExport }: { extraction: WebsiteExtractionResult; onExport?: () => void }) {
     const hasContact = extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0;
 
     return (
@@ -2058,6 +2109,12 @@ function WebsiteExtractionPanel({ extraction }: { extraction: WebsiteExtractionR
                     <strong>{extraction.status}</strong>
                     <span>{extraction.summary}</span>
                 </div>
+                {onExport ? (
+                    <button className="secondary-button compact-button" onClick={onExport} type="button">
+                        <Clipboard size={16} aria-hidden="true" />
+                        Exportovat extrakci JSON
+                    </button>
+                ) : null}
             </div>
             <div className="metadata-row">
                 <span>{extraction.provider}</span>
@@ -2286,11 +2343,15 @@ interface LeadEditorProps {
     onPrepareAudit?: () => void;
     onAnalyzeLead?: (lead: Lead) => void;
     onAnalyzeScreenshots?: (lead: Lead) => void;
+    onExportLead?: (lead: Lead) => void;
+    onExportWebsiteExtraction?: (extraction: WebsiteExtractionResult, candidate?: LeadAgentCandidate, lead?: Lead) => void;
+    includeScreenshotDataUrlsInExport?: boolean;
+    onToggleIncludeScreenshotDataUrls?: (include: boolean) => void;
     onSave: (event?: FormEvent) => void;
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
     const agentBadges = [
         draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
         draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
@@ -2311,10 +2372,16 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyz
                     </div>
                     <div className="button-group">
                         {!isCreating ? (
-                            <button className="secondary-button danger-button" onClick={() => onDeleteLead?.(draftLead.id)} type="button">
-                                <Trash2 size={18} aria-hidden="true" />
-                                Smazat lead
-                            </button>
+                            <>
+                                <button className="secondary-button" onClick={() => onExportLead?.(draftLead)} type="button">
+                                    <Clipboard size={18} aria-hidden="true" />
+                                    Exportovat lead JSON
+                                </button>
+                                <button className="secondary-button danger-button" onClick={() => onDeleteLead?.(draftLead.id)} type="button">
+                                    <Trash2 size={18} aria-hidden="true" />
+                                    Smazat lead
+                                </button>
+                            </>
                         ) : null}
                         <button className="primary-button" type="submit">
                             <Save size={18} aria-hidden="true" />
@@ -2322,6 +2389,14 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyz
                         </button>
                     </div>
                 </div>
+
+                <label className="scope-note export-option-note">
+                    <span>
+                        <input checked={includeScreenshotDataUrlsInExport} onChange={(event) => onToggleIncludeScreenshotDataUrls?.(event.target.checked)} type="checkbox" />
+                        Zahrnout obrázky jako dataUrl
+                    </span>
+                    {includeScreenshotDataUrlsInExport ? <strong>Soubor může být velký a může obsahovat veřejné screenshoty.</strong> : <span>Screenshot dataUrl jsou v JSON exportu standardně vynechané.</span>}
+                </label>
 
                 {draftLead.createdFromAgentAnalysis ? (
                     <div className="scope-note agent-origin-note">
@@ -2362,6 +2437,10 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyz
                         <span>Kontakt: {[...draftLead.websiteExtraction.contact.emails, ...draftLead.websiteExtraction.contact.phones].join(', ') || 'nenalezen'}</span>
                         <span>Stránky: {draftLead.websiteExtraction.pagesExtracted.map((page) => page.url).join(', ') || 'žádná stránka nebyla přečtena'}</span>
                         <span>Website Extractor čte pouze vlastní veřejný web provozu. OTA stránky nebyly automaticky čtené.</span>
+                        <button className="secondary-button compact-button" onClick={() => onExportWebsiteExtraction?.(draftLead.websiteExtraction as WebsiteExtractionResult, undefined, draftLead)} type="button">
+                            <Clipboard size={16} aria-hidden="true" />
+                            Exportovat extrakci JSON
+                        </button>
                     </div>
                 ) : null}
 
