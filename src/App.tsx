@@ -305,6 +305,32 @@ function App() {
         persistLead(draftLead);
     };
 
+    const deleteLead = (leadId: string) => {
+        const leadToDelete = leads.find((lead) => lead.id === leadId);
+
+        if (!leadToDelete) {
+            return;
+        }
+
+        const confirmed = window.confirm(`Opravdu smazat lead "${leadToDelete.name || 'bez nazvu'}"? Tato akce nejde vratit zpet.`);
+
+        if (!confirmed) {
+            return;
+        }
+
+        setLeads((currentLeads) => {
+            const remainingLeads = currentLeads.filter((lead) => lead.id !== leadId);
+            const nextSelectedLead = remainingLeads[0];
+
+            setSelectedLeadId(nextSelectedLead?.id ?? '');
+            setDraftLead(nextSelectedLead ?? emptyLead());
+            setIsCreating(false);
+            setActiveScreen(remainingLeads.length > 0 ? 'leads' : 'dashboard');
+
+            return remainingLeads;
+        });
+    };
+
     const updateLeadSearchSession = <Field extends keyof LeadSearchSession>(field: Field, value: LeadSearchSession[Field]) => {
         setLeadSearchSession((currentSession) => ({ ...currentSession, [field]: value }));
     };
@@ -500,7 +526,7 @@ function App() {
         }
 
         if (activeScreen === 'leads') {
-            return <LeadList leads={leads} onCreateLead={startNewLead} onSelectLead={selectLead} selectedLeadId={selectedLeadId} />;
+            return <LeadList leads={leads} onCreateLead={startNewLead} onDeleteLead={deleteLead} onSelectLead={selectLead} selectedLeadId={selectedLeadId} />;
         }
 
         if (!selectedLead && !isCreating) {
@@ -555,6 +581,7 @@ function App() {
                 isCreating={isCreating}
                 onChange={updateDraft}
                 onCopyText={copyText}
+                onDeleteLead={deleteLead}
                 onGenerateText={generateText}
                 onPrepareAudit={prepareAuditObservations}
                 onSave={saveDraft}
@@ -824,10 +851,11 @@ interface LeadListProps {
     leads: Lead[];
     selectedLeadId: string;
     onCreateLead: () => void;
+    onDeleteLead: (leadId: string) => void;
     onSelectLead: (leadId: string, nextScreen?: Screen) => void;
 }
 
-function LeadList({ leads, selectedLeadId, onCreateLead, onSelectLead }: LeadListProps) {
+function LeadList({ leads, selectedLeadId, onCreateLead, onDeleteLead, onSelectLead }: LeadListProps) {
     return (
         <section className="panel">
             <div className="panel-header">
@@ -850,6 +878,7 @@ function LeadList({ leads, selectedLeadId, onCreateLead, onSelectLead }: LeadLis
                             <th>Mesto</th>
                             <th>Stav</th>
                             <th>Dalsi follow-up</th>
+                            <th>Akce</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -865,6 +894,19 @@ function LeadList({ leads, selectedLeadId, onCreateLead, onSelectLead }: LeadLis
                                     <span className="status-pill">{lead.status}</span>
                                 </td>
                                 <td>{lead.nextFollowUpDate || 'Nenastaveno'}</td>
+                                <td>
+                                    <button
+                                        className="secondary-button compact-button danger-button"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onDeleteLead(lead.id);
+                                        }}
+                                        type="button"
+                                    >
+                                        <Trash2 size={16} aria-hidden="true" />
+                                        Smazat lead
+                                    </button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -879,13 +921,14 @@ interface LeadEditorProps {
     isCreating?: boolean;
     onChange: <Field extends keyof Lead>(field: Field, value: Lead[Field]) => void;
     onCopyText?: (textId: string, value: string) => void;
+    onDeleteLead?: (leadId: string) => void;
     onGenerateText?: (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
     onPrepareAudit?: () => void;
     onSave: (event?: FormEvent) => void;
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onDeleteLead, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
     return (
         <form className="detail-stack" onSubmit={onSave}>
             <section className="panel form-panel">
@@ -894,10 +937,18 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                         <p className="eyebrow">{isCreating ? 'Novy zaznam' : 'Editace'}</p>
                         <h2>{isCreating ? 'Pridat lead' : draftLead.name}</h2>
                     </div>
-                    <button className="primary-button" type="submit">
-                        <Save size={18} aria-hidden="true" />
-                        Ulozit
-                    </button>
+                    <div className="button-group">
+                        {!isCreating ? (
+                            <button className="secondary-button danger-button" onClick={() => onDeleteLead?.(draftLead.id)} type="button">
+                                <Trash2 size={18} aria-hidden="true" />
+                                Smazat lead
+                            </button>
+                        ) : null}
+                        <button className="primary-button" type="submit">
+                            <Save size={18} aria-hidden="true" />
+                            Ulozit
+                        </button>
+                    </div>
                 </div>
 
                 <LeadCoreFields draftLead={draftLead} onChange={onChange} />
