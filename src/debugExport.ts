@@ -188,6 +188,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         removedInvalidSignals: lead.evidenceCanonicalizationDiagnostic?.removedInvalidSignals ?? [],
         removedInvalidPhones: lead.evidenceCanonicalizationDiagnostic?.removedInvalidPhones ?? [],
         removedStaleSourceMaterials: lead.evidenceCanonicalizationDiagnostic?.removedStaleSourceMaterials ?? 0,
+        staleSourceMaterialTitlesRemoved: lead.evidenceCanonicalizationDiagnostic?.staleSourceMaterialTitlesRemoved ?? [],
         ...clientTextSanitizerDiagnostics(clientOutputs),
         openAIIncomplete: latestDiagnostic?.fallbackReason === 'openai_incomplete' || context.diagnostics?.fallbackReason === 'openai_incomplete',
         diagnostics: context.diagnostics,

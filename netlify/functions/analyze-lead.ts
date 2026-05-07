@@ -206,7 +206,15 @@ const sanitizeClientText = (value = '') => {
         .replace(/Na webu je dohledateln[yý] e-mail\.?/g, 'e-mail je na webu viditelný.')
         .replace(/Na webu je dohledateln[yý] telefon\.?/g, 'telefon je na webu viditelný.')
         .replace(/Na p[řr]e[čc]ten[eé]m ve[řr]ejn[eé]m webu nen[ií] jasn[eě] strukturovan[aá] sekce p[řr][ií]jezd \/ check-in\.?/g, 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.')
-        .replace(/To m[ůu][žz]e zbyte[čc]n[eě] p[řr]id[aá]vat dotazy na recepci\.?/gi, 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.');
+        .replace(/To m[ůu][žz]e zbyte[čc]n[eě] p[řr]id[aá]vat dotazy na recepci\.?/gi, 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.')
+        .replace(/bez jasn[eé]ho n[aá]vodu volaj[ií] zbyte[čc]n[eě] na recepci/gi, 'jasný návod může snížit nejistotu hosta a omezit opakované dotazy před příjezdem')
+        .replace(/volaj[ií] zbyte[čc]n[eě]/gi, 'mohou posílat opakované dotazy')
+        .replace(/zbyte[čc]n[eě] p[řr]id[aá]v[aá] dotazy/gi, 'může vést k opakovaným dotazům')
+        .replace(/zp[ůu]sobuje probl[eé]m/gi, 'může vytvářet nejistotu')
+        .replace(/host[eé] jsou zmaten[ií]/gi, 'host nemusí hned najít potřebné informace')
+        .replace(/Parkov[aá]n[ií] b[yý]v[aá] [čc]ast[yý] dotaz a jeho nejasnost zvy[šs]uje stres hosta je[šs]t[eě] p[řr]ed p[řr][ií]jezdem\.?/gi, 'Jasně popsané parkování pomáhá hostovi rychleji najít praktické informace před příjezdem.')
+        .replace(/Kr[aá]tk[eé] odpov[eě]di na nej[čc]ast[eě]j[šs][ií] dotazy sn[ií][žz][ií] po[čc]et opakovan[yý]ch zpr[aá]v a telefon[aá]t[ůu]\.?/gi, 'Krátké odpovědi mohou omezit opakované dotazy a pomoci hostovi rychleji se zorientovat před příjezdem.')
+        .replace(/Pro hotel tohoto typu jde o mal[yý] z[aá]sah s rychl[yý]m efektem na m[eé]n[eě] dotaz[ůu] a hlad[šs][ií] p[řr][ií]jezd host[ůu]\.?/gi, 'Pro hotel tohoto typu jde o malý zásah, který může omezit opakované dotazy a zpřehlednit příjezd hostů.');
 
     forbiddenClientTerms.forEach((term) => {
         cleaned = cleaned.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
@@ -217,6 +225,14 @@ const sanitizeClientText = (value = '') => {
     }
 
     return cleaned.replace(/\s+([,.!?;:])/g, '$1').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
+};
+
+const sanitizeQuickWinWhy = (title = '', why = '') => {
+    if (normalizeForMatch(title).includes('prijezd na jednu stranku')) {
+        return 'Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem.';
+    }
+
+    return sanitizeClientText(why);
 };
 
 const bestHumanSignals = (signals: string[]) => [...new Set(signals.map(humanizeSignal).filter(Boolean))].slice(0, 3);
@@ -411,7 +427,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         },
         {
             title: 'Zprehlednit predprijezdove informace',
-            why: 'Setup opportunity je o modernizaci komunikace, ne o fixu spatnych recenzi.',
+            why: 'Jasný předpříjezdový přehled může snížit nejistotu hosta a omezit opakované dotazy před příjezdem.',
             action: 'Navrhnout sablony pro prijezd, parkovani, check-in a caste dotazy.',
             sourceEvidence: evidence,
         },
@@ -595,7 +611,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
         guestFrictionSignals: website?.missingPublicInfoSignals?.length ? website.missingPublicInfoSignals : candidate.risks || [],
         quickWins: quickWins.map((quickWin) => ({
             title: trimText(quickWin.title, 120),
-            why: trimText(quickWin.why, 180),
+            why: trimText(sanitizeQuickWinWhy(quickWin.title, quickWin.why), 180),
             action: trimText(quickWin.action, 180),
             sourceEvidence: trimText(quickWin.sourceEvidence, 180),
         })),
@@ -721,6 +737,8 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     Klientske texty musi byt lidske pro majitele ubytovani. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict.
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
+    Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
+    Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
     leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
     JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.

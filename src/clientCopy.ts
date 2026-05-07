@@ -99,6 +99,15 @@ export function sanitizeClientText(text = '') {
         ['Na přečteném veřejném webu není vidět FAQ / často kladené dotazy.', 'krátká FAQ sekce často pomáhá hostům zorientovat se před příjezdem.'],
         ['To může zbytečně přidávat dotazy na recepci.', 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.'],
         ['To muze zbytecne pridavat dotazy na recepci.', 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.'],
+        ['bez jasného návodu volají zbytečně na recepci', 'jasný návod může snížit nejistotu hosta a omezit opakované dotazy před příjezdem'],
+        ['bez jasneho navodu volaji zbytecne na recepci', 'jasný návod může snížit nejistotu hosta a omezit opakované dotazy před příjezdem'],
+        ['způsobuje problém', 'může vytvářet nejistotu'],
+        ['zpusobuje problem', 'může vytvářet nejistotu'],
+        ['hosté jsou zmatení', 'host nemusí hned najít potřebné informace'],
+        ['hoste jsou zmateni', 'host nemusí hned najít potřebné informace'],
+        ['Parkování bývá častý dotaz a jeho nejasnost zvyšuje stres hosta ještě před příjezdem.', 'Jasně popsané parkování pomáhá hostovi rychleji najít praktické informace před příjezdem.'],
+        ['Krátké odpovědi na nejčastější dotazy sníží počet opakovaných zpráv a telefonátů.', 'Krátké odpovědi mohou omezit opakované dotazy a pomoci hostovi rychleji se zorientovat před příjezdem.'],
+        ['Pro hotel tohoto typu jde o malý zásah s rychlým efektem na méně dotazů a hladší příjezd hostů.', 'Pro hotel tohoto typu jde o malý zásah, který může omezit opakované dotazy a zpřehlednit příjezd hostů.'],
     ];
 
     replacements.forEach(([from, to]) => {

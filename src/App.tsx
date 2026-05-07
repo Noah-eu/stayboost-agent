@@ -216,6 +216,81 @@ const sanitizeWebsiteExtractionForSourceMaterial = (extraction: WebsiteExtractio
     extraction.evidenceLimits.join('\n'),
 ].join('\n'));
 
+const websiteExtractionSummary = (leadName: string, extraction: WebsiteExtractionResult) => {
+    const validCount = extraction.validPagesCount ?? extraction.pagesExtracted.length;
+    const invalidCount = extraction.invalidPagesCount ?? extraction.skippedPages.length;
+    const validLabel = validCount === 1 ? 'validní stránka' : validCount > 1 && validCount < 5 ? 'validní stránky' : 'validních stránek';
+    const skippedLabel = invalidCount === 1 ? 'neplatná/404 stránka přeskočena' : invalidCount > 1 && invalidCount < 5 ? 'neplatné/404 stránky přeskočeny' : 'neplatných/404 stránek přeskočeno';
+
+    return `${leadName || 'Kandidat'}: přečteny ${validCount} ${validLabel} vlastního webu, ${invalidCount} ${skippedLabel}. Kontakt: ${extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${extraction.setupOpportunitySignals.length}. Fix signály: ${extraction.fixOpportunitySignals.length}.`;
+};
+
+const hasCompletedAgentAnalysis = (lead: Lead) => lead.agentLeadStatus === 'analyzed' || (lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
+
+const sourceMaterialHasSkippedPageDump = (material: SourceMaterial, skippedPages: WebsiteExtractionResult['skippedPages']) => {
+    if (!/Pages extracted/i.test(material.content)) return false;
+
+    return skippedPages.some((page) => page.url && material.content.includes(page.url));
+};
+
+const isStaleSourceMaterial = (material: SourceMaterial, extraction: WebsiteExtractionResult) => {
+    const title = material.title.toLowerCase();
+    const content = material.content.toLowerCase();
+
+    return title.includes('agent candidate source without analysis')
+        || content.includes('bez plne agentni analyzy')
+        || sourceMaterialHasSkippedPageDump(material, extraction.skippedPages ?? []);
+};
+
+const cleanSearchDiscoverySource = (material: SourceMaterial, lead: Lead): SourceMaterial | null => {
+    const sourceSnippet = material.content.split(/Source snippets:/i)[1]?.split(/Website extraction summary:|Pages extracted:/i)[0]
+        ?? material.content.split(/Pages extracted:/i)[0]
+        ?? material.content;
+    const cleanedContent = sanitizeSourceMaterialContent(sourceSnippet)
+        .split('\n')
+        .filter((line) => !/bez plne agentni analyzy|Agent candidate source without analysis/i.test(line))
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, 1000);
+
+    if (!cleanedContent) return null;
+
+    return {
+        ...material,
+        id: `source-search-${lead.id}`,
+        type: 'pasted-text',
+        title: 'Search discovery source',
+        content: cleanedContent,
+    };
+};
+
+const analyzedLeadNotes = (lead: Lead, extraction: WebsiteExtractionResult) => {
+    const contact = extraction.contact.emails[0] || extraction.contact.phones[0] || 'nenalezen';
+    const validCount = extraction.validPagesCount ?? extraction.pagesExtracted.length;
+    const invalidCount = extraction.invalidPagesCount ?? extraction.skippedPages.length;
+    const provider = lead.agentAnalysisProvider === 'openai' ? 'OpenAI analýzy' : 'agentní analýzy';
+    const discovery = lead.isDemoLead ? 'demo hledání' : 'reálného Tavily hledání';
+
+    return `Lead vznikl z ${discovery}, website extraction a ${provider}. Vlastní web byl přečten: ${validCount} validní stránky, ${invalidCount} neplatné/404 stránky přeskočeny. Kontakt nalezen: ${contact}. Doporučený úhel: guest guide / předpříjezdové informace.`;
+};
+
+const softenQuickWinWhy = (quickWin: QuickWin): QuickWin => {
+    const normalizedTitle = quickWin.title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const exactArrivalWhy = 'Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem.';
+    const softenedWhy = sanitizeClientText(quickWin.why)
+        .replace(/bez jasn[eé]ho n[aá]vodu volaj[ií] zbyte[čc]n[eě] na recepci/gi, 'jasný návod může snížit nejistotu hosta a omezit opakované dotazy před příjezdem')
+        .replace(/volaj[ií] zbyte[čc]n[eě]/gi, 'mohou posílat opakované dotazy')
+        .replace(/zbyte[čc]n[eě] p[řr]id[aá]v[aá] dotazy/gi, 'může vést k opakovaným dotazům')
+        .replace(/zp[ůu]sobuje probl[eé]m/gi, 'může vytvářet nejistotu')
+        .replace(/host[eé] jsou zmaten[ií]/gi, 'host nemusí hned najít potřebné informace');
+
+    return {
+        ...quickWin,
+        why: normalizedTitle.includes('prijezd na jednu stranku') ? exactArrivalWhy : softenedWhy,
+    };
+};
+
 const invalidSignalReason = (signal: string, hasWebsiteEmail: boolean) => {
     const phoneMatch = signal.match(invalidPhoneSignalPattern);
 
@@ -251,6 +326,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     };
     normalizedExtraction.validPagesCount = normalizedExtraction.pagesExtracted.length;
     normalizedExtraction.invalidPagesCount = normalizedExtraction.skippedPages.length;
+    normalizedExtraction.summary = websiteExtractionSummary(lead.name, normalizedExtraction);
 
     const hasWebsiteEmail = normalizedExtraction.contact.emails.length > 0;
     const cleanContactSignals = [
@@ -269,11 +345,24 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         ...splitLines(lead.risks).filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
         ...splitLines(lead.guestFrictionSignals).filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
     ]);
-    const cleanedSourceMaterials = (lead.sourceMaterials ?? []).filter((material) => material.type !== 'website-extraction').map((material) => ({
-        ...material,
-        content: sanitizeSourceMaterialContent(material.content),
-    }));
-    const removedStaleSourceMaterials = (lead.sourceMaterials ?? []).filter((material) => material.type === 'website-extraction').length;
+    const staleSourceMaterials = (lead.sourceMaterials ?? [])
+        .filter((material) => material.type === 'website-extraction' || isStaleSourceMaterial(material, normalizedExtraction));
+    const staleSourceMaterialTitlesRemoved = uniqueStrings(staleSourceMaterials.map((material) => material.title || '(untitled source material)'));
+    const cleanedSourceMaterials = (lead.sourceMaterials ?? [])
+        .filter((material) => material.type !== 'website-extraction')
+        .flatMap((material) => {
+            if (isStaleSourceMaterial(material, normalizedExtraction)) {
+                const searchSource = cleanSearchDiscoverySource(material, lead);
+                return searchSource ? [searchSource] : [];
+            }
+
+            return [{
+                ...material,
+                content: sanitizeSourceMaterialContent(material.content),
+            }];
+        })
+        .filter((material, index, materials) => material.title !== 'Search discovery source' || materials.findIndex((candidate) => candidate.title === 'Search discovery source') === index);
+    const removedStaleSourceMaterials = staleSourceMaterials.length;
     const websiteSourceMaterial: SourceMaterial = {
         id: `source-website-${lead.id}`,
         type: 'website-extraction',
@@ -285,10 +374,16 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
 
     return {
         ...lead,
-        notes: sanitizeSourceMaterialContent(lead.notes),
+        notes: hasCompletedAgentAnalysis(lead) ? analyzedLeadNotes(lead, normalizedExtraction) : sanitizeSourceMaterialContent(lead.notes),
         websiteExtraction: normalizedExtraction,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
+        structuredQuickWins: (lead.structuredQuickWins ?? []).map(softenQuickWinWhy),
+        clientMiniAudit: sanitizeClientText(lead.clientMiniAudit),
+        generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit),
+        generatedOutreach: sanitizeClientText(lead.generatedOutreach),
+        generatedFollowUp: sanitizeClientText(lead.generatedFollowUp),
+        generatedOffer: sanitizeClientText(lead.generatedOffer),
         strengths: joinLines(removeContactContradictions(uniqueStrings([...splitLines(lead.strengths), ...normalizedExtraction.strengths]).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
         risks: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.risks)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
         guestFrictionSignals: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.guestFrictionSignals)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
@@ -298,6 +393,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
             removedInvalidSignals: removedInvalidSignals.map(redactInvalidEvidenceValue),
             removedInvalidPhones: removedInvalidPhones.map(redactInvalidEvidenceValue),
             removedStaleSourceMaterials,
+            staleSourceMaterialTitlesRemoved,
         },
     };
 };
@@ -349,7 +445,7 @@ const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
     const completeWins = quickWins.filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).slice(0, 3);
     const fallbackWins = fallbackWebsiteQuickWins(lead).filter((fallbackWin) => !completeWins.some((win) => win.title === fallbackWin.title));
 
-    return [...completeWins, ...fallbackWins].slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
+    return [...completeWins, ...fallbackWins].slice(0, 3).map((win) => softenQuickWinWhy({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
 };
 
 const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];

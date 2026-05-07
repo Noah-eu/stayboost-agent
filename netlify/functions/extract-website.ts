@@ -332,7 +332,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
             skippedPages.length > 0 ? `Preskocene nevalidni stranky: ${skippedPages.length}.` : '',
             status === 'partial' ? 'Extrakce je castecna kvuli timeoutu, nedostupnym nebo nevalidnim strankam.' : '',
         ]),
-        summary: `${request.candidateName || 'Kandidat'}: precteno ${pages.length} stranek vlastniho webu. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signaly: ${setupOpportunitySignals.length}. Fix signaly: ${fixOpportunitySignals.length}.`,
+        summary: `${request.candidateName || 'Kandidat'}: přečteny ${pages.length} validní stránky vlastního webu, ${skippedPages.length} neplatné/404 stránky přeskočeny. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${setupOpportunitySignals.length}. Fix signály: ${fixOpportunitySignals.length}.`,
         debug: {
             debugId,
             elapsedMs: elapsed(startedAt),

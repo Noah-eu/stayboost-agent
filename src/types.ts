@@ -249,6 +249,7 @@ export interface Lead {
         removedInvalidSignals: string[];
         removedInvalidPhones: string[];
         removedStaleSourceMaterials: number;
+        staleSourceMaterialTitlesRemoved?: string[];
     };
     extractionStatus: ExtractionStatus;
     firstImpression: string;
