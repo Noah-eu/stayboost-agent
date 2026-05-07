@@ -799,10 +799,21 @@ function App() {
                 ...currentSession,
                 status: response.status === 'needs-config' ? 'needs-config' : 'completed',
                 message: response.message,
-                isMock: response.isMock,
+                isMock: currentSession.isMock,
                 analyses: response.analysis ? { ...currentSession.analyses, [candidate.id]: normalizeAgentAnalysis(response.analysis, candidate) } : currentSession.analyses,
                 diagnostic: response.diagnostic
-                    ? { ...response.diagnostic, discoverProvider: currentSession.diagnostic?.discoverProvider }
+                    ? {
+                        ...currentSession.diagnostic,
+                        ...response.diagnostic,
+                        discoverProvider: currentSession.diagnostic?.discoverProvider,
+                        source: currentSession.diagnostic?.source,
+                        partial: currentSession.diagnostic?.partial,
+                        queriesAttempted: currentSession.diagnostic?.queriesAttempted,
+                        queriesSucceeded: currentSession.diagnostic?.queriesSucceeded,
+                        queriesTimedOut: currentSession.diagnostic?.queriesTimedOut,
+                        timeoutBudgetMs: currentSession.diagnostic?.timeoutBudgetMs,
+                        skippedHeavyEnrichment: currentSession.diagnostic?.skippedHeavyEnrichment,
+                    }
                     : currentSession.diagnostic,
             }));
         } catch (error) {
@@ -1324,6 +1335,13 @@ function LeadFinderPanel({
                     </div>
                 ) : null}
 
+                {session.diagnostic?.partial && session.candidates.length > 0 ? (
+                    <div className="scope-note partial-note">
+                        <strong>Zobrazeny částečné výsledky, některé search dotazy vytimeoutovaly.</strong>
+                        <span>Pokračuj analýzou konkrétního kandidáta; hlubší enrichment neběží v první discovery fázi.</span>
+                    </div>
+                ) : null}
+
                 {hasStoredResults ? (
                     <div className="scope-note stored-note">
                         Zobrazuješ uložené výsledky z předchozího běhu.
@@ -1488,8 +1506,10 @@ function LeadFinderPanel({
                                     <tr className={[['skip', 'weak-opportunity', 'not-enough-evidence'].includes(candidate.fitVerdict) ? 'weak-candidate-row' : '', candidate.isMock ? 'demo-candidate-row' : ''].filter(Boolean).join(' ')} key={candidate.id}>
                                         <td>
                                             {candidate.isMock ? <span className="demo-badge">FIKTIVNÍ</span> : null}
+                                            {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <span className="quick-badge">Rychlý nález</span> : null}
                                             <strong>{candidate.isMock && !candidate.name.startsWith('DEMO') ? `DEMO — ${candidate.name}` : candidate.name}</strong>
                                             <small>{candidate.isMock ? 'Demo výsledek - není skutečný klient' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
+                                            {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <small>Vyžaduje analýzu</small> : null}
                                             <small>Run: {candidate.runId}</small>
                                             <small>{candidate.isLegacy ? 'uložené z předchozí verze' : candidate.runId === session.runId && !session.loadedFromStorage ? 'aktuální běh' : 'uložené z předchozího běhu'}</small>
                                         </td>
@@ -1565,7 +1585,7 @@ function LeadFinderPanel({
                                         <td>{offerAngleLabels[candidate.recommendedAngle]}</td>
                                         <td>
                                             <div className="table-actions">
-                                                <button className="secondary-button compact-button" onClick={() => onAnalyzeCandidate(candidate)} type="button">
+                                                <button className={analysis ? 'secondary-button compact-button' : 'primary-button compact-button'} onClick={() => onAnalyzeCandidate(candidate)} type="button">
                                                     <Sparkles size={16} aria-hidden="true" />
                                                     Analyzovat
                                                 </button>
@@ -1606,6 +1626,11 @@ function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }
             {diagnostic.fallbackReason ? <span>Fallback reason: {diagnostic.fallbackReason}</span> : null}
             {diagnostic.httpStatus ? <span>HTTP status: {diagnostic.httpStatus}</span> : null}
             {typeof diagnostic.elapsedMs === 'number' ? <span>Elapsed: {diagnostic.elapsedMs} ms</span> : null}
+            {typeof diagnostic.partial === 'boolean' ? <span>Partial: {diagnostic.partial ? 'true' : 'false'}</span> : null}
+            {typeof diagnostic.queriesSucceeded === 'number' && typeof diagnostic.queriesAttempted === 'number' ? <span>Queries: {diagnostic.queriesSucceeded}/{diagnostic.queriesAttempted}</span> : null}
+            {typeof diagnostic.queriesTimedOut === 'number' ? <span>Queries timed out: {diagnostic.queriesTimedOut}</span> : null}
+            {typeof diagnostic.timeoutBudgetMs === 'number' ? <span>Timeout budget: {diagnostic.timeoutBudgetMs} ms</span> : null}
+            {typeof diagnostic.skippedHeavyEnrichment === 'boolean' ? <span>Skipped heavy enrichment: {diagnostic.skippedHeavyEnrichment ? 'true' : 'false'}</span> : null}
             {diagnostic.debugId ? <span>Debug ID: {diagnostic.debugId}</span> : null}
             {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>OpenAI key: {diagnostic.hasOpenAIKey ? 'OK' : 'chybi'}</span> : null}
             {diagnostic.model ? <span>Model: {diagnostic.model}</span> : null}

@@ -23,6 +23,12 @@ export interface LeadAgentDiagnostic {
     hasOpenAIKey?: boolean;
     model?: string | null;
     elapsedMs?: number;
+    partial?: boolean;
+    queriesAttempted?: number;
+    queriesSucceeded?: number;
+    queriesTimedOut?: number;
+    timeoutBudgetMs?: number;
+    skippedHeavyEnrichment?: boolean;
     sanitizedSample?: string;
     sanitizedOutputSample?: string;
     rawOutputKind?: 'output_text' | 'output_message_content' | 'unknown';

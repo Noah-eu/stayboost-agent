@@ -671,6 +671,14 @@ textarea:focus {
     gap: 6px;
 }
 
+.partial-note {
+    background: #eef7ff;
+    border-color: #b9d8f0;
+    color: #22485f;
+    display: grid;
+    gap: 6px;
+}
+
 .demo-candidate-row {
     background: #fffaf2;
 }
@@ -686,6 +694,17 @@ textarea:focus {
     margin: 0 0 6px;
     padding: 5px 8px;
     text-transform: uppercase;
+}
+
+.quick-badge {
+    background: #176b57;
+    border-radius: 999px;
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 0.72rem;
+    font-weight: 900;
+    margin: 0 0 6px;
+    padding: 5px 8px;
 }
 
 .small-demo-badge {

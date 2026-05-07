@@ -66,8 +66,35 @@ const uniqueMatches = (content: string, matchers: Array<{ label: string; keyword
     .filter((matcher) => includesAny(content, matcher.keywords))
     .map((matcher) => matcher.label);
 
-const hasOwnWebsite = (url: string) => Boolean(url) && !includesAny(url.toLowerCase(), ['booking.', 'airbnb.', 'google.', 'tripadvisor.', 'expedia.', 'hotels.com']);
-const isBlockedAggregator = (url: string) => includesAny(url.toLowerCase(), ['booking.', 'airbnb.', 'google.']);
+const blockedAggregatorHosts = [
+    'booking.',
+    'airbnb.',
+    'google.',
+    'maps.google.',
+    'tripadvisor.',
+    'tripadvisor',
+    'trivago.',
+    'hotelscombined.',
+    'expedia.',
+    'hotels.com',
+    'agoda.',
+    'slevomat.',
+];
+
+const hasOwnWebsite = (url: string) => Boolean(url) && !includesAny(url.toLowerCase(), blockedAggregatorHosts);
+const isBlockedAggregator = (url: string) => includesAny(url.toLowerCase(), blockedAggregatorHosts);
+
+const normalizeDomain = (url: string) => {
+    try {
+        return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+        return url.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] || '';
+    }
+};
+
+const normalizeName = (value: string) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+const makeDebugId = () => `discover-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const inferType = (text: string): AccommodationType => {
     const content = text.toLowerCase();
@@ -329,23 +356,18 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, has
 const makeQueries = (request: DiscoverRequest) => {
     const location = request.location || 'Praha';
     const accommodationType = request.accommodationType || 'apartmany';
-    const segment = request.segment || 'self check-in';
-
-    return [
-        `${location} ${accommodationType} ${segment} ubytovani`,
-        `${location} penzion kontakt`,
-        `${location} ubytovani penzion kontakt`,
-        `${location} apartmany kontakt`,
-        `${location} ubytovani vlastni web`,
-        `${location} pension email`,
-        `${location} guesthouse contact`,
-        `${location} ubytovani bez recepce`,
-        `${location} penzion rezervace`,
-        `${location} apartmany rezervace`,
-        `${location} ubytovani rodinny penzion`,
-        `${location} penzion parkovani check-in`,
-        `${location} apartmany Booking vlastni web`,
+    const segment = (request.segment || '').toLowerCase();
+    const queries = [
+        `${location} ${accommodationType} kontakt`,
+        `${location} ubytování penzion apartmány kontakt`,
+        `${location} guesthouse apartment official website contact`,
     ];
+
+    if (includesAny(segment, ['self-check', 'self check', 'check-in', 'checkin', 'bez recepce'])) {
+        queries.push(`${location} self check-in apartments contact`);
+    }
+
+    return queries.slice(0, 4);
 };
 
 const makeKnownTargetQueries = (request: DiscoverRequest) => {
@@ -354,34 +376,41 @@ const makeKnownTargetQueries = (request: DiscoverRequest) => {
 
     return [
         `${name} ${city} kontakt`,
-        `${name} ${city} email`,
         `${name} official website`,
-        `${name} penzion kontakt`,
-        `${name} guesthouse contact`,
-    ];
+        `${name} ${city} email`,
+    ].filter((query) => query.trim()).slice(0, 3);
 };
 
-const makePainQueries = (candidateName: string) => [
-    `${candidateName} check-in problem reviews`,
-    `${candidateName} parking problem recenze`,
-    `${candidateName} communication reviews hard to find entrance`,
-];
+interface TavilySearchOutcome {
+    query: string;
+    results: SearchResult[];
+    ok: boolean;
+    timedOut: boolean;
+}
 
-const makeContactQueries = (candidateName: string, location: string) => [
-    `${candidateName} ${location} kontakt`,
-    `${candidateName} email`,
-    `${candidateName} official website`,
-    `${candidateName} penzion kontakt`,
-];
+const tavilySearch = async (apiKey: string, query: string, maxResults: number, timeoutMs: number): Promise<TavilySearchOutcome> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-const tavilySearch = async (apiKey: string, query: string, maxResults: number) => {
-    const response = await fetch('https://api.tavily.com/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: 'basic' }),
-    });
-    const payload = await response.json() as { results?: SearchResult[] };
-    return payload.results || [];
+    try {
+        const response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: 'basic' }),
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return { query, results: [], ok: false, timedOut: false };
+        }
+
+        const payload = await response.json() as { results?: SearchResult[] };
+        return { query, results: payload.results || [], ok: true, timedOut: false };
+    } catch (error) {
+        return { query, results: [], ok: false, timedOut: error instanceof Error && error.name === 'AbortError' };
+    } finally {
+        clearTimeout(timeout);
+    }
 };
 
 const discoveryErrorResponse = (reason: string, httpStatus = 200) => ({
@@ -401,6 +430,11 @@ const discoveryErrorResponse = (reason: string, httpStatus = 200) => ({
 });
 
 export const handler = async (event: { httpMethod: string; body?: string | null }) => {
+    const startedAt = Date.now();
+    const debugId = makeDebugId();
+    const timeoutBudgetMs = 17000;
+    const tavilyRequestTimeoutMs = 7000;
+
     if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
     if (event.httpMethod !== 'POST') return json(405, { message: 'Use POST.' });
 
@@ -411,49 +445,55 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
     const isKnownTarget = Boolean(request.knownTargetName?.trim() || request.knownTargetWebsiteUrl?.trim());
     const queries = isKnownTarget ? makeKnownTargetQueries(request) : makeQueries(request);
-    const results: SearchResult[] = [];
+    const maxCandidates = isKnownTarget ? 1 : Math.max(1, Math.min(10, request.maxResults || 8));
+    const perQueryResults = Math.max(2, Math.min(5, Math.ceil(maxCandidates / Math.max(1, queries.length)) + 1));
+    const seededResults: SearchResult[] = [];
 
     if (isKnownTarget && request.knownTargetWebsiteUrl) {
-        results.push({
+        seededResults.push({
             title: request.knownTargetName || request.knownTargetWebsiteUrl,
             url: request.knownTargetWebsiteUrl,
             content: `${request.knownTargetName || ''} ${request.knownTargetCity || request.location || ''} ${request.knownTargetEmail || ''} ${request.knownTargetNote || ''}`,
         });
     }
 
-    for (const query of queries) {
-        results.push(...await tavilySearch(tavilyApiKey, query, Math.max(1, Math.min(5, request.maxResults || 5))));
-    }
+    const searchOutcomes = await Promise.all(queries.map((query) => tavilySearch(tavilyApiKey, query, perQueryResults, tavilyRequestTimeoutMs)));
+    const queriesSucceeded = searchOutcomes.filter((outcome) => outcome.ok).length;
+    const queriesTimedOut = searchOutcomes.filter((outcome) => outcome.timedOut).length;
+    const elapsedAfterSearchMs = Date.now() - startedAt;
+    const timedOutGlobally = elapsedAfterSearchMs >= timeoutBudgetMs;
+    const results = [...seededResults, ...searchOutcomes.flatMap((outcome) => outcome.results)];
+    const partial = queriesTimedOut > 0 || queriesSucceeded < queries.length || timedOutGlobally;
 
     const seen = new Set<string>();
     const baseCandidates = results
-        .filter((result) => result.url && !seen.has(result.url) && seen.add(result.url))
-        .slice(0, isKnownTarget ? 1 : Math.max(1, Math.min(20, request.maxResults || 10)))
+        .filter((result) => {
+            const url = result.url || '';
+            if (!url || isBlockedAggregator(url)) return false;
+
+            const title = normalizeName(isKnownTarget ? request.knownTargetName || result.title || url : result.title || url);
+            const domain = normalizeDomain(url);
+            const key = `${title}|${domain}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .slice(0, maxCandidates)
         .map((result, index) => ({ result, index }));
 
     const candidates: Array<Record<string, unknown>> = [];
-    const qualificationLimit = Math.min(8, baseCandidates.length);
 
     for (const { result, index } of baseCandidates) {
         const title = isKnownTarget ? request.knownTargetName || result.title || `Lead kandidat ${index + 1}` : result.title || `Lead kandidat ${index + 1}`;
-        const contactResults = index < qualificationLimit
-            ? (await Promise.all(makeContactQueries(title, request.location || request.knownTargetCity || '').map((query) => tavilySearch(tavilyApiKey, query, 2)))).flat()
-            : [];
-        const painResults = index < qualificationLimit
-            ? (await Promise.all(makePainQueries(title).map((query) => tavilySearch(tavilyApiKey, query, 2)))).flat()
-            : [];
         const snippet = result.content || result.snippet || '';
-        const contactSnippets = contactResults.map((contactResult) => contactResult.content || contactResult.snippet || '').filter(Boolean).slice(0, 6);
-        const painSnippets = painResults.map((painResult) => painResult.content || painResult.snippet || '').filter(Boolean).slice(0, 6);
-        const ownWebsiteResult = [result, ...contactResults].find((candidateResult) => hasOwnWebsite(candidateResult.url || ''));
-        const websiteUrl = ownWebsiteResult?.url || result.url || '';
-        const content = `${title} ${snippet} ${contactSnippets.join(' ')} ${painSnippets.join(' ')} ${result.url} ${websiteUrl} ${request.knownTargetEmail || ''} ${request.knownTargetNote || ''}`.toLowerCase();
+        const websiteUrl = result.url || '';
+        const content = `${title} ${snippet} ${result.url} ${websiteUrl} ${request.knownTargetEmail || ''} ${request.knownTargetNote || ''}`.toLowerCase();
         const possibleEmail = request.knownTargetEmail || content.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i)?.[0] || '';
         const type = inferType(`${content} ${request.accommodationType}`);
-        const scoring = scoreCandidate(content, Boolean(result.url || websiteUrl), Boolean(possibleEmail), hasOwnWebsite(websiteUrl), type, [snippet, ...contactSnippets, ...painSnippets].filter(Boolean).length);
-        const sourceUrls = [...new Set([websiteUrl, result.url, ...contactResults.map((contactResult) => contactResult.url || '')])]
+        const scoring = scoreCandidate(content, Boolean(result.url || websiteUrl), Boolean(possibleEmail), hasOwnWebsite(websiteUrl), type, [snippet].filter(Boolean).length);
+        const sourceUrls = [...new Set([websiteUrl, result.url])]
             .filter(Boolean)
-            .filter((url) => !isBlockedAggregator(url) || url === result.url)
+            .filter((url) => !isBlockedAggregator(url))
             .slice(0, 8);
 
         candidates.push({
@@ -463,7 +503,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             type,
             websiteUrl,
             sourceUrls,
-            sourceSnippets: [snippet, ...contactSnippets, ...painSnippets].filter(Boolean),
+            sourceSnippets: [snippet].filter(Boolean),
             possibleEmail,
             signals: scoring.signals,
             risks: scoring.risks,
@@ -490,23 +530,60 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             missingEvidence: scoring.missingEvidence,
             contradictionWarnings: scoring.contradictionWarnings,
             recommendedAngle: inferAngle(content),
-            evidenceSummary: `Vytvoreno z Tavily search vysledku/snippetu vcetne kontaktniho enrichmentu a lehkych pain/review dotazu. URL nebyla scrapovana ani automaticky prochazena: ${[snippet, ...contactSnippets, ...painSnippets].join(' ').slice(0, 240)}`,
+            evidenceSummary: `Rychly nalez z Tavily search vysledku/snippetu bez tezkeho enrichmentu. URL nebyla scrapovana ani automaticky prochazena: ${snippet.slice(0, 240)}`,
             isMock: false,
+        });
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const baseDiagnostic = {
+        mode: 'real-api',
+        discoverProvider: 'tavily',
+        source: 'real API',
+        httpStatus: 200,
+        userMessage: 'Discovery provider: tavily',
+        runtime: 'netlify-function',
+        partial,
+        queriesAttempted: queries.length,
+        queriesSucceeded,
+        queriesTimedOut,
+        elapsedMs,
+        timeoutBudgetMs,
+        skippedHeavyEnrichment: true,
+        debugId,
+    };
+
+    if (candidates.length === 0) {
+        const fallbackReason = queriesSucceeded === 0
+            ? queriesTimedOut > 0 ? 'all_tavily_queries_timed_out' : 'all_tavily_queries_failed'
+            : 'no_suitable_public_results';
+        const totalFailure = queriesSucceeded === 0;
+
+        return json(200, {
+            status: totalFailure ? 'error' : 'found',
+            message: totalFailure
+                ? `Reálné hledání neběželo. Discovery function selhala: ${fallbackReason}. Demo kandidáti nejsou skuteční klienti.`
+                : 'Nebyly nalezeny žádné vhodné veřejné výsledky. Zkus širší dotaz nebo konkrétní provoz.',
+            isMock: false,
+            diagnostic: {
+                ...baseDiagnostic,
+                mode: totalFailure ? 'error' : 'real-api',
+                discoverProvider: totalFailure ? 'error' : 'tavily',
+                source: totalFailure ? 'error' : 'real API',
+                fallbackReason,
+                userMessage: totalFailure ? `Discovery function selhala: ${fallbackReason}` : 'Discovery provider: tavily, ale bez vhodných kandidátů.',
+            },
+            candidates: [],
         });
     }
 
     return json(200, {
         status: 'found',
-        message: 'Kandidati vznikli z Tavily search vysledku a snippetů. Nejde o scraping Booking/Airbnb/Google stranek.',
+        message: partial
+            ? 'Zobrazeny částečné výsledky, některé search dotazy vytimeoutovaly nebo selhaly.'
+            : 'Kandidati vznikli z rychlých Tavily search výsledků a snippetů. Nejde o scraping Booking/Airbnb/Google stránek.',
         isMock: false,
-        diagnostic: {
-            mode: 'real-api',
-            discoverProvider: 'tavily',
-            source: 'real API',
-            httpStatus: 200,
-            userMessage: 'Discovery provider: tavily',
-            runtime: 'netlify-function',
-        },
+        diagnostic: baseDiagnostic,
         candidates,
     });
 };
