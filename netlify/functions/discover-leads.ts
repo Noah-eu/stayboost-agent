@@ -192,9 +192,12 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, has
     if (hasOperationalCheckIn) publicMaturityScore += 18;
     if (hasReservationLanguage) publicMaturityScore += 8;
 
-    if (!hasGuestGuide) missingAutomationSignals.push('Neni videt online guest guide');
-    if (!hasFaqArrivalGuide) missingAutomationSignals.push('Neni videt FAQ / arrival guide');
-    if (!hasOperationalCheckIn) missingAutomationSignals.push('Neni videt automatizovany self check-in proces');
+    if (!hasGuestGuide) {
+        missingEvidence.push('Nelze verejne overit, zda maji guest guide');
+        missingEvidence.push('Guest guide muze existovat neverejne');
+    }
+    if (!hasFaqArrivalGuide) missingAutomationSignals.push('Neni jasne, zda verejna prezentace vysvetluje prijezd / FAQ / arrival guide');
+    if (!hasOperationalCheckIn) missingAutomationSignals.push('Neni jasne, zda je self check-in proces verejne vysvetleny');
 
     if (isSmallLocal) likelyManualProcessSignals.push('Maly lokalni provoz / penzion / apartmany');
     if (hasReservationLanguage) likelyManualProcessSignals.push('Prezentace pracuje s rezervaci nebo kontaktem');
@@ -236,9 +239,14 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, has
         fixScore += 34;
     }
 
-    if (includesAny(content, ['slaby web', 'neprehledny', 'chybi faq', 'chybi guest guide', 'roztrousene informace', 'unclear information'])) {
+    if (includesAny(content, ['slaby web', 'neprehledny', 'chybi faq', 'roztrousene informace', 'unclear information'])) {
         setupScore += 24;
         risks.push('Snippet naznacuje slabsi verejnou strukturu informaci');
+    }
+
+    if (includesAny(content, ['chybi guest guide'])) {
+        missingEvidence.push('Snippet zminuje chybejici guest guide, ale pred oslovenim je potreba overit kontext.');
+        setupScore += 8;
     }
 
     if (isLargeChain) {
@@ -273,6 +281,7 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, has
         setupScore += 18;
     }
     setupScore += missingAutomationSignals.length * 15;
+    setupScore += !hasGuestGuide ? 6 : 0;
     setupScore += likelyManualProcessSignals.length * 9;
     setupScore -= Math.round(publicMaturityScore * 0.25);
     if (risks.length === 0 && alreadySolvedSignals.length > 0) fixScore -= 10;
@@ -315,14 +324,14 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, has
     const offerHypothesis = opportunityType === 'fix-existing-process'
         ? `Fix existing process: ${painSignals[0] || 'public pain signal'} can be addressed with guest communication / arrival workflow.`
         : opportunityType === 'setup-automation'
-            ? 'Setup automation: public presentation suggests a small local operation with contact, but no visible guest guide / FAQ / arrival guide.'
+            ? 'Setup automation: public presentation suggests a small local operation with contact, but it is not clear whether guests receive a simple pre-arrival guide.'
             : opportunityType === 'benchmark'
                 ? 'Benchmark: public signals suggest automation or self check-in is already presented well; do not outreach by default.'
                 : 'Skip or low priority until own website/contact or clearer evidence is found.';
     const qualificationReason = hasPain
         ? `Qualified by ${painSignals.length} public pain signal(s) from search/review snippets; evidence is not full-page scraping.`
         : opportunityType === 'setup-automation'
-            ? `Qualified as setup lead by ${missingAutomationSignals.length} missing automation signal(s), ${likelyManualProcessSignals.length} likely manual-process signal(s), and contact/website evidence.`
+            ? `Qualified as setup lead by ${missingAutomationSignals.length} public automation clarity signal(s), ${likelyManualProcessSignals.length} likely manual-process signal(s), and contact/website evidence. Guest guide itself may exist privately.`
             : offerHypothesis;
 
     return {

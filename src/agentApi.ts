@@ -1,4 +1,5 @@
 import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentHealth, LeadAgentSearchRequest } from './leadAgentTypes';
+import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -30,7 +31,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             sourceUrls: [request.knownTargetWebsiteUrl || 'https://example.com/known-target'],
             sourceSnippets: [
                 `${name} ${request.knownTargetCity || location} znamy cil z manualniho zadani. ${request.knownTargetNote || 'Verejna prezentace se overuje pres search dotazy.'}`,
-                'Demo known-target fallback: web/kontakt je zadan uzivatelem, guest guide ani FAQ nejsou v zadani videt.',
+                'Demo known-target fallback: web/kontakt je zadan uzivatelem; guest guide nebo FAQ nelze z verejneho zadani overit a mohou existovat neverejne.',
             ],
             possibleEmail: request.knownTargetEmail || '',
             contactMissing: !request.knownTargetEmail,
@@ -47,14 +48,14 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             positiveSolvedSignals: [],
             noPainReason: 'No public review pain found; qualification is setup automation, not a fix claim.',
             targetOffer: 'self-checkin-setup',
-            offerHypothesis: 'Known target setup: zadany provoz ma web/kontakt, ale neni videt online guest guide, FAQ ani predprijezdova stranka.',
+            offerHypothesis: 'Known target setup: zadany provoz ma web/kontakt, ale z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide.',
             websiteSignals: request.knownTargetWebsiteUrl ? ['Uzivatelem zadany vlastni web'] : [],
             contactSignals: request.knownTargetEmail ? ['Uzivatelem zadany e-mail'] : [],
-            missingAutomationSignals: ['Neni videt online guest guide', 'Neni videt FAQ / arrival guide', 'Neni videt predprijezdova stranka'],
+            missingAutomationSignals: ['Nelze verejne overit, zda maji guest guide', 'Guest guide muze existovat neverejne', 'Neni jasne, zda je predprijezdovy guide napojeny na zpravy hostum'],
             likelyManualProcessSignals: ['Manualne znamy lokalni provoz', 'Setup mezera vyzaduje rucni overeni'],
             qualificationReason: 'Known Target Mode: jeden konkretni provoz zadan uzivatelem; demo fallback vytvari setup kandidata bez tvrzeni painu.',
             alreadySolvedSignals: [],
-            missingEvidence: ['Lokalni Vite fallback nepouzil Tavily enrichment', 'Pred oslovenim overit realny web a guest guide'],
+            missingEvidence: ['Lokalni Vite fallback nepouzil Tavily enrichment', 'Nelze verejne overit, zda maji guest guide'],
             contradictionWarnings: [],
             recommendedAngle: 'guest-guide',
             evidenceSummary: 'Kandidat vznikl z Known Target Mode. Bez Netlify Functions jde o demo fallback, ne realne vyhledani.',
@@ -128,10 +129,10 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             positiveSolvedSignals: ['Vlastni web a verejny kontakt jsou videt'],
             noPainReason: 'No public review pain found; qualification is setup automation, not a fix claim.',
             targetOffer: 'self-checkin-setup',
-            offerHypothesis: 'Setup automatizace: z verejne prezentace neni videt guest guide, FAQ ani predprijezdova stranka.',
+            offerHypothesis: 'Setup automatizace: z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide.',
             websiteSignals: ['Vlastni web mimo OTA', 'Rezervacni prezentace'],
             contactSignals: ['Verejny e-mail'],
-            missingAutomationSignals: ['Neni videt online guest guide', 'Neni videt FAQ / arrival guide', 'Neni videt predprijezdova stranka'],
+            missingAutomationSignals: ['Nelze verejne overit, zda maji guest guide', 'Guest guide muze existovat neverejne', 'Neni jasne, zda je predprijezdovy guide napojeny na zpravy hostum'],
             likelyManualProcessSignals: ['Tradicni verejna prezentace', 'Prakticke instrukce nejsou v ukazce strukturovane'],
             qualificationReason: 'Demo setup lead: maly apartmanovy provoz s webem a kontaktem, ale bez viditelne moderni guest komunikace.',
             alreadySolvedSignals: ['Vlastni web a verejny kontakt jsou videt'],
@@ -172,7 +173,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             offerHypothesis: 'Fix lead je slaby, protoze chybi kontakt; nejdriv dohledat vlastni web/e-mail.',
             websiteSignals: ['Mozny vlastni web'],
             contactSignals: [],
-            missingAutomationSignals: ['Neni videt guest guide'],
+            missingAutomationSignals: ['Nelze verejne overit, zda maji guest guide'],
             likelyManualProcessSignals: ['Rodinna atmosfera muze znamenat manualni komunikaci'],
             qualificationReason: 'Demo weak lead: pain signal existuje, ale kontakt chybi a evidence je slaba.',
             alreadySolvedSignals: ['Parkovani a snidane jsou pravdepodobne komunikovane'],
@@ -234,16 +235,16 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
     const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict) || isBenchmarkOrSkip;
     const primaryPain = candidate.painSignals[0] || 'verejny pain signal';
     const firstImpression = isSetup
-        ? `${candidate.name} vypada jako setup lead: z verejne prezentace je videt kontakt/web, ale neni jasne, zda maji online guest guide, QR instrukce nebo predprijezdovou stranku.`
+        ? `${candidate.name} vypada jako setup lead: z verejne prezentace je videt kontakt/web, ale neni jasne, zda host dostava jednoduchy predprijezdovy guide. Guest guide muze existovat neverejne.`
         : isLowFit
             ? `${candidate.name} neni podle dostupnych verejnych snippetů jasna priorita. Evidence zatim neukazuje konkretni obchodni bolest ani setup mezeru.`
             : `${candidate.name} pusobi z dostupnych verejnych snippetů jako fix lead, ale jde jen o omezeny verejny nahled, ne analyzu cele OTA stranky.`;
     const quickWins = isSetup ? [
         {
             id: `quick-win-${crypto.randomUUID()}`,
-            title: 'Navrhnout online guest guide',
-            why: 'Z verejne prezentace neni videt jednotna stranka s prijezdem, parkovanim, Wi-Fi a odpovedmi na caste dotazy.',
-            action: 'Nabidnout jednoduchy QR guest guide a predprijezdovou stranku bez tvrzeni, ze dnes delaji neco spatne.',
+            title: 'Ověřit a případně zjednodušit host guide',
+            why: 'Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide; muze existovat neverejne.',
+            action: 'Pokud jeste nemaji host guide, nabidnout jednoduchy QR / predprijezdovy guide; pokud ho maji, zkontrolovat, zda je jasne napojeny na zpravy hostum.',
             sourceEvidence: evidence,
         },
         {
@@ -256,8 +257,8 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
         {
             id: `quick-win-${crypto.randomUUID()}`,
             title: 'Overit setup mezeru',
-            why: candidate.missingAutomationSignals.join(', ') || 'Neni videt moderni guest komunikace.',
-            action: 'Pred oslovenim jeste rucne zkontrolovat, zda na webu neni skryty guest guide nebo FAQ.',
+            why: candidate.missingAutomationSignals.join(', ') || 'Predprijezdovy guide nelze verejne overit.',
+            action: 'Pred oslovenim rucne overit verejne podklady a formulovat nabidku jako opatrnou setup prilezitost, ne jako jistou chybu.',
             sourceEvidence: candidate.sourceSnippets[1] || evidence,
         },
     ] : isLowFit ? [
@@ -272,7 +273,7 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
             id: `quick-win-${crypto.randomUUID()}`,
             title: 'Doplnit evidenci',
             why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
-            action: 'Hledat konkretni recenzni pain nebo chybejici guest guide / FAQ / predprijezdovou stranku.',
+            action: 'Hledat konkretni recenzni pain nebo verejny dukaz, ze predprijezdove informace nejsou jasne; guest guide muze existovat neverejne.',
             sourceEvidence: evidence,
         },
         {
@@ -316,11 +317,11 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
         risks: candidate.risks,
         guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals : isLowFit ? [mainFriction, 'Neni dost konkretni evidence o treni hosta.'] : [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
         quickWins,
-        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: ${isSetup ? 'opatrne nabidnout setup online guest guide / QR instrukci bez tvrzeni problemu.' : isLowFit ? 'nebrat jako prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
+        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou. Guest guide muze existovat neverejne.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: ${isSetup ? 'opatrne nabidnout overeni a pripadne setup QR / predprijezdoveho guide bez tvrzeni problemu.' : isLowFit ? 'nebrat jako prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
         outreachEmail: isBenchmarkOrSkip
             ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
             : isSetup
-            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z verejne prezentace neni videt, zda hoste maji jednoduchy online guest guide, QR instrukce nebo predprijezdovou stranku.\n\nU podobnych penzionu a apartmanu to casto pomaha snizit pocet dotazu a zprehlednit prijezd, aniz bych tvrdil, ze dnes neco delate spatne. Poslal bych vam zdarma 3 konkretni napady vychazejici jen z verejnych informaci.\n\nDavid`
+            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z verejne prezentace neni jasne, zda hoste dostavaji jednoduchy predprijezdovy guide nebo QR instrukce; samozrejme muze existovat neverejne po rezervaci.\n\nU podobnych penzionu a apartmanu casto pomaha overit, jestli je guide dobre napojeny na zpravy hostum a snizuje dotazy pred prijezdem. Poslal bych vam zdarma 3 konkretni napady vychazejici jen z verejnych informaci, bez tvrzeni, ze dnes neco delate spatne.\n\nDavid`
             : `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z verejnych search snippetů me zaujal konkretni signal: ${primaryPain}.\n\nPoslal bych vam zdarma 3 navrhy zamerene jen na tento dolozeny problem v prijezdu, instrukcich, parkovani nebo komunikaci. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
         followUp: `Dobry den, jen kratce navazuji k ${candidate.name}. Pokud chcete, poslu mini-audit verejne prezentace ve 3 bodech; nic neposilam automaticky hostum ani nehodnotim interni komunikaci.`,
         offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Zacit bezplatnym mini-auditem verejne prezentace a potom nabidnout placeny audit guest guide / komunikace pred prijezdem.',
@@ -490,6 +491,46 @@ export async function analyzeLead(candidate: LeadAgentCandidate, userNotes = '')
                 userMessage: message,
             },
             analysis: mockAnalysis(candidate),
+        };
+    }
+}
+
+export interface ScreenshotAnalyzeRequest {
+    leadId: string;
+    leadName: string;
+    images: LeadScreenshot[];
+    existingCandidateSummary: string;
+    publicLinks: PublicProfileLink[];
+}
+
+export interface ScreenshotAnalyzeResponse {
+    status: 'completed' | 'needs-config' | 'error';
+    message: string;
+    analysis?: ScreenshotAnalysisResult;
+    diagnostic: ScreenshotAnalysisDiagnostic;
+}
+
+export async function analyzeScreenshots(request: ScreenshotAnalyzeRequest): Promise<ScreenshotAnalyzeResponse> {
+    try {
+        return await postJson<ScreenshotAnalyzeResponse>('/.netlify/functions/analyze-screenshots', request);
+    } catch (error) {
+        if (error instanceof ApiError && error.data) {
+            return error.data as ScreenshotAnalyzeResponse;
+        }
+
+        const httpStatus = error instanceof ApiError ? error.status : undefined;
+        const fallbackReason = clientFallbackReason(httpStatus);
+        const message = `Vision analyza screenshotu nebezela: ${fallbackReason}`;
+
+        return {
+            status: httpStatus === 404 ? 'needs-config' : 'error',
+            message,
+            diagnostic: {
+                status: httpStatus === 404 ? 'needs-config' : 'error',
+                provider: 'client',
+                fallbackReason,
+                userMessage: message,
+            },
         };
     }
 }

@@ -215,7 +215,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
     const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(fitVerdict) || isBenchmarkOrSkip;
     const solvedSignals = candidate.alreadySolvedSignals || [];
     const firstImpression = isSetup
-        ? `${name} vypada jako setup opportunity: z verejne prezentace neni videt, zda maji online guest guide, QR instrukce nebo predprijezdovou stranku.`
+        ? `${name} vypada jako setup opportunity: z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide. Guest guide muze existovat neverejne.`
         : isLowFit
         ? `${name} neni podle dostupnych snippetu jasna priorita. Evidence neukazuje konkretni obchodni bolest, kterou by mel StayBoost resit.`
         : `${name} vypada z verejnych snippetu jako relevantni lead, ale evidence je omezena na search vysledky.`;
@@ -226,9 +226,9 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
 
     const quickWins = isSetup ? [
         {
-            title: 'Navrhnout online guest guide',
-            why: 'Z verejne prezentace neni videt moderni guest guide / QR instrukce / predprijezdova stranka.',
-            action: 'Nabidnout jednoduchy setup bez tvrzeni, ze dnes maji problem.',
+            title: 'Ověřit a případně zjednodušit host guide',
+            why: 'Z veřejné prezentace není jasné, zda host dostává jednoduchý předpříjezdový guide; guest guide může existovat neveřejně.',
+            action: 'Pokud ještě nemají host guide, nabídnout jednoduchý QR / předpříjezdový guide; pokud ho mají, zkontrolovat, zda je jasně napojený na zprávy hostům.',
             sourceEvidence: evidence,
         },
         {
@@ -239,8 +239,8 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         },
         {
             title: 'Rucne overit mezeru',
-            why: (candidate.missingAutomationSignals || []).join(', ') || 'Chybi viditelna automatizace ve snippetech.',
-            action: 'Pred kontaktem overit, zda web nema skryty guest guide nebo FAQ.',
+            why: (candidate.missingAutomationSignals || []).join(', ') || 'Předpříjezdový guide nelze veřejně ověřit.',
+            action: 'Před kontaktem ověřit dostupné veřejné podklady a formulovat to jako opatrnou setup příležitost, ne jako jistý problém.',
             sourceEvidence: evidence,
         },
     ] : isLowFit ? [
@@ -253,7 +253,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         {
             title: 'Doplnit evidenci',
             why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
-            action: 'Hledat konkretni pain nebo chybejici guest guide / FAQ / arrival guide.',
+            action: 'Hledat konkrétní pain nebo veřejný důkaz, že předpříjezdové informace nejsou jasné; guest guide může existovat neveřejně.',
             sourceEvidence: evidence,
         },
         {
@@ -289,11 +289,11 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         risks: risks.length > 0 ? risks : ['Omezeny verejny nahled, neni potvrzen detail nabidky.'],
         guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals || [] : painSignals.length > 0 ? painSignals : ['Neni dost konkretni evidence o treni hosta.'],
         quickWins,
-        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni zaver: ${isSetup ? 'opatrne nabidnout setup online guest guide / QR instrukci bez tvrzeni problemu.' : isLowFit ? 'nejde o jasnou prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
+        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Guest guide muze existovat neverejne a jeho absence neni prokazana. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni zaver: ${isSetup ? 'opatrne nabidnout overeni a pripadne setup QR / predprijezdoveho guide bez tvrzeni problemu.' : isLowFit ? 'nejde o jasnou prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
         outreachEmail: isBenchmarkOrSkip
             ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
             : isSetup
-                ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z verejne prezentace neni videt, zda hoste maji jednoduchy online guest guide, QR instrukce nebo predprijezdovou stranku. U podobnych penzionu to casto pomaha snizit pocet dotazu a zprehlednit prijezd.\n\nPoslal bych vam zdarma 3 konkretni napady vychazejici jen z verejne dostupnych informaci, bez tvrzeni, ze dnes neco delate spatne.\n\nDavid`
+                ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z verejne prezentace neni jasne, zda hoste dostavaji jednoduchy predprijezdovy guide nebo QR instrukce; samozrejme muze existovat neverejne po rezervaci.\n\nU podobnych penzionu casto pomaha overit, jestli je guide dobre napojeny na zpravy hostum a snizuje dotazy pred prijezdem. Poslal bych vam zdarma 3 konkretni napady vychazejici jen z verejne dostupnych informaci, bez tvrzeni, ze dnes neco delate spatne.\n\nDavid`
             : `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z verejnych search snippetu me zaujal konkretni signal: ${primaryPain}.\n\nPoslal bych vam zdarma 3 navrhy zamerene jen na tento dolozeny problem v prijezdu, instrukcich, parkovani nebo komunikaci. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
         followUp: `Dobry den, jen se kratce vracim k verejne prezentaci ${name}. Pokud chcete, poslu kratky mini-audit ve 3 bodech bez zavazku.`,
         offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Doporucit bezplatny mini-audit a potom placeny audit guest guide / komunikace pred prijezdem.',
@@ -315,9 +315,9 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         likelyManualProcessSignals: candidate.likelyManualProcessSignals || [],
         qualificationReason,
         alreadySolvedSignals: candidate.alreadySolvedSignals || [],
-        missingEvidence: candidate.missingEvidence || ['Fallback analyza nema dost evidence pro jistou obchodni bolest.'],
+        missingEvidence: [...new Set([...(candidate.missingEvidence || ['Fallback analyza nema dost evidence pro jistou obchodni bolest.']), 'Nelze verejne overit, zda maji guest guide.', 'Guest guide muze existovat neverejne.'])],
         contradictionWarnings: candidate.contradictionWarnings || [],
-        evidenceLimits: ['Omezeno na search snippety a dodane verejne texty.', 'Netvrdi, ze byla prectena Booking/Airbnb/Google stranka.', 'E-maily se automaticky neposilaji.'],
+        evidenceLimits: ['Omezeno na search snippety a dodane verejne texty.', 'Netvrdi, ze byla prectena Booking/Airbnb/Google stranka.', 'Neviditelny guest guide neni automaticky pain signal.', 'E-maily se automaticky neposilaji.'],
     };
 };
 
@@ -516,10 +516,10 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
         const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych search snippetu.
-    Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
+    Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Guest guide neni casto verejny: pokud neni videt, nesmis psat "nemaji guest guide" ani to davat do painSignals. Pouzij missingEvidence: "Nelze verejne overit, zda maji guest guide." nebo "Guest guide muze existovat neverejne." Jako obchodni prilezitost to formuluj jen opatrne: "Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide." Quick win nesmi byt jiste "Zavest guest guide"; pouzij podminene: "Pokud jeste nemaji host guide, nabidnout jednoduchy QR / predprijezdovy guide; pokud ho maji, zkontrolovat, zda je jasne napojeny na zpravy hostum." Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
     Nejdriv klasifikuj opportunityType: fix-existing-process, setup-automation, ota-profile-audit, benchmark, nebo skip.
     FIX: pouzij jen kdyz existuje painSignals / reviewFrictionScore: spatny check-in, nejasny prijezd, parkovani, komunikace, recenzni problem. Outreach muze pojmenovat konkretni pain signal.
-    SETUP: muze byt strong/moderate i bez painu, pokud jde o maly penzion/apartman s vlastnim webem nebo kontaktem a neni videt online guest guide / QR instrukce / FAQ / arrival guide / automatizovany predprijezdovy workflow. Setup outreach nesmi tvrdit, ze maji problem nebo ze neco delaji spatne. Pouzij formulaci: "Z verejne prezentace neni videt, zda hoste maji jednoduchy online guest guide / QR instrukce / predprijezdovou stranku. U podobnych penzionu to casto pomaha snizit pocet dotazu a zprehlednit prijezd."
+    SETUP: muze byt strong/moderate i bez painu, pokud jde o maly penzion/apartman s vlastnim webem nebo kontaktem a z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide / QR instrukce / FAQ / automatizovany predprijezdovy workflow. Setup outreach nesmi tvrdit, ze maji problem nebo ze neco delaji spatne. Pouzij formulaci: "Z verejne prezentace neni jasne, zda hoste dostavaji jednoduchy predprijezdovy guide; ten muze existovat neverejne po rezervaci. U podobnych penzionu casto pomaha overit, jestli je dobre napojeny na zpravy hostum."
     BENCHMARK/SKIP: pokud je vse zjevne vyresene nebo chybi kontakt/web/evidence, outreachEmail je interni poznamka, ne obchodni email. Self-check-in bez painu neni fix lead; muze byt benchmark nebo slaby setup jen pri jasne setup mezere.
     JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"opportunityType":"fix-existing-process"|"setup-automation"|"ota-profile-audit"|"benchmark"|"skip","automationNeedScore":number,"publicMaturityScore":number,"reviewFrictionScore":number,"painSignals":string[],"positiveSolvedSignals":string[],"noPainReason":string,"targetOffer":"guest-communication-fix"|"guest-guide"|"ota-profile-audit"|"review-response-improvement"|"self-checkin-setup"|"skip","offerHypothesis":string,"websiteSignals":string[],"contactSignals":string[],"missingAutomationSignals":string[],"likelyManualProcessSignals":string[],"qualificationReason":string,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
 Lead: ${JSON.stringify(compactInput)}

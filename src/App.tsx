@@ -1,6 +1,6 @@
-import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
+import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { analyzeLead, checkAgentHealth, discoverDemoLeads, discoverLeads } from './agentApi';
+import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
@@ -18,8 +18,13 @@ import {
 import {
     accommodationTypes,
     Lead,
+    agentLeadStatusLabels,
+    evidenceLevelLabels,
     leadStatuses,
     LeadStatus,
+    leadScreenshotTypeLabels,
+    LeadScreenshot,
+    LeadScreenshotType,
     mainPhotoVerdictLabels,
     offerAngleLabels,
     OfferAngle,
@@ -63,6 +68,10 @@ const emptyLead = (): Lead => ({
     leadScore: 0,
     createdFromAgentAnalysis: false,
     addedWithoutAgentAnalysis: false,
+    agentLeadStatus: 'manual',
+    evidenceLevel: 'pasted-public-text',
+    needsAgentAnalysis: false,
+    sourceLimitations: [],
     leadAgentRunId: '',
     agentAnalysisProvider: '',
     opportunityScore: 0,
@@ -80,6 +89,9 @@ const emptyLead = (): Lead => ({
     publicProfileUrl: '',
     publicLinks: [],
     sourceMaterials: [],
+    screenshots: [],
+    screenshotAnalysis: undefined,
+    screenshotAnalysisDiagnostic: { status: 'idle' },
     extractionStatus: 'idle',
     firstImpression: '',
     mainPhotoVerdict: 'unknown',
@@ -176,6 +188,15 @@ const emptySourceMaterial = (): SourceMaterial => ({
     createdAt: new Date().toISOString(),
 });
 
+const emptyScreenshot = (fileName = '', dataUrl = ''): LeadScreenshot => ({
+    id: `screenshot-${crypto.randomUUID()}`,
+    type: 'ota-profile-screenshot',
+    fileName,
+    note: '',
+    dataUrl,
+    createdAt: new Date().toISOString(),
+});
+
 const offerAngleForAgentLead = (opportunityType: LeadAgentOpportunityType, targetOffer: string, fallback: OfferAngle): OfferAngle => {
     if (opportunityType === 'setup-automation' || targetOffer === 'guest-guide' || targetOffer === 'self-checkin-setup') return 'guest-guide';
     if (opportunityType === 'fix-existing-process') return 'guest-communication';
@@ -218,6 +239,29 @@ const migrateQuickWins = (lead: Partial<Lead>): QuickWin[] => {
         action: win,
         sourceEvidence: '',
     }));
+};
+
+const inferAgentLeadStatus = (lead: Partial<Lead>): Lead['agentLeadStatus'] => {
+    if (lead.agentLeadStatus) return lead.agentLeadStatus;
+    if (lead.createdFromAgentAnalysis) return 'analyzed';
+    if (lead.addedWithoutAgentAnalysis) return 'added-without-analysis';
+    return 'manual';
+};
+
+const inferEvidenceLevel = (lead: Partial<Lead>): Lead['evidenceLevel'] => {
+    if (lead.evidenceLevel) return lead.evidenceLevel;
+    if (lead.createdFromAgentAnalysis) return 'full-agent-analysis';
+    if ((lead.screenshotAnalysis || lead.screenshots?.length) && lead.structuredQuickWins?.length) return 'screenshot-analysis';
+    if ((lead.sourceMaterials ?? []).some((material) => material.content?.trim())) return 'pasted-public-text';
+    if (lead.addedWithoutAgentAnalysis) return 'search-snippet-only';
+    return 'pasted-public-text';
+};
+
+const defaultSourceLimitations = (lead: Partial<Lead>) => {
+    if (lead.sourceLimitations && lead.sourceLimitations.length > 0) return lead.sourceLimitations;
+    if (lead.createdFromAgentAnalysis) return ['Výstup vychází z agentní analýzy dodaných veřejných snippetů, odkazů a případných podkladů.'];
+    if (lead.addedWithoutAgentAnalysis) return ['Lead vznikl jen z rychlého search nálezu.', 'Search snippety nejsou kompletní OTA profil.', 'OTA URL jsou jen odkazy k otevření, ne automaticky přečtený zdroj.', 'Guest guide může existovat neveřejně a bez screenshotu/textu ho nelze ověřit.'];
+    return ['Ručně vedený lead; evidence závisí na vložených veřejných textech, odkazech nebo screenshotech.'];
 };
 
 const demoLeadNotice = 'Demo lead - fiktivni data. Nejde o skutecneho klienta ani obchodni lead.';
@@ -268,6 +312,10 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
         addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
+        agentLeadStatus: inferAgentLeadStatus(lead),
+        evidenceLevel: inferEvidenceLevel(lead),
+        needsAgentAnalysis: lead.needsAgentAnalysis ?? Boolean(lead.addedWithoutAgentAnalysis && !lead.createdFromAgentAnalysis),
+        sourceLimitations: defaultSourceLimitations(lead),
         leadAgentRunId: lead.leadAgentRunId ?? '',
         agentAnalysisProvider: lead.agentAnalysisProvider ?? '',
         opportunityScore: lead.opportunityScore ?? 0,
@@ -282,6 +330,9 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         publicMaturityScore: lead.publicMaturityScore ?? 0,
         isDemoLead,
         demoReason: isDemoLead ? lead.demoReason || demoLeadNotice : lead.demoReason ?? '',
+        screenshots: lead.screenshots ?? [],
+        screenshotAnalysis: lead.screenshotAnalysis,
+        screenshotAnalysisDiagnostic: lead.screenshotAnalysisDiagnostic ?? { status: 'idle' },
     };
 };
 
@@ -419,6 +470,103 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
     isLegacy: analysis.isLegacy ?? !analysis.provider,
 });
 
+const evidenceBadgeForCandidate = (candidate: LeadAgentCandidate, analysis?: LeadAgentAnalysis) => {
+    if (analysis) return 'Full agent analysis';
+    if (candidate.websiteSignals.length > 0 || candidate.websiteUrl) return 'Website evidence';
+    return 'Search snippet only';
+};
+
+const candidateFromLead = (lead: Lead): LeadAgentCandidate => ({
+    id: `detail-candidate-${lead.id}`,
+    runId: lead.leadAgentRunId || `detail-${lead.id}`,
+    createdAt: nowIso(),
+    name: lead.name,
+    location: lead.city,
+    type: lead.accommodationType,
+    websiteUrl: lead.websiteOrOtaUrl || lead.publicProfileUrl,
+    sourceUrls: lead.publicLinks.map((link) => link.url).filter(Boolean),
+    sourceSnippets: [
+        lead.firstImpression,
+        lead.notes,
+        lead.qualificationReason || '',
+        lead.offerHypothesis || '',
+        ...lead.sourceMaterials.map((material) => `${material.title}: ${material.content}`),
+    ].filter((value) => value.trim()),
+    possibleEmail: lead.email,
+    signals: lead.publicSignals,
+    risks: splitLines(lead.risks || lead.guestFrictionSignals),
+    leadScore: lead.leadScore,
+    opportunityScore: lead.opportunityScore ?? lead.leadScore,
+    opportunityType: (lead.opportunityType as LeadAgentOpportunityType) || 'setup-automation',
+    automationNeedScore: lead.automationNeedScore ?? 0,
+    publicMaturityScore: lead.publicMaturityScore ?? 0,
+    reviewFrictionScore: lead.reviewFrictionScore ?? 0,
+    fitVerdict: ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(lead.fitVerdict || '') ? lead.fitVerdict as LeadAgentCandidate['fitVerdict'] : 'not-enough-evidence',
+    confidence: ['low', 'medium', 'high'].includes(lead.confidence || '') ? lead.confidence as LeadAgentCandidate['confidence'] : 'low',
+    contactMissing: !lead.email,
+    painSignals: splitLines(lead.reviewSignals).filter((signal) => !signal.toLowerCase().includes('guest guide')),
+    positiveSolvedSignals: [],
+    noPainReason: '',
+    targetOffer: ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(lead.targetOffer || '') ? lead.targetOffer as LeadAgentCandidate['targetOffer'] : 'guest-guide',
+    offerHypothesis: lead.offerHypothesis || lead.businessOpportunity || 'Z dostupných veřejných podkladů zatím chybí plná agentní analýza.',
+    websiteSignals: lead.publicLinks.some((link) => link.sourceType === 'website') ? ['Vlastní web jako odkaz k ruční kontrole'] : [],
+    contactSignals: lead.email ? ['Veřejný e-mail v CRM'] : [],
+    missingAutomationSignals: ['Nelze veřejně ověřit, zda mají guest guide.', 'Guest guide může existovat neveřejně.'],
+    likelyManualProcessSignals: splitLines(lead.checkInParkingInfo),
+    qualificationReason: lead.qualificationReason || 'Lead analyzovaný z detailu CRM; dostupná evidence může být jen rychlý search snippet nebo ručně vložené podklady.',
+    alreadySolvedSignals: [],
+    missingEvidence: ['Nelze veřejně ověřit, zda mají guest guide.', 'OTA URL nejsou automaticky přečtené.', ...lead.sourceLimitations],
+    contradictionWarnings: ['Netvrdit, že nemají guest guide, pokud to není v dodaných podkladech prokazatelné.'],
+    recommendedAngle: lead.selectedOfferAngle,
+    evidenceSummary: lead.notes || lead.firstImpression || 'CRM lead bez plné agentní analýzy.',
+    isMock: lead.isDemoLead ?? false,
+    isLegacy: false,
+});
+
+const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead => {
+    const quickWins = analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
+
+    return {
+        ...lead,
+        status: 'Audit pripraven',
+        createdFromAgentAnalysis: true,
+        addedWithoutAgentAnalysis: false,
+        agentLeadStatus: 'analyzed',
+        evidenceLevel: 'full-agent-analysis',
+        needsAgentAnalysis: false,
+        agentAnalysisProvider: analysis.provider,
+        opportunityScore: analysis.opportunityScore,
+        opportunityType: analysis.opportunityType,
+        fitVerdict: analysis.fitVerdict,
+        confidence: analysis.confidence,
+        targetOffer: analysis.targetOffer,
+        qualificationReason: analysis.qualificationReason,
+        offerHypothesis: analysis.offerHypothesis,
+        automationNeedScore: analysis.automationNeedScore,
+        reviewFrictionScore: analysis.reviewFrictionScore,
+        publicMaturityScore: analysis.publicMaturityScore,
+        publicSignals: [...new Set([...lead.publicSignals, ...analysis.strengths, ...analysis.websiteSignals, ...analysis.contactSignals])],
+        quickWins: quickWins.map((win) => win.title),
+        proposedQuickWins: quickWins.map((win) => win.title),
+        structuredQuickWins: quickWins,
+        firstImpression: analysis.firstImpression,
+        descriptionObservation: analysis.offerHypothesis,
+        checkInParkingInfo: [...analysis.missingAutomationSignals, ...analysis.likelyManualProcessSignals].join('\n'),
+        reviewSignals: [...analysis.painSignals, ...analysis.positiveSolvedSignals].join('\n'),
+        guestFrictionSignals: analysis.guestFrictionSignals.join('\n'),
+        guestConfusion: analysis.guestFrictionSignals.join('\n'),
+        strengths: analysis.strengths.join('\n'),
+        risks: analysis.risks.join('\n'),
+        businessOpportunity: `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}`,
+        generatedMiniAudit: analysis.miniAudit,
+        generatedOutreach: analysis.outreachEmail,
+        generatedFollowUp: analysis.followUp,
+        generatedOffer: analysis.offerRecommendation,
+        extractionStatus: 'completed',
+        sourceLimitations: analysis.evidenceLimits,
+    };
+};
+
 const normalizeAgentSession = (session: Partial<LeadAgentSession>, loadedFromStorage = false): LeadAgentSession => {
     const base = emptyAgentSession();
     const candidates = (session.candidates ?? []).map(normalizeAgentCandidate);
@@ -522,7 +670,15 @@ function App() {
     };
 
     const updateDraft = <Field extends keyof Lead>(field: Field, value: Lead[Field]) => {
-        setDraftLead((current) => ({ ...current, [field]: value }));
+        setDraftLead((current) => {
+            const nextLead = { ...current, [field]: value };
+
+            if (!isCreating && selectedLeadId === current.id) {
+                setLeads((currentLeads) => currentLeads.map((lead) => (lead.id === current.id ? nextLead : lead)));
+            }
+
+            return nextLead;
+        });
     };
 
     const persistLead = (lead: Lead) => {
@@ -898,10 +1054,16 @@ function App() {
             extractionStatus: analysis ? 'completed' : 'ready',
             email: candidate.possibleEmail,
             status: analysis ? 'Audit pripraven' : 'Novy',
-            notes: `${candidate.isMock ? `${demoLeadNotice}\n\n` : ''}${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Lead byl pridan bez agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim - fiktivni kandidat, nepouzivat jako realny obchodni lead.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
+            notes: `${candidate.isMock ? `${demoLeadNotice}\n\n` : ''}${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Rychly nalez z Lead Finderu bez plne agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim - fiktivni kandidat, nepouzivat jako realny obchodni lead.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
             leadScore: candidate.leadScore,
             createdFromAgentAnalysis: hasAgentAnalysis,
             addedWithoutAgentAnalysis: !hasAgentAnalysis,
+            agentLeadStatus: hasAgentAnalysis ? 'analyzed' : 'quick-discovery',
+            evidenceLevel: hasAgentAnalysis ? 'full-agent-analysis' : candidate.websiteSignals.length > 0 || candidate.websiteUrl ? 'website-snippet' : 'search-snippet-only',
+            needsAgentAnalysis: !hasAgentAnalysis,
+            sourceLimitations: hasAgentAnalysis
+                ? analysis.evidenceLimits
+                : ['Tento lead vznikl jen z rychlého vyhledání.', 'Search snippety nejsou kompletní OTA profil.', 'OTA URL jsou jen odkazy k otevření, ne automaticky přečtený zdroj.', 'Screenshoty jsou analyzované jen tehdy, když je uživatel nahraje.', 'Nelze veřejně ověřit, zda mají guest guide; guest guide může existovat neveřejně.'],
             leadAgentRunId: candidate.runId,
             agentAnalysisProvider: analysis?.provider ?? '',
             isDemoLead: candidate.isMock,
@@ -919,7 +1081,7 @@ function App() {
             publicSignals: [...new Set([...candidate.signals, ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals)])],
             quickWins: quickWins.map((win) => win.title),
             proposedQuickWins: quickWins.map((win) => win.title),
-            firstImpression: analysis?.firstImpression ?? candidate.evidenceSummary,
+            firstImpression: analysis?.firstImpression ?? '',
             mainPhotoVerdict: 'unknown',
             descriptionObservation: analysis?.offerHypothesis ?? candidate.offerHypothesis,
             checkInParkingInfo: (analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals).join('\n'),
@@ -928,7 +1090,7 @@ function App() {
             guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
             strengths: analysis?.strengths.join('\n') ?? candidate.signals.join('\n'),
             risks: analysis?.risks.join('\n') ?? candidate.risks.join('\n'),
-            businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : candidate.offerHypothesis || 'Pripravit mini-audit verejne prezentace a guest guide / komunikaci pred prijezdem.',
+            businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : '',
             structuredQuickWins: quickWins,
             generatedMiniAudit: analysis?.miniAudit ?? '',
             generatedOutreach: analysis?.outreachEmail ?? '',
@@ -948,6 +1110,98 @@ function App() {
             ),
         }));
         setActiveScreen('detail');
+    };
+
+    const analyzeLeadFromDetail = async (lead: Lead) => {
+        const runningLead: Lead = {
+            ...lead,
+            needsAgentAnalysis: true,
+            sourceLimitations: [...new Set([...lead.sourceLimitations, 'Probíhá agentní analýza z dostupných CRM podkladů.'])],
+        };
+        setDraftLead(runningLead);
+        persistLead(runningLead);
+
+        const response = await analyzeLead(candidateFromLead(runningLead), runningLead.notes);
+
+        if (!response.analysis) {
+            const nextLead: Lead = {
+                ...runningLead,
+                sourceLimitations: [...new Set([...runningLead.sourceLimitations, response.diagnostic?.userMessage || response.message])],
+            };
+            persistLead(nextLead);
+            return;
+        }
+
+        persistLead(applyAgentAnalysisToLead(runningLead, normalizeAgentAnalysis(response.analysis, candidateFromLead(runningLead))));
+    };
+
+    const analyzeLeadScreenshots = async (lead: Lead) => {
+        if ((lead.screenshots ?? []).length === 0) {
+            persistLead({
+                ...lead,
+                screenshotAnalysisDiagnostic: {
+                    status: 'error',
+                    provider: 'client',
+                    fallbackReason: 'missing_images',
+                    userMessage: 'Nejdřív nahraj alespoň jeden screenshot nebo fotku veřejné prezentace.',
+                },
+            });
+            return;
+        }
+
+        const runningLead: Lead = {
+            ...lead,
+            screenshotAnalysisDiagnostic: { status: 'running', userMessage: 'Analyzuji screenshoty...' },
+        };
+        setDraftLead(runningLead);
+        persistLead(runningLead);
+
+        const response = await analyzeScreenshots({
+            leadId: runningLead.id,
+            leadName: runningLead.name,
+            images: runningLead.screenshots,
+            existingCandidateSummary: [runningLead.notes, runningLead.firstImpression, runningLead.businessOpportunity].filter(Boolean).join('\n'),
+            publicLinks: runningLead.publicLinks,
+        });
+
+        if (!response.analysis) {
+            persistLead({
+                ...runningLead,
+                screenshotAnalysisDiagnostic: response.diagnostic,
+                sourceLimitations: [...new Set([...runningLead.sourceLimitations, response.diagnostic.userMessage || response.message])],
+            });
+            return;
+        }
+
+        const analysis = response.analysis;
+        const quickWins = analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: `quick-win-${crypto.randomUUID()}` }));
+        const nextLead: Lead = {
+            ...runningLead,
+            screenshotAnalysis: analysis,
+            screenshotAnalysisDiagnostic: response.diagnostic,
+            agentLeadStatus: runningLead.createdFromAgentAnalysis ? 'analyzed' : runningLead.agentLeadStatus,
+            evidenceLevel: 'screenshot-analysis',
+            needsAgentAnalysis: runningLead.createdFromAgentAnalysis ? false : runningLead.needsAgentAnalysis,
+            extractionStatus: 'completed',
+            firstImpression: analysis.photoFirstImpression,
+            mainPhotoVerdict: analysis.mainPhotoVerdict,
+            mainPhotoObservation: analysis.photoFirstImpression,
+            betterPhotoSuggestion: analysis.mainPhotoVerdict === 'weak' ? analysis.photoOrderSuggestions[0] || '' : runningLead.betterPhotoSuggestion,
+            photoOrderObservation: analysis.photoOrderSuggestions.join('\n'),
+            strengths: analysis.visibleStrengths.join('\n'),
+            risks: analysis.visibleWeaknesses.join('\n'),
+            reviewSignals: analysis.reviewSignalsFromScreenshots.join('\n'),
+            guestFrictionSignals: analysis.guestFrictionVisible.join('\n'),
+            guestConfusion: analysis.guestFrictionVisible.join('\n'),
+            businessOpportunity: analysis.otaPresentationObservations.join('\n'),
+            structuredQuickWins: quickWins,
+            quickWins: quickWins.map((win) => win.title),
+            proposedQuickWins: quickWins.map((win) => win.title),
+            publicSignals: [...new Set([...runningLead.publicSignals, ...analysis.visibleStrengths, ...analysis.otaPresentationObservations])],
+            sourceLimitations: [...new Set([...runningLead.sourceLimitations, ...analysis.evidenceLimits, 'Vision analýza hodnotí jen nahrané screenshoty, ne celou OTA stránku.'])],
+        };
+
+        persistLead(nextLead);
     };
 
     const prepareAuditObservations = () => {
@@ -1069,6 +1323,7 @@ function App() {
                 <AuditPanel
                     copiedTextId={copiedTextId}
                     draftLead={draftLead}
+                    onAnalyzeScreenshots={analyzeLeadScreenshots}
                     onChange={updateDraft}
                     onCopyText={copyText}
                     onGenerateText={generateText}
@@ -1110,6 +1365,8 @@ function App() {
                 copiedTextId={copiedTextId}
                 draftLead={draftLead}
                 isCreating={isCreating}
+                    onAnalyzeLead={analyzeLeadFromDetail}
+                    onAnalyzeScreenshots={analyzeLeadScreenshots}
                 onChange={updateDraft}
                 onCopyText={copyText}
                 onDeleteLead={deleteLead}
@@ -1507,6 +1764,8 @@ function LeadFinderPanel({
                                         <td>
                                             {candidate.isMock ? <span className="demo-badge">FIKTIVNÍ</span> : null}
                                             {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <span className="quick-badge">Rychlý nález</span> : null}
+                                            <span className="evidence-badge">{evidenceBadgeForCandidate(candidate, analysis)}</span>
+                                            {!analysis ? <span className="evidence-badge warning-evidence">Needs screenshots</span> : null}
                                             <strong>{candidate.isMock && !candidate.name.startsWith('DEMO') ? `DEMO — ${candidate.name}` : candidate.name}</strong>
                                             <small>{candidate.isMock ? 'Demo výsledek - není skutečný klient' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
                                             {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <small>Vyžaduje analýzu</small> : null}
@@ -1801,11 +2060,13 @@ interface LeadEditorProps {
     onDeleteLead?: (leadId: string) => void;
     onGenerateText?: (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
     onPrepareAudit?: () => void;
+    onAnalyzeLead?: (lead: Lead) => void;
+    onAnalyzeScreenshots?: (lead: Lead) => void;
     onSave: (event?: FormEvent) => void;
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onDeleteLead, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
     const agentBadges = [
         draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
         draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
@@ -1847,7 +2108,33 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                         {draftLead.qualificationReason ? <span>{draftLead.qualificationReason}</span> : null}
                     </div>
                 ) : draftLead.addedWithoutAgentAnalysis ? (
-                    <div className="scope-note warning-note">Lead byl přidán bez agentní analýzy. Výstupy je potřeba doplnit ručně nebo kandidáta nejdřív analyzovat v Lead Finderu.</div>
+                    <div className="scope-note warning-note quick-discovery-note">
+                        <strong>Rychlý nález — vyžaduje analýzu</strong>
+                        <span>Tento lead vznikl jen z rychlého vyhledání. Pro konkrétní audit spusť agentní analýzu nebo přidej screenshoty/veřejné podklady.</span>
+                        <div className="button-group inline-actions">
+                            <button className="primary-button compact-button" onClick={() => onAnalyzeLead?.(draftLead)} type="button">
+                                <Sparkles size={16} aria-hidden="true" />
+                                Spustit agentní analýzu tohoto leadu
+                            </button>
+                            <button className="secondary-button compact-button" onClick={() => onAnalyzeScreenshots?.(draftLead)} type="button">
+                                <Image size={16} aria-hidden="true" />
+                                Analyzovat screenshoty
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                <div className="evidence-status-panel">
+                    <span>{agentLeadStatusLabels[draftLead.agentLeadStatus]}</span>
+                    <span>{evidenceLevelLabels[draftLead.evidenceLevel]}</span>
+                    <span>{draftLead.needsAgentAnalysis ? 'Needs agent analysis' : 'Evidence ready'}</span>
+                </div>
+
+                {draftLead.sourceLimitations.length > 0 ? (
+                    <div className="scope-note source-limit-note">
+                        <strong>Limity evidence</strong>
+                        {draftLead.sourceLimitations.map((limitation) => <span key={limitation}>{limitation}</span>)}
+                    </div>
                 ) : null}
 
                 {draftLead.isDemoLead ? (
@@ -1867,6 +2154,7 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                 onChange={onChange}
                 onCopyText={onCopyText}
                 onGenerateText={onGenerateText}
+                onAnalyzeScreenshots={onAnalyzeScreenshots}
                 onPrepareAudit={onPrepareAudit}
                 onSave={onSave}
             />
@@ -1933,7 +2221,7 @@ function LeadCoreFields({ draftLead, onChange }: Pick<LeadEditorProps, 'draftLea
     );
 }
 
-function AuditPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
+function AuditPanel({ copiedTextId = '', draftLead, onAnalyzeScreenshots, onChange, onCopyText, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
     return (
         <form className="panel form-panel" onSubmit={onSave}>
             <div className="panel-header">
@@ -1953,6 +2241,7 @@ function AuditPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
                 onChange={onChange}
                 onCopyText={onCopyText}
                 onGenerateText={onGenerateText}
+                onAnalyzeScreenshots={onAnalyzeScreenshots}
                 onPrepareAudit={onPrepareAudit}
                 onSave={onSave}
             />
@@ -2066,10 +2355,11 @@ function OfferPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
     );
 }
 
-function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText, onPrepareAudit }: LeadEditorProps) {
+function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreenshots, onChange, onCopyText, onGenerateText, onPrepareAudit }: LeadEditorProps) {
     const [sourceDraft, setSourceDraft] = useState<SourceMaterial>(emptySourceMaterial);
     const publicLinks = draftLead.publicLinks ?? [];
     const sourceMaterials = draftLead.sourceMaterials ?? [];
+    const screenshots = draftLead.screenshots ?? [];
     const structuredQuickWins = draftLead.structuredQuickWins ?? [];
     const extractionStatus = draftLead.extractionStatus ?? 'idle';
     const concreteObservationCount = [
@@ -2086,7 +2376,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
     const checklist = [
         { label: 'alespon 1 verejny link', done: publicLinks.some((link) => link.url.trim()) },
         { label: 'alespon 1 silna stranka', done: Boolean(draftLead.strengths.trim()) },
-        { label: 'alespon 2 konkretni pozorovani', done: concreteObservationCount >= 2 },
+        { label: 'alespon 2 konkretni pozorovani', done: concreteObservationCount >= 2 || draftLead.evidenceLevel === 'screenshot-analysis' },
         { label: 'presne 3 quick wins s title/action/why', done: completeQuickWins.length === 3 },
     ];
 
@@ -2163,6 +2453,34 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
         );
     };
 
+    const addScreenshots = (files: FileList | null) => {
+        if (!files?.length) return;
+
+        const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'));
+        void Promise.all(imageFiles.map((file) => new Promise<LeadScreenshot>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(emptyScreenshot(file.name, String(reader.result || '')));
+            reader.readAsDataURL(file);
+        }))).then((newScreenshots) => {
+            onChange('screenshots', [...screenshots, ...newScreenshots]);
+            onChange('sourceLimitations', [...new Set([...draftLead.sourceLimitations, 'Nahrané screenshoty jsou analyzované pouze po spuštění vision analýzy.'])]);
+        });
+    };
+
+    const updateScreenshot = <Field extends keyof LeadScreenshot>(screenshotId: string, field: Field, value: LeadScreenshot[Field]) => {
+        onChange(
+            'screenshots',
+            screenshots.map((screenshot) => (screenshot.id === screenshotId ? { ...screenshot, [field]: value } : screenshot)),
+        );
+    };
+
+    const removeScreenshot = (screenshotId: string) => {
+        onChange(
+            'screenshots',
+            screenshots.filter((screenshot) => screenshot.id !== screenshotId),
+        );
+    };
+
     const canGenerateAudit = extractionStatus === 'completed' || completeQuickWins.length === 3;
 
     return (
@@ -2175,7 +2493,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
             </div>
 
             <div className="scope-note">
-                Odkaz slouzi k otevreni zdroje. Pro automaticke vyplneni vloz verejny text nebo screenshoty.
+                Odkaz slouží k otevření zdroje. OTA URL není automaticky přečtená, search snippet není kompletní OTA profil a screenshoty se analyzují jen po nahrání.
             </div>
 
             <div className="quality-grid">
@@ -2246,6 +2564,71 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                             </div>
                         ))
                     )}
+                </div>
+            </section>
+
+            <section className="nested-section screenshot-intake">
+                <div className="panel-header compact-header">
+                    <div>
+                        <p className="eyebrow">Vision evidence</p>
+                        <h2>Screenshoty a fotky veřejné prezentace</h2>
+                        <p className="section-help">Nahraj screenshot Booking/Airbnb/Google/webu, recenze nebo galerii. Soubor se pro MVP uloží lokálně jako data URL.</p>
+                    </div>
+                    <span className={`status-pill extraction-${draftLead.screenshotAnalysisDiagnostic?.status ?? 'idle'}`}>{draftLead.screenshotAnalysisDiagnostic?.status ?? 'idle'}</span>
+                </div>
+
+                <div className="button-group">
+                    <label className="secondary-button upload-button">
+                        <Image size={18} aria-hidden="true" />
+                        Nahrát screenshoty / fotky
+                        <input accept="image/*" multiple type="file" onChange={(event) => addScreenshots(event.target.files)} />
+                    </label>
+                    <button className="primary-button" disabled={screenshots.length === 0 || draftLead.screenshotAnalysisDiagnostic?.status === 'running'} onClick={() => onAnalyzeScreenshots?.(draftLead)} type="button">
+                        <Sparkles size={18} aria-hidden="true" />
+                        {draftLead.screenshotAnalysisDiagnostic?.status === 'running' ? 'Analyzuji...' : 'Analyzovat screenshoty'}
+                    </button>
+                </div>
+
+                {draftLead.screenshotAnalysisDiagnostic?.userMessage ? (
+                    <div className="diagnostic-box">
+                        <p className="eyebrow">Vision diagnostika</p>
+                        <span>{draftLead.screenshotAnalysisDiagnostic.userMessage}</span>
+                        {draftLead.screenshotAnalysisDiagnostic.fallbackReason ? <span>Fallback reason: {draftLead.screenshotAnalysisDiagnostic.fallbackReason}</span> : null}
+                        {draftLead.screenshotAnalysisDiagnostic.debugId ? <span>Debug ID: {draftLead.screenshotAnalysisDiagnostic.debugId}</span> : null}
+                        {draftLead.screenshotAnalysisDiagnostic.model ? <span>Model: {draftLead.screenshotAnalysisDiagnostic.model}</span> : null}
+                    </div>
+                ) : null}
+
+                <div className="screenshot-grid">
+                    {screenshots.length === 0 ? (
+                        <div className="empty-inline">Zatím nejsou uložené žádné screenshoty. Bez nich aplikace neumí hodnotit OTA profil ani fotogalerii.</div>
+                    ) : screenshots.map((screenshot) => (
+                        <div className="screenshot-card" key={screenshot.id}>
+                            <img alt={screenshot.fileName} src={screenshot.dataUrl} />
+                            <div className="form-grid compact-form-grid">
+                                <label>
+                                    Název
+                                    <input value={screenshot.fileName} onChange={(event) => updateScreenshot(screenshot.id, 'fileName', event.target.value)} />
+                                </label>
+                                <label>
+                                    Typ
+                                    <select value={screenshot.type} onChange={(event) => updateScreenshot(screenshot.id, 'type', event.target.value as LeadScreenshotType)}>
+                                        {(Object.keys(leadScreenshotTypeLabels) as LeadScreenshotType[]).map((type) => (
+                                            <option key={type} value={type}>{leadScreenshotTypeLabels[type]}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="full-width">
+                                    Poznámka
+                                    <textarea value={screenshot.note} onChange={(event) => updateScreenshot(screenshot.id, 'note', event.target.value)} rows={3} />
+                                </label>
+                            </div>
+                            <button className="secondary-button compact-button danger-button" onClick={() => removeScreenshot(screenshot.id)} type="button">
+                                <Trash2 size={16} aria-hidden="true" />
+                                Odebrat
+                            </button>
+                        </div>
+                    ))}
                 </div>
             </section>
 
@@ -2457,7 +2840,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     </button>
                 </div>
                 <div className="quick-win-list">
-                    {structuredQuickWins.length === 0 ? <div className="scope-note">Dopln 3 hlavni quick wins. Bez nich generator nevytvori obecne rady.</div> : null}
+                    {structuredQuickWins.length === 0 ? <div className="scope-note">{draftLead.needsAgentAnalysis ? 'Lead zatím nemá dost evidence pro quick wins. Spusť analýzu nebo přidej screenshoty/veřejné podklady.' : 'Dopln 3 hlavni quick wins. Bez nich generator nevytvori obecne rady.'}</div> : null}
                     {structuredQuickWins.map((quickWin, index) => (
                         <div className="quick-win-card" key={quickWin.id}>
                             <div className="label-row">

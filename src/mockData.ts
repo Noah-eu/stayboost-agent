@@ -21,6 +21,10 @@ export const mockLeads: Lead[] = [
             'Vytahnout snidane do prvni obrazovky webu.',
         ],
         leadScore: 78,
+        agentLeadStatus: 'manual',
+        evidenceLevel: 'pasted-public-text',
+        needsAgentAnalysis: false,
+        sourceLimitations: ['Demo lead vychazi z rucne vlozenych verejnych pozorovani a odkazu; URL nejsou automaticky ctene.'],
         publicProfileUrl: 'https://example.com/penzion-u-vinohradu',
         publicLinks: [
             {
@@ -48,6 +52,7 @@ export const mockLeads: Lead[] = [
                 createdAt: '2026-05-07T00:00:00.000Z',
             },
         ],
+        screenshots: [],
         extractionStatus: 'completed',
         firstImpression: 'Nabidka pusobi duveryhodne diky lokalite a recenzim, ale nejsilnejsi argumenty jsou rozptylene mezi fotkami, textem a recenzemi.',
         mainPhotoVerdict: 'average',
@@ -117,6 +122,10 @@ export const mockLeads: Lead[] = [
             'Pridat jednoduche CTA pro prime poptavky.',
         ],
         leadScore: 62,
+        agentLeadStatus: 'manual',
+        evidenceLevel: 'pasted-public-text',
+        needsAgentAnalysis: false,
+        sourceLimitations: ['Demo lead vychazi z rucne vlozenych verejnych pozorovani a odkazu; URL nejsou automaticky ctene.'],
         publicProfileUrl: 'https://example.com/apartmany-pod-hradem',
         publicLinks: [
             {
@@ -128,6 +137,7 @@ export const mockLeads: Lead[] = [
             },
         ],
         sourceMaterials: [],
+        screenshots: [],
         extractionStatus: 'idle',
         firstImpression: 'Nabidka komunikuje lokalitu a cistotu, ale mene jasne ukazuje, pro koho jsou apartmany nejvhodnejsi.',
         mainPhotoVerdict: 'unknown',

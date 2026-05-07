@@ -23,6 +23,12 @@ export type MainPhotoVerdict = 'strong' | 'average' | 'weak' | 'unknown';
 
 export type SourceMaterialType = 'pasted-text' | 'screenshot-note' | 'manual-note';
 
+export type AgentLeadStatus = 'quick-discovery' | 'analyzed' | 'added-without-analysis' | 'manual';
+
+export type EvidenceLevel = 'search-snippet-only' | 'website-snippet' | 'pasted-public-text' | 'screenshot-analysis' | 'full-agent-analysis';
+
+export type LeadScreenshotType = 'ota-profile-screenshot' | 'photo-gallery-screenshot' | 'review-screenshot' | 'website-screenshot' | 'other';
+
 export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'needs-more-input' | 'error';
 
 export interface PublicProfileLink {
@@ -48,6 +54,47 @@ export interface SourceMaterial {
     title: string;
     content: string;
     createdAt: string;
+}
+
+export interface LeadScreenshot {
+    id: string;
+    type: LeadScreenshotType;
+    fileName: string;
+    note: string;
+    dataUrl: string;
+    createdAt: string;
+}
+
+export interface ScreenshotQuickWin {
+    title: string;
+    why: string;
+    action: string;
+    sourceEvidence: string;
+}
+
+export interface ScreenshotAnalysisResult {
+    photoFirstImpression: string;
+    mainPhotoVerdict: MainPhotoVerdict;
+    photoOrderSuggestions: string[];
+    visibleStrengths: string[];
+    visibleWeaknesses: string[];
+    otaPresentationObservations: string[];
+    reviewSignalsFromScreenshots: string[];
+    guestFrictionVisible: string[];
+    quickWins: ScreenshotQuickWin[];
+    confidence: 'low' | 'medium' | 'high';
+    evidenceLimits: string[];
+}
+
+export interface ScreenshotAnalysisDiagnostic {
+    status: 'idle' | 'running' | 'completed' | 'needs-config' | 'error';
+    provider?: 'openai' | 'fallback' | 'client';
+    fallbackReason?: string;
+    debugId?: string;
+    userMessage?: string;
+    model?: string | null;
+    elapsedMs?: number;
+    hasOpenAIKey?: boolean;
 }
 
 export interface AuditExtractionInput {
@@ -117,6 +164,10 @@ export interface Lead {
     leadScore: number;
     createdFromAgentAnalysis?: boolean;
     addedWithoutAgentAnalysis?: boolean;
+    agentLeadStatus: AgentLeadStatus;
+    evidenceLevel: EvidenceLevel;
+    needsAgentAnalysis: boolean;
+    sourceLimitations: string[];
     leadAgentRunId?: string;
     agentAnalysisProvider?: string;
     opportunityScore?: number;
@@ -134,6 +185,9 @@ export interface Lead {
     publicProfileUrl: string;
     publicLinks: PublicProfileLink[];
     sourceMaterials: SourceMaterial[];
+    screenshots: LeadScreenshot[];
+    screenshotAnalysis?: ScreenshotAnalysisResult;
+    screenshotAnalysisDiagnostic?: ScreenshotAnalysisDiagnostic;
     extractionStatus: ExtractionStatus;
     firstImpression: string;
     mainPhotoVerdict: MainPhotoVerdict;
@@ -205,4 +259,27 @@ export const sourceMaterialTypeLabels: Record<SourceMaterialType, string> = {
     'pasted-text': 'zkopirovany verejny text',
     'screenshot-note': 'poznamka ze screenshotu',
     'manual-note': 'rucni poznamka',
+};
+
+export const agentLeadStatusLabels: Record<AgentLeadStatus, string> = {
+    'quick-discovery': 'Rychlý nález',
+    analyzed: 'Analyzovaný lead',
+    'added-without-analysis': 'Přidán bez analýzy',
+    manual: 'Ruční lead',
+};
+
+export const evidenceLevelLabels: Record<EvidenceLevel, string> = {
+    'search-snippet-only': 'Search snippet only',
+    'website-snippet': 'Website evidence',
+    'pasted-public-text': 'Vložený veřejný text',
+    'screenshot-analysis': 'Screenshot analyzed',
+    'full-agent-analysis': 'Full agent analysis',
+};
+
+export const leadScreenshotTypeLabels: Record<LeadScreenshotType, string> = {
+    'ota-profile-screenshot': 'OTA profile screenshot',
+    'photo-gallery-screenshot': 'Photo gallery screenshot',
+    'review-screenshot': 'Review screenshot',
+    'website-screenshot': 'Website screenshot',
+    other: 'Other',
 };

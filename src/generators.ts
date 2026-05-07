@@ -60,6 +60,14 @@ export function generateMiniAudit(lead: Lead) {
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
+        if (lead.needsAgentAnalysis || lead.agentLeadStatus === 'quick-discovery' || lead.agentLeadStatus === 'added-without-analysis') {
+            return `Lead zatím nemá dost evidence pro audit. Spusť agentní analýzu nebo přidej screenshoty/veřejné podklady.
+
+Aktuální evidence: ${lead.evidenceLevel}
+Limity:
+${(lead.sourceLimitations ?? ['Search snippet není kompletní OTA profil.']).map((item) => `- ${item}`).join('\n')}`;
+        }
+
         if (lead.extractionStatus !== 'completed' && (lead.sourceMaterials ?? []).length === 0) {
             return 'Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani. Odkazy slouzi jen k otevreni zdroje; aplikace URL sama necte.';
         }
@@ -119,6 +127,10 @@ export function generateFirstOutreach(lead: Lead) {
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
+        if (lead.needsAgentAnalysis || lead.agentLeadStatus === 'quick-discovery' || lead.agentLeadStatus === 'added-without-analysis') {
+            return 'Lead zatím nemá dost evidence pro osloveni. Spusť agentní analýzu nebo přidej screenshoty/veřejné podklady, aby text nevycházel jen ze search snippetu.';
+        }
+
         if (lead.extractionStatus !== 'completed' && (lead.sourceMaterials ?? []).length === 0) {
             return 'Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani. Potom pujde osloveni postavit na konkretnim pozitivnim pozorovani a navrhu.';
         }
