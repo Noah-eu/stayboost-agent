@@ -15,10 +15,19 @@ type FallbackReason =
     | 'openai_403_access'
     | 'openai_429_rate_limit'
     | 'openai_400_bad_request_or_model'
+    | 'openai_504_from_provider'
     | 'openai_5xx_provider_error'
     | 'openai_http_error'
+    | 'openai_timeout'
+    | 'openai_network_error'
     | 'openai_json_parse_error'
+    | 'netlify_function_timeout_risk'
     | 'function_runtime_error';
+
+const OPENAI_TIMEOUT_MS = 20000;
+const MAX_SNIPPETS = 4;
+const MAX_SNIPPET_LENGTH = 800;
+const MAX_FIELD_LENGTH = 600;
 
 const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -41,9 +50,25 @@ const fallbackReasonForStatus = (status: number): FallbackReason => {
     if (status === 403) return 'openai_403_access';
     if (status === 429) return 'openai_429_rate_limit';
     if (status === 400) return 'openai_400_bad_request_or_model';
+    if (status === 504) return 'openai_504_from_provider';
     if (status >= 500) return 'openai_5xx_provider_error';
     return 'openai_http_error';
 };
+
+const trimText = (value = '', maxLength = MAX_FIELD_LENGTH) => value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+
+const trimList = (values: string[] = [], maxItems = MAX_SNIPPETS, maxLength = MAX_SNIPPET_LENGTH) => values
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((value) => trimText(value, maxLength));
+
+const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = []) => ({
+    name: trimText(candidate.name, 160),
+    evidenceSummary: trimText(candidate.evidenceSummary, 500),
+    signals: trimList(candidate.signals, 8, 120),
+    risks: trimList(candidate.risks, 6, 140),
+    sourceSnippets: trimList(sourceSnippets.length > 0 ? sourceSnippets : candidate.sourceSnippets, MAX_SNIPPETS, MAX_SNIPPET_LENGTH),
+});
 
 const fallbackAnalysis = (candidate: CandidateInput) => {
     const name = candidate.name || 'Vybrany kandidat';
@@ -134,13 +159,20 @@ const validateAnalysis = (value: unknown) => {
     return value;
 };
 
-const logFallback = (details: { debugId: string; status: number; fallbackReason: string; model: string; hasOpenAIKey: boolean }) => {
+const logFallback = (details: { debugId: string; status: number; fallbackReason: string; model: string; hasOpenAIKey: boolean; elapsedMs?: number }) => {
     console.error('[stayboost-agent] analyze-lead fallback', details);
 };
 
-const fallbackResponse = ({ candidate, debugId, fallbackReason, hasOpenAIKey, httpStatus, message, model, sanitizedSample, statusCode = 200 }: {
+const fallbackMessage = (fallbackReason: FallbackReason) => {
+    if (fallbackReason === 'openai_timeout') return 'OpenAI analýza vypršela. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
+    if (fallbackReason === 'netlify_function_timeout_risk') return 'OpenAI analýza pravděpodobně narazila na limit Netlify Function. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
+    return `OpenAI analyza nebezela: ${fallbackReason}`;
+};
+
+const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOpenAIKey, httpStatus, message, model, sanitizedSample, statusCode = 200 }: {
     candidate: CandidateInput;
     debugId: string;
+    elapsedMs?: number;
     fallbackReason: FallbackReason;
     hasOpenAIKey: boolean;
     httpStatus?: number;
@@ -149,7 +181,7 @@ const fallbackResponse = ({ candidate, debugId, fallbackReason, hasOpenAIKey, ht
     sanitizedSample?: string;
     statusCode?: number;
 }) => {
-    logFallback({ debugId, status: httpStatus || statusCode, fallbackReason, model, hasOpenAIKey });
+    logFallback({ debugId, status: httpStatus || statusCode, fallbackReason, model, hasOpenAIKey, elapsedMs });
 
     return json(statusCode, {
         status: fallbackReason === 'missing_openai_api_key' ? 'needs-config' : 'completed',
@@ -163,10 +195,11 @@ const fallbackResponse = ({ candidate, debugId, fallbackReason, hasOpenAIKey, ht
             fallbackReason,
             httpStatus: httpStatus || statusCode,
             debugId,
-            userMessage: `OpenAI analyza nebezela: ${fallbackReason}`,
+            userMessage: fallbackMessage(fallbackReason),
             runtime: 'netlify-function',
             hasOpenAIKey,
             model,
+            elapsedMs,
             sanitizedSample,
         },
         analysis: { ...fallbackAnalysis(candidate || {}), isMock: true },
@@ -181,7 +214,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
     const openAiKey = process.env.OPENAI_API_KEY;
     const hasOpenAIKey = Boolean(openAiKey);
-    const model = process.env.OPENAI_MODEL || 'gpt-5.5';
+    const model = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
 
     try {
         const body = JSON.parse(event.body || '{}') as { candidate?: unknown; sourceSnippets?: string[]; sourceUrls?: string[]; userNotes?: string };
@@ -200,21 +233,58 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             });
         }
 
-        const prompt = `Vrat pouze parsovatelny JSON bez markdownu. Analyzuj lead kandidata pro StayBoost Agent z verejnych search snippetu. Nesmíš tvrdit, ze jsi cetl Booking/Airbnb/Google stranku nebo interni zpravy. Pokud jsou zdroje slabe, uved evidenceLimits a confidence low. Shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","evidenceLimits":string[]}.
+        const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
+        const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych search snippetu.
+Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
+JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","evidenceLimits":string[]}.
+Lead: ${JSON.stringify(compactInput)}
+Poznamky: ${trimText(body.userNotes || '', 400)}`;
 
-Candidate: ${JSON.stringify(candidate)}
-Snippets: ${JSON.stringify(body.sourceSnippets || [])}
-URLs: ${JSON.stringify(body.sourceUrls || [])}
-User notes: ${body.userNotes || ''}`;
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+        const requestBody: { model: string; input: string; max_output_tokens: number; reasoning?: { effort: 'low' } } = {
+            model,
+            input: prompt,
+            max_output_tokens: 1400,
+        };
 
-        const response = await fetch('https://api.openai.com/v1/responses', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${openAiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ model, input: prompt }),
-        });
+        if (model.startsWith('gpt-5')) {
+            requestBody.reasoning = { effort: 'low' };
+        }
+
+        let response: Response;
+
+        try {
+            response = await fetch('https://api.openai.com/v1/responses', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${openAiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal as AbortSignal,
+            });
+        } catch (error) {
+            const elapsedMs = Date.now() - startedAt;
+            clearTimeout(timeoutId);
+            const fallbackReason = error instanceof Error && error.name === 'AbortError' ? 'openai_timeout' : 'openai_network_error';
+
+            return fallbackResponse({
+                candidate,
+                debugId,
+                elapsedMs,
+                fallbackReason,
+                hasOpenAIKey,
+                httpStatus: fallbackReason === 'openai_timeout' ? 408 : 502,
+                message: fallbackMessage(fallbackReason),
+                model,
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        const elapsedMs = Date.now() - startedAt;
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -223,10 +293,11 @@ User notes: ${body.userNotes || ''}`;
             return fallbackResponse({
                 candidate,
                 debugId,
+                elapsedMs,
                 fallbackReason,
                 hasOpenAIKey,
                 httpStatus: response.status,
-                message: `OpenAI analyza nebezela: ${fallbackReason}`,
+                message: fallbackMessage(fallbackReason),
                 model,
                 sanitizedSample: safeSample(errorText),
             });
@@ -252,6 +323,7 @@ User notes: ${body.userNotes || ''}`;
                     runtime: 'netlify-function',
                     hasOpenAIKey,
                     model,
+                    elapsedMs,
                 },
                 analysis: { ...(parsed as Record<string, unknown>), isMock: false },
             });
@@ -259,10 +331,11 @@ User notes: ${body.userNotes || ''}`;
             return fallbackResponse({
                 candidate,
                 debugId,
+                elapsedMs,
                 fallbackReason: 'openai_json_parse_error',
                 hasOpenAIKey,
                 httpStatus: 200,
-                message: 'OpenAI analyza nebezela: openai_json_parse_error',
+                message: fallbackMessage('openai_json_parse_error'),
                 model,
                 sanitizedSample: safeSample(outputText),
             });

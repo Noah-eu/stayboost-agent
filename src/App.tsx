@@ -953,6 +953,7 @@ function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }
             {diagnostic.analyzeProvider ? <span>Analysis provider: {diagnostic.analyzeProvider}</span> : null}
             {diagnostic.fallbackReason ? <span>Fallback reason: {diagnostic.fallbackReason}</span> : null}
             {diagnostic.httpStatus ? <span>HTTP status: {diagnostic.httpStatus}</span> : null}
+            {typeof diagnostic.elapsedMs === 'number' ? <span>Elapsed: {diagnostic.elapsedMs} ms</span> : null}
             {diagnostic.debugId ? <span>Debug ID: {diagnostic.debugId}</span> : null}
             {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>OpenAI key: {diagnostic.hasOpenAIKey ? 'OK' : 'chybi'}</span> : null}
             {diagnostic.model ? <span>Model: {diagnostic.model}</span> : null}

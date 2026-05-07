@@ -167,6 +167,18 @@ const isAgentHealth = (value: unknown): value is LeadAgentHealth => {
     );
 };
 
+const clientFallbackReason = (httpStatus?: number) => {
+    if (httpStatus === 404) return 'function_404';
+    if (httpStatus === 504) return 'netlify_function_timeout_risk';
+    return 'network_error';
+};
+
+const clientAnalyzeMessage = (fallbackReason: string) => {
+    if (fallbackReason === 'openai_timeout') return 'OpenAI analýza vypršela. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
+    if (fallbackReason === 'netlify_function_timeout_risk') return 'OpenAI analýza pravděpodobně narazila na limit Netlify Function. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
+    return `OpenAI analyza nebezela: ${fallbackReason}`;
+};
+
 export async function discoverLeads(request: LeadAgentSearchRequest): Promise<LeadAgentDiscoverResponse> {
     try {
         const response = await postJson<LeadAgentDiscoverResponse>('/.netlify/functions/discover-leads', request);
@@ -204,18 +216,19 @@ export async function analyzeLead(candidate: LeadAgentCandidate, userNotes = '')
         }
 
         const httpStatus = error instanceof ApiError ? error.status : undefined;
-        const fallbackReason = httpStatus === 404 ? 'function_404' : 'network_error';
+        const fallbackReason = clientFallbackReason(httpStatus);
+        const message = clientAnalyzeMessage(fallbackReason);
 
         return {
             status: 'completed',
-            message: `OpenAI analyza nebezela: ${fallbackReason}`,
+            message,
             isMock: true,
             diagnostic: {
                 mode: 'demo-fallback',
                 analyzeProvider: 'demo-fallback',
                 fallbackReason,
                 httpStatus,
-                userMessage: `OpenAI analyza nebezela: ${fallbackReason}`,
+                userMessage: message,
             },
             analysis: mockAnalysis(candidate),
         };

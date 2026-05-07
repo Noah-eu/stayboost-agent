@@ -15,6 +15,7 @@ export interface LeadAgentDiagnostic {
     runtime?: string;
     hasOpenAIKey?: boolean;
     model?: string | null;
+    elapsedMs?: number;
     sanitizedSample?: string;
 }
 

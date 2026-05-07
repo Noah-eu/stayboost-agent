@@ -9,7 +9,7 @@ Interni MVP aplikace pro spravu leadu malych hotelu, penzionu a apartmanu. Prima
 3. Pokud je nakonfigurovany `TAVILY_API_KEY`, funkce pouzije Tavily Search API. Pokud chybi, vrati jasne oznacene demo vysledky.
 4. Kandidati maji skore, signaly, rizika, doporuceny uhel osloveni a zdrojove odkazy/snippety.
 5. U kandidata spust `Analyzovat`, coz zavola `analyze-lead`.
-6. Pokud je nakonfigurovany `OPENAI_API_KEY`, analyza bezi pres OpenAI Responses API. Pokud chybi nebo neni lokalne dostupna Netlify function, frontend pouzije demo analyzu.
+6. Pokud je nakonfigurovany `OPENAI_API_KEY`, analyza bezi pres OpenAI Responses API. Pokud OpenAI nebo function selze, frontend ukaze konkretni fallback reason a pouzije demo analyzu.
 7. Vysledek je draft ke schvaleni: mini-audit, quick wins, prvni osloveni, follow-up a navrh dalsi nabidky.
 8. Po schvaleni lze kandidata pridat do CRM/localStorage jako lead.
 
@@ -32,6 +32,8 @@ TAVILY_API_KEY=...
 ```
 
 Bez `OPENAI_API_KEY` nebo `TAVILY_API_KEY` aplikace nespadne a pouzije demo/mock rezim, ktery je v UI jasne oznaceny.
+
+Pro production Lead Finder analyzy je doporuceny `OPENAI_MODEL=gpt-5.4-mini`, protoze kratke analyzy musi dobehnout rychle v limitu Netlify Function. `gpt-5.5` dava smysl az pro hlubsi placene audity nebo budouci PDF reporty, ne pro rychle vyhodnoceni kandidata.
 
 ## Spusteni
 

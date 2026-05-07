@@ -18,7 +18,7 @@ export const handler = async (event: { httpMethod: string }) => {
         runtime: 'netlify-function',
         hasTavilyKey: Boolean(process.env.TAVILY_API_KEY),
         hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
-        openAIModel: process.env.OPENAI_MODEL || 'gpt-5.5',
+        openAIModel: process.env.OPENAI_MODEL || 'gpt-5.4-mini',
         timestamp: new Date().toISOString(),
     });
 };
