@@ -4,7 +4,8 @@ export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
 export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback';
 export type LeadAgentFitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
-export type LeadAgentCandidateFilter = 'all' | 'good-leads' | 'weak-or-skip' | 'hidden';
+export type LeadAgentTargetOffer = 'guest-communication-fix' | 'guest-guide' | 'ota-profile-audit' | 'review-response-improvement' | 'self-checkin-setup' | 'skip';
+export type LeadAgentCandidateFilter = 'all' | 'good-leads' | 'pain-signals' | 'no-pain-or-skip' | 'benchmark-solved' | 'weak-or-skip' | 'hidden';
 export type LeadAgentCandidateSort = 'opportunityScore' | 'leadScore' | 'newest';
 
 export interface LeadAgentDiagnostic {
@@ -54,9 +55,15 @@ export interface LeadAgentCandidate {
     risks: string[];
     leadScore: number;
     opportunityScore: number;
+    reviewFrictionScore: number;
     fitVerdict: LeadAgentFitVerdict;
     confidence: LeadAgentConfidence;
     contactMissing: boolean;
+    painSignals: string[];
+    positiveSolvedSignals: string[];
+    noPainReason?: string;
+    targetOffer: LeadAgentTargetOffer;
+    qualificationReason: string;
     alreadySolvedSignals: string[];
     missingEvidence: string[];
     contradictionWarnings: string[];
@@ -85,6 +92,12 @@ export interface LeadAgentAnalysis {
     confidence: LeadAgentConfidence;
     fitVerdict: LeadAgentFitVerdict;
     opportunityScore: number;
+    reviewFrictionScore: number;
+    painSignals: string[];
+    positiveSolvedSignals: string[];
+    noPainReason?: string;
+    targetOffer: LeadAgentTargetOffer;
+    qualificationReason: string;
     alreadySolvedSignals: string[];
     missingEvidence: string[];
     contradictionWarnings: string[];

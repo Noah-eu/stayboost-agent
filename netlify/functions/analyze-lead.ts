@@ -4,8 +4,14 @@ type CandidateInput = {
     signals?: string[];
     risks?: string[];
     opportunityScore?: number;
+    reviewFrictionScore?: number;
     fitVerdict?: FitVerdict;
     confidence?: Confidence;
+    painSignals?: string[];
+    positiveSolvedSignals?: string[];
+    noPainReason?: string;
+    targetOffer?: TargetOffer;
+    qualificationReason?: string;
     alreadySolvedSignals?: string[];
     missingEvidence?: string[];
     contradictionWarnings?: string[];
@@ -16,6 +22,7 @@ type CandidateInput = {
 
 type FitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
 type Confidence = 'low' | 'medium' | 'high';
+type TargetOffer = 'guest-communication-fix' | 'guest-guide' | 'ota-profile-audit' | 'review-response-improvement' | 'self-checkin-setup' | 'skip';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -78,8 +85,14 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
     signals: trimList(candidate.signals, 8, 120),
     risks: trimList(candidate.risks, 6, 140),
     opportunityScore: candidate.opportunityScore ?? 0,
+    reviewFrictionScore: candidate.reviewFrictionScore ?? 0,
     fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
     confidence: candidate.confidence ?? 'low',
+    painSignals: trimList(candidate.painSignals, 8, 180),
+    positiveSolvedSignals: trimList(candidate.positiveSolvedSignals, 6, 180),
+    noPainReason: trimText(candidate.noPainReason, 220),
+    targetOffer: candidate.targetOffer ?? 'skip',
+    qualificationReason: trimText(candidate.qualificationReason, 260),
     alreadySolvedSignals: trimList(candidate.alreadySolvedSignals, 6, 160),
     missingEvidence: trimList(candidate.missingEvidence, 6, 160),
     contradictionWarnings: trimList(candidate.contradictionWarnings, 4, 180),
@@ -92,6 +105,10 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
     const risks = candidate.risks || [];
     const evidence = candidate.sourceSnippets?.[0] || candidate.evidenceSummary || 'Omezeny verejny search snippet.';
     const fitVerdict = candidate.fitVerdict || 'not-enough-evidence';
+    const painSignals = candidate.painSignals || [];
+    const positiveSolvedSignals = candidate.positiveSolvedSignals || [];
+    const targetOffer = candidate.targetOffer || 'skip';
+    const qualificationReason = candidate.qualificationReason || 'Chybi pain qualification metadata.';
     const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(fitVerdict);
     const solvedSignals = candidate.alreadySolvedSignals || [];
     const firstImpression = isLowFit
@@ -100,41 +117,67 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
     const practicalAction = solvedSignals.length > 0
         ? 'Neprodavat obecne self check-in. Overit jen to, zda jsou verejne instrukce opravdu srozumitelne a kompletni.'
         : 'Pridat kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.';
+    const primaryPain = painSignals[0] || 'verejny pain signal';
 
     return {
-        firstImpression,
+        firstImpression: painSignals.length > 0 ? `${firstImpression} Konkretni pain: ${painSignals[0]}.` : firstImpression,
         strengths: signals.slice(0, 3),
         risks: risks.length > 0 ? risks : ['Omezeny verejny nahled, neni potvrzen detail nabidky.'],
-        guestFrictionSignals: isLowFit ? ['Neni dost konkretni evidence o treni hosta.'] : ['Host muze pred rezervaci hledat jasne informace k prijezdu, check-inu, parkovani a komunikaci.'],
-        quickWins: [
+        guestFrictionSignals: painSignals.length > 0 ? painSignals : ['Neni dost konkretni evidence o treni hosta.'],
+        quickWins: isLowFit ? [
             {
-                title: 'Zviditelnit informace pred prijezdem',
-                why: 'Search snippet naznacuje provozni tema, ktere host resi pred rezervaci.',
+                title: 'Neoslovovat zatim',
+                why: 'Z dostupnych snippetu nevyplyva konkretni prodejni bolest.',
+                action: 'Neposilat obchodni e-mail bez dalsiho verejneho nebo manualne overeneho pain signalu.',
+                sourceEvidence: evidence,
+            },
+            {
+                title: 'Doplnit evidenci',
+                why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
+                action: 'Hledat konkretni recenzni/search signal: problem s kodem, vstupem, parkovanim, prijezdem nebo komunikaci.',
+                sourceEvidence: evidence,
+            },
+            {
+                title: 'Pouzit jako benchmark',
+                why: 'Kandidat muze ukazovat dobre vyreseny proces bez verejneho guest friction.',
+                action: 'Neprepisovat pozitivni self-check-in signal na problem; pouzit jen jako srovnani pro slabsi provozy.',
+                sourceEvidence: evidence,
+            },
+        ] : [
+            {
+                title: 'Resit konkretni guest friction',
+                why: `Search/review snippet ukazuje: ${primaryPain}.`,
                 action: practicalAction,
                 sourceEvidence: evidence,
             },
             {
-                title: 'Vytahnout nejsilnejsi benefit',
-                why: 'Silne verejne signaly maji byt videt v prvnich sekundach.',
-                action: `V prvnim odstavci zminit: ${signals.slice(0, 2).join(' + ') || 'hlavni hodnotu pobytu'}.`,
+                title: 'Zpresnit predprijezdove instrukce',
+                why: 'Pain signal se tyka prijezdu, orientace, kodu, klicu, parkovani nebo komunikace.',
+                action: 'Udelat kontrolni blok pro hosta: kde prijet, kde zaparkovat, kde je vstup, kdy dorazi kod a co delat pri problemu.',
                 sourceEvidence: evidence,
             },
             {
-                title: 'Navrhnout guest guide jako dalsi krok',
-                why: 'Guest guide umi spojit prijezd, pravidla a tipy do jednoho jednoducheho odkazu.',
-                action: 'Nabidnout QR guest guide pro informace pred prijezdem a behem pobytu.',
+                title: 'Navazat nabidku na pain',
+                why: 'Nabidka ma byt o odstraneni dolozeneho treni, ne o obecném self-check-inu.',
+                action: `Nabidnout ${targetOffer === 'skip' ? 'manualni overeni problemu' : targetOffer} jen jako reakci na dolozeny pain signal.`,
                 sourceEvidence: evidence,
             },
         ],
-        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni zaver: ${isLowFit ? 'nejde o jasnou prioritu bez dalsi evidence.' : 'zviditelnit prakticke informace pred prijezdem.'}`,
+        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni zaver: ${isLowFit ? 'nejde o jasnou prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
         outreachEmail: isLowFit
-            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z dostupnych verejnych snippetu zatim nevidim jasny problem, ktery by bylo fer prodavat jako hotove reseni. Pokud chcete, muzu poslat kratkou verejnou kontrolu, co je uz vyresene a co by stalo za overeni.\n\nDavid`
-            : `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z dostupnych verejnych snippetu pusobi zajimave hlavne ${signals.slice(0, 2).join(' a ') || 'prvni dojem nabidky'}.\n\nPoslal bych vam zdarma 3 konkretni navrhy, jak zlepsit verejnou prezentaci pred rezervaci - hlavne prijezd, check-in a prakticke instrukce. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
+            ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
+            : `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z verejnych search snippetu me zaujal konkretni signal: ${primaryPain}.\n\nPoslal bych vam zdarma 3 navrhy zamerene jen na tento dolozeny problem v prijezdu, instrukcich, parkovani nebo komunikaci. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
         followUp: `Dobry den, jen se kratce vracim k verejne prezentaci ${name}. Pokud chcete, poslu kratky mini-audit ve 3 bodech bez zavazku.`,
         offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Doporucit bezplatny mini-audit a potom placeny audit guest guide / komunikace pred prijezdem.',
         confidence: candidate.confidence || 'low',
         fitVerdict,
         opportunityScore: candidate.opportunityScore || 0,
+        reviewFrictionScore: candidate.reviewFrictionScore || 0,
+        painSignals,
+        positiveSolvedSignals,
+        noPainReason: candidate.noPainReason,
+        targetOffer,
+        qualificationReason,
         alreadySolvedSignals: candidate.alreadySolvedSignals || [],
         missingEvidence: candidate.missingEvidence || ['Fallback analyza nema dost evidence pro jistou obchodni bolest.'],
         contradictionWarnings: candidate.contradictionWarnings || [],
@@ -178,9 +221,10 @@ const extractTextContent = (payload: unknown): string => {
 };
 
 const isFitVerdict = (value: unknown): value is FitVerdict => ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(String(value));
+const isTargetOffer = (value: unknown): value is TargetOffer => ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(String(value));
 
 const validateAnalysis = (value: unknown) => {
-    const analysis = value as { quickWins?: unknown[]; miniAudit?: unknown; outreachEmail?: unknown; confidence?: unknown; fitVerdict?: unknown; opportunityScore?: unknown };
+    const analysis = value as { quickWins?: unknown[]; miniAudit?: unknown; outreachEmail?: unknown; confidence?: unknown; fitVerdict?: unknown; opportunityScore?: unknown; reviewFrictionScore?: unknown; painSignals?: unknown; targetOffer?: unknown; qualificationReason?: unknown };
 
     if (!analysis || !Array.isArray(analysis.quickWins) || analysis.quickWins.length < 3 || typeof analysis.miniAudit !== 'string' || typeof analysis.outreachEmail !== 'string') {
         throw new Error('Invalid analysis JSON shape.');
@@ -196,6 +240,22 @@ const validateAnalysis = (value: unknown) => {
 
     if (typeof analysis.opportunityScore !== 'number') {
         throw new Error('Invalid opportunityScore value.');
+    }
+
+    if (typeof analysis.reviewFrictionScore !== 'number') {
+        throw new Error('Invalid reviewFrictionScore value.');
+    }
+
+    if (!Array.isArray(analysis.painSignals)) {
+        throw new Error('Invalid painSignals value.');
+    }
+
+    if (!isTargetOffer(analysis.targetOffer)) {
+        throw new Error('Invalid targetOffer value.');
+    }
+
+    if (typeof analysis.qualificationReason !== 'string') {
+        throw new Error('Invalid qualificationReason value.');
     }
 
     return value;
@@ -285,8 +345,9 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
         const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych search snippetu.
     Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
-    Kvalita: Neopakuj doporuceni na vec, kterou zdroj uz prezentuje jako vyresenou. Pokud zdroj rika, ze online/self check-in je pohodlny nebo uz existuje, nedoporucuj obecne zavadet ani zlepsovat self check-in bez konkretniho problemoveho signalu. Pokud neni konkretni obchodni bolest, vrat fitVerdict "not-enough-evidence" nebo "weak-opportunity" a rekni, ze kandidat neni priorita. Kazdy quick win musi stat na konkretnim problemovem signalu nebo chybejici verejne informaci. Radsi kandidata zamitni nez generovat vagne prodejni rady.
-    JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
+    Nejdriv si v JSON odpovez pres pole: firstImpression/jaky konkretni problem vyplyva z evidence, fitVerdict/je to dobry lead, alreadySolvedSignals/co uz ma vyresene, missingEvidence/co chybi overit, targetOffer/jaka nabidka dava smysl.
+    Kvalita: Strong/moderate lead vyzaduje painSignals. Self-check-in sam o sobe neni problem. Pokud zdroj rika, ze online/self check-in je pohodlny nebo uz existuje a painSignals jsou prazdne, vrat weak-opportunity nebo skip, targetOffer "skip", outreachEmail nastav na interni poznamku "Neoslovovat zatim, chybi duvod.". Nepredstirej prectene recenze; pracuj jen se snippety. Quick wins musi resit konkretni painSignals, ne obecnou moznost.
+    JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"reviewFrictionScore":number,"painSignals":string[],"positiveSolvedSignals":string[],"noPainReason":string,"targetOffer":"guest-communication-fix"|"guest-guide"|"ota-profile-audit"|"review-response-improvement"|"self-checkin-setup"|"skip","qualificationReason":string,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 

@@ -251,9 +251,15 @@ const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAg
     risks: candidate.risks ?? [],
     leadScore: candidate.leadScore ?? 0,
     opportunityScore: candidate.opportunityScore ?? Math.max(0, Math.min(100, candidate.leadScore ?? 0)),
+    reviewFrictionScore: candidate.reviewFrictionScore ?? 0,
     fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
     confidence: candidate.confidence ?? 'low',
     contactMissing: candidate.contactMissing ?? !candidate.possibleEmail,
+    painSignals: candidate.painSignals ?? [],
+    positiveSolvedSignals: candidate.positiveSolvedSignals ?? candidate.alreadySolvedSignals ?? [],
+    noPainReason: candidate.noPainReason,
+    targetOffer: candidate.targetOffer ?? (['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict ?? '') ? 'guest-guide' : 'skip'),
+    qualificationReason: candidate.qualificationReason ?? 'Legacy data nemaji samostatnou pain kvalifikaci.',
     alreadySolvedSignals: candidate.alreadySolvedSignals ?? [],
     missingEvidence: candidate.missingEvidence ?? ['Ulozena legacy data nemaji kompletni scoring evidence.'],
     contradictionWarnings: candidate.contradictionWarnings ?? [],
@@ -282,6 +288,12 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
     confidence: analysis.confidence ?? candidate?.confidence ?? 'low',
     fitVerdict: analysis.fitVerdict ?? candidate?.fitVerdict ?? 'not-enough-evidence',
     opportunityScore: analysis.opportunityScore ?? candidate?.opportunityScore ?? 0,
+    reviewFrictionScore: analysis.reviewFrictionScore ?? candidate?.reviewFrictionScore ?? 0,
+    painSignals: analysis.painSignals ?? candidate?.painSignals ?? [],
+    positiveSolvedSignals: analysis.positiveSolvedSignals ?? candidate?.positiveSolvedSignals ?? candidate?.alreadySolvedSignals ?? [],
+    noPainReason: analysis.noPainReason ?? candidate?.noPainReason,
+    targetOffer: analysis.targetOffer ?? candidate?.targetOffer ?? 'skip',
+    qualificationReason: analysis.qualificationReason ?? candidate?.qualificationReason ?? 'Legacy analyza nema samostatnou pain kvalifikaci.',
     alreadySolvedSignals: analysis.alreadySolvedSignals ?? candidate?.alreadySolvedSignals ?? [],
     missingEvidence: analysis.missingEvidence ?? candidate?.missingEvidence ?? ['Legacy analyza nema kompletni evidence model.'],
     contradictionWarnings: analysis.contradictionWarnings ?? candidate?.contradictionWarnings ?? [],
@@ -978,6 +990,9 @@ function LeadFinderPanel({
         if (session.candidateFilter === 'hidden') return isHidden;
         if (isHidden) return false;
         if (session.candidateFilter === 'good-leads') return ['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict);
+        if (session.candidateFilter === 'pain-signals') return candidate.painSignals.length > 0;
+        if (session.candidateFilter === 'no-pain-or-skip') return candidate.painSignals.length === 0 || ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
+        if (session.candidateFilter === 'benchmark-solved') return candidate.positiveSolvedSignals.length > 0 && candidate.painSignals.length === 0;
         if (session.candidateFilter === 'weak-or-skip') return ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
         return true;
     });
@@ -1087,6 +1102,9 @@ function LeadFinderPanel({
                         <select value={session.candidateFilter} onChange={(event) => onUpdateFilter(event.target.value as LeadAgentCandidateFilter)}>
                             <option value="all">Vše</option>
                             <option value="good-leads">Jen vhodné leady</option>
+                            <option value="pain-signals">Jen leady s pain signálem</option>
+                            <option value="no-pain-or-skip">Bez pain signálu / přeskočit</option>
+                            <option value="benchmark-solved">Benchmark / už vyřešeno</option>
                             <option value="weak-or-skip">Slabé / přeskočit</option>
                             <option value="hidden">Skryté</option>
                         </select>
@@ -1116,6 +1134,7 @@ function LeadFinderPanel({
                                     <th>Typ</th>
                                     <th>Skore</th>
                                     <th>Prilezitost</th>
+                                    <th>Review pain</th>
                                     <th>Kontakt</th>
                                     <th>Duvod</th>
                                     <th>Zdroje</th>
@@ -1154,8 +1173,17 @@ function LeadFinderPanel({
                                             <small>{candidate.fitVerdict}</small>
                                             <small>{candidate.confidence}</small>
                                         </td>
+                                        <td>
+                                            <strong className="score-value">{candidate.reviewFrictionScore}</strong>
+                                            <small>{candidate.painSignals.length} pain signals</small>
+                                            <small>{candidate.targetOffer}</small>
+                                        </td>
                                         <td>{candidate.contactMissing ? 'neznamy' : 'znamy'}</td>
-                                        <td>{candidate.evidenceSummary}</td>
+                                        <td>
+                                            {candidate.evidenceSummary}
+                                            <small>{candidate.qualificationReason}</small>
+                                            {candidate.noPainReason ? <small>{candidate.noPainReason}</small> : null}
+                                        </td>
                                         <td>
                                             <div className="source-list">
                                                 {candidate.sourceUrls.map((url) => (
@@ -1167,6 +1195,20 @@ function LeadFinderPanel({
                                             <div className="signal-list">
                                                 {candidate.signals.length > 0 ? candidate.signals.map((signal) => <span key={signal}>{signal}</span>) : <span>Bez signalu</span>}
                                             </div>
+                                            <div className="qualification-lists">
+                                                {candidate.painSignals.length > 0 ? (
+                                                    <div>
+                                                        <p className="eyebrow">Pain signals</p>
+                                                        {candidate.painSignals.map((signal) => <span className="pain-chip" key={signal}>{signal}</span>)}
+                                                    </div>
+                                                ) : null}
+                                                {candidate.positiveSolvedSignals.length > 0 ? (
+                                                    <div>
+                                                        <p className="eyebrow">Positive solved</p>
+                                                        {candidate.positiveSolvedSignals.map((signal) => <span className="solved-chip" key={signal}>{signal}</span>)}
+                                                    </div>
+                                                ) : null}
+                                            </div>
                                         </td>
                                         <td>{offerAngleLabels[candidate.recommendedAngle]}</td>
                                         <td>
@@ -1175,7 +1217,10 @@ function LeadFinderPanel({
                                                     <Sparkles size={16} aria-hidden="true" />
                                                     Analyzovat
                                                 </button>
-                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId)} onClick={addCandidate} type="button">
+                                                {['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict) ? (
+                                                    <div className="scope-note warning-note compact-warning">Chybí veřejný důkaz problému. Neposílat oslovení bez dalšího ověření.</div>
+                                                ) : null}
+                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId) || ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict)} onClick={addCandidate} type="button">
                                                     <Plus size={16} aria-hidden="true" />
                                                     {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
                                                 </button>
@@ -1249,6 +1294,8 @@ function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: Lea
             <div className="metadata-row">
                 <span>{analysis.fitVerdict}</span>
                 <span>Opportunity {analysis.opportunityScore}</span>
+                <span>Review pain {analysis.reviewFrictionScore}</span>
+                <span>{analysis.targetOffer}</span>
                 <span>{analysis.confidence}</span>
                 <span>{analysis.provider}</span>
                 <span>{analysis.model || 'bez modelu'}</span>
@@ -1257,8 +1304,17 @@ function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: Lea
             {diagnostic?.analyzeProvider && diagnostic.analyzeProvider !== 'openai' ? <AgentDiagnosticBox diagnostic={diagnostic} /> : null}
             <div className="analysis-grid">
                 <div>
+                    <p className="eyebrow">Proc kontakt / proc skip</p>
+                    <span>{analysis.qualificationReason}</span>
+                    {analysis.noPainReason ? <span>{analysis.noPainReason}</span> : null}
+                </div>
+                <div>
+                    <p className="eyebrow">Pain signals</p>
+                    {analysis.painSignals.length > 0 ? analysis.painSignals.map((item) => <span key={item}>{item}</span>) : <span>Bez verejneho pain signalu.</span>}
+                </div>
+                <div>
                     <p className="eyebrow">Co uz pravdepodobne maji vyresene</p>
-                    {analysis.alreadySolvedSignals.length > 0 ? analysis.alreadySolvedSignals.map((item) => <span key={item}>{item}</span>) : <span>Bez silneho pozitivniho signalu.</span>}
+                    {[...analysis.positiveSolvedSignals, ...analysis.alreadySolvedSignals].length > 0 ? [...new Set([...analysis.positiveSolvedSignals, ...analysis.alreadySolvedSignals])].map((item) => <span key={item}>{item}</span>) : <span>Bez silneho pozitivniho signalu.</span>}
                 </div>
                 <div>
                     <p className="eyebrow">Co chybi overit</p>

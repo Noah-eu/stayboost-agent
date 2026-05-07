@@ -345,6 +345,45 @@ tbody tr:hover,
     padding: 5px 8px;
 }
 
+.qualification-lists {
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+    min-width: 240px;
+}
+
+.qualification-lists div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.qualification-lists .eyebrow {
+    flex-basis: 100%;
+    margin: 0;
+}
+
+.pain-chip,
+.solved-chip {
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.76rem;
+    font-weight: 800;
+    padding: 5px 8px;
+}
+
+.pain-chip {
+    background: #fff1e8;
+    border: 1px solid #f0c9ad;
+    color: #743c18;
+}
+
+.solved-chip {
+    background: #eef7ff;
+    border: 1px solid #cde4f7;
+    color: #22485f;
+}
+
 .candidate-table {
     min-width: 1440px;
 }
@@ -581,6 +620,13 @@ textarea:focus {
     border-color: #ead6bd;
     color: #5a4631;
     margin-bottom: 0;
+}
+
+.compact-warning {
+    font-size: 0.78rem;
+    line-height: 1.35;
+    margin: 0;
+    padding: 8px 10px;
 }
 
 .section-help {
