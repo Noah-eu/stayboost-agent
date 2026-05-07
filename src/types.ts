@@ -129,6 +129,8 @@ export interface Lead {
     automationNeedScore?: number;
     reviewFrictionScore?: number;
     publicMaturityScore?: number;
+    isDemoLead?: boolean;
+    demoReason?: string;
     publicProfileUrl: string;
     publicLinks: PublicProfileLink[];
     sourceMaterials: SourceMaterial[];

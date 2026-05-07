@@ -513,6 +513,7 @@ tbody tr:hover,
 .analysis-preview textarea {
     min-height: 170px;
 }
+
 .agent-origin-note {
     background: #eef7ff;
     border-color: #cde4f7;
@@ -646,6 +647,51 @@ textarea:focus {
     background: #fff8ef;
     border-color: #ead6bd;
     color: #5a4631;
+}
+
+.demo-mode-banner,
+.demo-lead-note {
+    background: #fff3df;
+    border: 2px solid #d98925;
+    color: #4e2d00;
+    display: grid;
+    gap: 6px;
+}
+
+.demo-mode-banner strong,
+.demo-lead-note strong {
+    font-size: 1rem;
+}
+
+.error-note {
+    background: #fff0f0;
+    border-color: #efb7b7;
+    color: #6f1d1d;
+    display: grid;
+    gap: 6px;
+}
+
+.demo-candidate-row {
+    background: #fffaf2;
+}
+
+.demo-badge {
+    background: #8a4b00;
+    border-radius: 999px;
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    margin: 0 0 6px;
+    padding: 5px 8px;
+    text-transform: uppercase;
+}
+
+.small-demo-badge {
+    font-size: 0.68rem;
+    margin: 6px 0 0;
+    width: fit-content;
 }
 
 .stored-note {

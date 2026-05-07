@@ -23,7 +23,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
         return [{
             ...candidateBase,
             id: stableId('agent-candidate', `${location}-${name}-known-target`),
-            name,
+            name: name.startsWith('DEMO') ? name : `DEMO — ${name}`,
             location: request.knownTargetCity || location,
             type: request.accommodationType.toLowerCase().includes('penzion') ? 'Penzion' : 'Apartman',
             websiteUrl: request.knownTargetWebsiteUrl || 'https://example.com/known-target',
@@ -66,7 +66,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
         {
             ...candidateBase,
             id: stableId('agent-candidate', `${location}-river-gate`),
-            name: 'Apartmany River Gate',
+            name: 'DEMO — Apartmany River Gate',
             location,
             type: 'Apartman',
             websiteUrl: 'https://example.com/river-gate',
@@ -105,7 +105,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
         {
             ...candidateBase,
             id: stableId('agent-candidate', `${location}-old-town-stay`),
-            name: 'Old Town Stay Apartments',
+            name: 'DEMO — Old Town Stay Apartments',
             location,
             type: 'Apartman',
             websiteUrl: 'https://example.com/old-town-stay',
@@ -144,7 +144,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
         {
             ...candidateBase,
             id: stableId('agent-candidate', `${location}-penzion-u-parku`),
-            name: 'Penzion U Parku',
+            name: 'DEMO — Penzion U Parku',
             location,
             type: 'Penzion',
             websiteUrl: 'https://example.com/penzion-u-parku',
@@ -185,7 +185,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
         {
             ...candidateBase,
             id: stableId('agent-candidate', `${location}-self-checkin-benchmark`),
-            name: 'Penzion Digital Arrival',
+            name: 'DEMO — Penzion Digital Arrival',
             location,
             type: 'Penzion',
             websiteUrl: 'https://example.com/digital-arrival',
@@ -415,26 +415,49 @@ const clientAnalyzeMessage = (fallbackReason: string) => {
     return `OpenAI analyza nebezela: ${fallbackReason}`;
 };
 
+const clientDiscoveryMessage = (fallbackReason: string) => `Reálné hledání neběželo. Discovery function selhala: ${fallbackReason}. Demo kandidáti nejsou skuteční klienti.`;
+
 export async function discoverLeads(request: LeadAgentSearchRequest): Promise<LeadAgentDiscoverResponse> {
     try {
         const response = await postJson<LeadAgentDiscoverResponse>('/.netlify/functions/discover-leads', request);
         return response;
     } catch (error) {
         const httpStatus = error instanceof ApiError ? error.status : undefined;
+        const fallbackReason = httpStatus === 404 ? 'function_404' : httpStatus === 504 ? 'netlify_function_timeout_risk' : 'network_error';
+        const message = clientDiscoveryMessage(fallbackReason);
+
         return {
-            status: 'needs-config',
-            message: httpStatus === 404 ? 'Discovery fallback: function_404' : 'Discovery fallback: network_error',
-            isMock: true,
+            status: httpStatus === 404 ? 'needs-config' : 'error',
+            message,
+            isMock: false,
             diagnostic: {
-                mode: 'demo-fallback',
-                discoverProvider: 'demo',
-                fallbackReason: httpStatus === 404 ? 'function_404' : 'network_error',
+                mode: 'error',
+                discoverProvider: 'error',
+                source: 'error',
+                fallbackReason,
                 httpStatus,
-                userMessage: httpStatus === 404 ? 'Discovery function neni dostupna: function_404' : 'Discovery function neni dostupna: network_error',
+                userMessage: message,
             },
-            candidates: mockCandidates(request),
+            candidates: [],
         };
     }
+}
+
+export async function discoverDemoLeads(request: LeadAgentSearchRequest): Promise<LeadAgentDiscoverResponse> {
+    return {
+        status: 'found',
+        message: 'Demo režim: tito kandidáti jsou fiktivní a slouží pouze pro test UI.',
+        isMock: true,
+        diagnostic: {
+            mode: 'demo-fallback',
+            discoverProvider: 'demo',
+            source: 'demo fallback',
+            fallbackReason: 'manual_demo_mode',
+            httpStatus: 200,
+            userMessage: 'Demo kandidáti byli zobrazeni po explicitním kliknutí uživatele.',
+        },
+        candidates: mockCandidates(request),
+    };
 }
 
 export async function analyzeLead(candidate: LeadAgentCandidate, userNotes = ''): Promise<LeadAgentAnalyzeResponse> {

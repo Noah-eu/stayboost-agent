@@ -2,7 +2,8 @@ import type { AccommodationType, OfferAngle, QuickWin } from './types';
 
 export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 'completed' | 'error' | 'needs-config';
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
-export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback';
+export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback' | 'error';
+export type LeadAgentResultSource = 'real API' | 'demo fallback' | 'error';
 export type LeadAgentFitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
 export type LeadAgentTargetOffer = 'guest-communication-fix' | 'guest-guide' | 'ota-profile-audit' | 'review-response-improvement' | 'self-checkin-setup' | 'skip';
 export type LeadAgentOpportunityType = 'fix-existing-process' | 'setup-automation' | 'ota-profile-audit' | 'benchmark' | 'skip';
@@ -11,8 +12,9 @@ export type LeadAgentCandidateSort = 'opportunityScore' | 'automationNeedScore' 
 
 export interface LeadAgentDiagnostic {
     mode: LeadAgentDiagnosticMode;
-    discoverProvider?: 'tavily' | 'demo' | 'unknown';
+    discoverProvider?: 'tavily' | 'demo' | 'error' | 'unknown';
     analyzeProvider?: 'openai' | 'demo-fallback' | 'unknown';
+    source?: LeadAgentResultSource;
     fallbackReason?: string;
     httpStatus?: number;
     debugId?: string;

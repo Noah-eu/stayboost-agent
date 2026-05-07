@@ -1,6 +1,6 @@
 import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { analyzeLead, checkAgentHealth, discoverLeads } from './agentApi';
+import { analyzeLead, checkAgentHealth, discoverDemoLeads, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
@@ -75,6 +75,8 @@ const emptyLead = (): Lead => ({
     automationNeedScore: 0,
     reviewFrictionScore: 0,
     publicMaturityScore: 0,
+    isDemoLead: false,
+    demoReason: '',
     publicProfileUrl: '',
     publicLinks: [],
     sourceMaterials: [],
@@ -218,32 +220,70 @@ const migrateQuickWins = (lead: Partial<Lead>): QuickWin[] => {
     }));
 };
 
-const normalizeLead = (lead: Partial<Lead>): Lead => ({
-    ...emptyLead(),
-    ...lead,
-    publicLinks: migratePublicLinks(lead),
-    sourceMaterials: lead.sourceMaterials ?? [],
-    extractionStatus: lead.extractionStatus ?? 'idle',
-    publicSignals: lead.publicSignals ?? [],
-    quickWins: lead.quickWins ?? [],
-    proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
-    structuredQuickWins: migrateQuickWins(lead),
-    selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
-    createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
-    addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
-    leadAgentRunId: lead.leadAgentRunId ?? '',
-    agentAnalysisProvider: lead.agentAnalysisProvider ?? '',
-    opportunityScore: lead.opportunityScore ?? 0,
-    opportunityType: lead.opportunityType ?? '',
-    fitVerdict: lead.fitVerdict ?? '',
-    confidence: lead.confidence ?? '',
-    targetOffer: lead.targetOffer ?? '',
-    qualificationReason: lead.qualificationReason ?? '',
-    offerHypothesis: lead.offerHypothesis ?? '',
-    automationNeedScore: lead.automationNeedScore ?? 0,
-    reviewFrictionScore: lead.reviewFrictionScore ?? 0,
-    publicMaturityScore: lead.publicMaturityScore ?? 0,
-});
+const demoLeadNotice = 'Demo lead - fiktivni data. Nejde o skutecneho klienta ani obchodni lead.';
+
+const hasDemoMarker = (lead: Partial<Lead> & { isMock?: boolean; runMode?: string }) => {
+    const searchableText = [
+        lead.name,
+        lead.email,
+        lead.websiteOrOtaUrl,
+        lead.publicProfileUrl,
+        lead.notes,
+        lead.leadAgentRunId,
+        lead.agentAnalysisProvider,
+        lead.qualificationReason,
+        lead.demoReason,
+        lead.runMode,
+        ...(lead.publicLinks ?? []).flatMap((link) => [link.url, link.notes, link.label]),
+        ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content]),
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    return Boolean(
+        lead.isDemoLead
+        || lead.isMock
+        || lead.agentAnalysisProvider === 'demo-fallback'
+        || searchableText.includes('demo')
+        || searchableText.includes('example.com')
+        || searchableText.includes('fiktiv')
+    );
+};
+
+const normalizeLead = (lead: Partial<Lead>): Lead => {
+    const isDemoLead = hasDemoMarker(lead);
+    const baseNotes = lead.notes ?? '';
+
+    return {
+        ...emptyLead(),
+        ...lead,
+        notes: isDemoLead && !baseNotes.toLowerCase().includes('nejde o skutecneho klienta')
+            ? `${demoLeadNotice}\n\n${baseNotes}`.trim()
+            : baseNotes,
+        publicLinks: migratePublicLinks(lead),
+        sourceMaterials: lead.sourceMaterials ?? [],
+        extractionStatus: lead.extractionStatus ?? 'idle',
+        publicSignals: lead.publicSignals ?? [],
+        quickWins: lead.quickWins ?? [],
+        proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
+        structuredQuickWins: migrateQuickWins(lead),
+        selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
+        createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
+        addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
+        leadAgentRunId: lead.leadAgentRunId ?? '',
+        agentAnalysisProvider: lead.agentAnalysisProvider ?? '',
+        opportunityScore: lead.opportunityScore ?? 0,
+        opportunityType: lead.opportunityType ?? '',
+        fitVerdict: lead.fitVerdict ?? '',
+        confidence: lead.confidence ?? '',
+        targetOffer: lead.targetOffer ?? '',
+        qualificationReason: lead.qualificationReason ?? '',
+        offerHypothesis: lead.offerHypothesis ?? '',
+        automationNeedScore: lead.automationNeedScore ?? 0,
+        reviewFrictionScore: lead.reviewFrictionScore ?? 0,
+        publicMaturityScore: lead.publicMaturityScore ?? 0,
+        isDemoLead,
+        demoReason: isDemoLead ? lead.demoReason || demoLeadNotice : lead.demoReason ?? '',
+    };
+};
 
 const emptyAgentRequest = (): LeadAgentSearchRequest => ({
     location: 'Praha',
@@ -277,48 +317,68 @@ const emptyAgentSession = (): LeadAgentSession => ({
     healthMessage: '',
 });
 
-const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAgentCandidate => ({
-    id: candidate.id ?? `agent-candidate-${crypto.randomUUID()}`,
-    runId: candidate.runId ?? legacyRunId,
-    createdAt: candidate.createdAt ?? nowIso(),
-    name: candidate.name ?? 'Neznamy kandidat',
-    location: candidate.location ?? '',
-    type: candidate.type ?? 'Jine',
-    websiteUrl: candidate.websiteUrl ?? '',
-    sourceUrls: candidate.sourceUrls ?? [],
-    sourceSnippets: candidate.sourceSnippets ?? [],
-    possibleEmail: candidate.possibleEmail ?? '',
-    signals: candidate.signals ?? [],
-    risks: candidate.risks ?? [],
-    leadScore: candidate.leadScore ?? 0,
-    opportunityScore: candidate.opportunityScore ?? Math.max(0, Math.min(100, candidate.leadScore ?? 0)),
-    opportunityType: candidate.opportunityType ?? (candidate.painSignals?.length ? 'fix-existing-process' : candidate.targetOffer === 'skip' ? 'skip' : 'setup-automation'),
-    automationNeedScore: candidate.automationNeedScore ?? 0,
-    publicMaturityScore: candidate.publicMaturityScore ?? 0,
-    reviewFrictionScore: candidate.reviewFrictionScore ?? 0,
-    fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
-    confidence: candidate.confidence ?? 'low',
-    contactMissing: candidate.contactMissing ?? !candidate.possibleEmail,
-    painSignals: candidate.painSignals ?? [],
-    positiveSolvedSignals: candidate.positiveSolvedSignals ?? candidate.alreadySolvedSignals ?? [],
-    noPainReason: candidate.noPainReason,
-    targetOffer: candidate.targetOffer ?? (['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict ?? '') ? 'guest-guide' : 'skip'),
-    offerHypothesis: candidate.offerHypothesis ?? 'Legacy data nemaji samostatnou offer hypothesis.',
-    websiteSignals: candidate.websiteSignals ?? [],
-    contactSignals: candidate.contactSignals ?? (candidate.possibleEmail ? ['Verejny e-mail'] : []),
-    missingAutomationSignals: candidate.missingAutomationSignals ?? [],
-    likelyManualProcessSignals: candidate.likelyManualProcessSignals ?? [],
-    qualificationReason: candidate.qualificationReason ?? 'Legacy data nemaji samostatnou pain kvalifikaci.',
-    alreadySolvedSignals: candidate.alreadySolvedSignals ?? [],
-    missingEvidence: candidate.missingEvidence ?? ['Ulozena legacy data nemaji kompletni scoring evidence.'],
-    contradictionWarnings: candidate.contradictionWarnings ?? [],
-    recommendedAngle: candidate.recommendedAngle ?? 'main-photo',
-    evidenceSummary: candidate.evidenceSummary ?? 'Chybi evidence summary.',
-    isMock: candidate.isMock ?? false,
-    isLegacy: candidate.isLegacy ?? !candidate.runId,
-    addedLeadId: candidate.addedLeadId,
-    rejected: candidate.rejected,
-});
+const hasDemoCandidateMarker = (candidate: Partial<LeadAgentCandidate>) => {
+    const searchableText = [
+        candidate.name,
+        candidate.websiteUrl,
+        candidate.possibleEmail,
+        candidate.runId,
+        candidate.evidenceSummary,
+        candidate.qualificationReason,
+        candidate.offerHypothesis,
+        ...(candidate.sourceUrls ?? []),
+        ...(candidate.sourceSnippets ?? []),
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    return Boolean(candidate.isMock || searchableText.includes('demo') || searchableText.includes('example.com'));
+};
+
+const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAgentCandidate => {
+    const isMock = hasDemoCandidateMarker(candidate);
+
+    return {
+        id: candidate.id ?? `agent-candidate-${crypto.randomUUID()}`,
+        runId: candidate.runId ?? legacyRunId,
+        createdAt: candidate.createdAt ?? nowIso(),
+        name: isMock && candidate.name && !candidate.name.startsWith('DEMO') ? `DEMO — ${candidate.name}` : candidate.name ?? 'Neznamy kandidat',
+        location: candidate.location ?? '',
+        type: candidate.type ?? 'Jine',
+        websiteUrl: candidate.websiteUrl ?? '',
+        sourceUrls: candidate.sourceUrls ?? [],
+        sourceSnippets: candidate.sourceSnippets ?? [],
+        possibleEmail: candidate.possibleEmail ?? '',
+        signals: candidate.signals ?? [],
+        risks: candidate.risks ?? [],
+        leadScore: candidate.leadScore ?? 0,
+        opportunityScore: candidate.opportunityScore ?? Math.max(0, Math.min(100, candidate.leadScore ?? 0)),
+        opportunityType: candidate.opportunityType ?? (candidate.painSignals?.length ? 'fix-existing-process' : candidate.targetOffer === 'skip' ? 'skip' : 'setup-automation'),
+        automationNeedScore: candidate.automationNeedScore ?? 0,
+        publicMaturityScore: candidate.publicMaturityScore ?? 0,
+        reviewFrictionScore: candidate.reviewFrictionScore ?? 0,
+        fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
+        confidence: candidate.confidence ?? 'low',
+        contactMissing: candidate.contactMissing ?? !candidate.possibleEmail,
+        painSignals: candidate.painSignals ?? [],
+        positiveSolvedSignals: candidate.positiveSolvedSignals ?? candidate.alreadySolvedSignals ?? [],
+        noPainReason: candidate.noPainReason,
+        targetOffer: candidate.targetOffer ?? (['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict ?? '') ? 'guest-guide' : 'skip'),
+        offerHypothesis: candidate.offerHypothesis ?? 'Legacy data nemaji samostatnou offer hypothesis.',
+        websiteSignals: candidate.websiteSignals ?? [],
+        contactSignals: candidate.contactSignals ?? (candidate.possibleEmail ? ['Verejny e-mail'] : []),
+        missingAutomationSignals: candidate.missingAutomationSignals ?? [],
+        likelyManualProcessSignals: candidate.likelyManualProcessSignals ?? [],
+        qualificationReason: candidate.qualificationReason ?? 'Legacy data nemaji samostatnou pain kvalifikaci.',
+        alreadySolvedSignals: candidate.alreadySolvedSignals ?? [],
+        missingEvidence: candidate.missingEvidence ?? ['Ulozena legacy data nemaji kompletni scoring evidence.'],
+        contradictionWarnings: candidate.contradictionWarnings ?? [],
+        recommendedAngle: candidate.recommendedAngle ?? 'main-photo',
+        evidenceSummary: candidate.evidenceSummary ?? 'Chybi evidence summary.',
+        isMock,
+        isLegacy: candidate.isLegacy ?? !candidate.runId,
+        addedLeadId: candidate.addedLeadId,
+        rejected: candidate.rejected,
+    };
+};
 
 const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?: LeadAgentCandidate): LeadAgentAnalysis => ({
     runId: analysis.runId ?? candidate?.runId ?? legacyRunId,
@@ -355,7 +415,7 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
     missingEvidence: analysis.missingEvidence ?? candidate?.missingEvidence ?? ['Legacy analyza nema kompletni evidence model.'],
     contradictionWarnings: analysis.contradictionWarnings ?? candidate?.contradictionWarnings ?? [],
     evidenceLimits: analysis.evidenceLimits ?? ['Ulozeno z predchozi verze bez kompletni diagnostiky.'],
-    isMock: analysis.isMock ?? false,
+    isMock: analysis.isMock ?? candidate?.isMock ?? analysis.provider === 'demo-fallback',
     isLegacy: analysis.isLegacy ?? !analysis.provider,
 });
 
@@ -554,6 +614,27 @@ function App() {
         setActiveScreen('finder');
     };
 
+    const deleteDemoData = () => {
+        const confirmed = window.confirm('Smazat demo data? Odstrani se demo kandidati, demo analyzy a demo leady z lokalniho uloziste. Realne leady zustanou zachovane.');
+
+        if (!confirmed) return;
+        setLeads((currentLeads) => {
+            const remainingLeads = currentLeads.filter((lead) => !lead.isDemoLead);
+            const nextSelectedLead = remainingLeads.find((lead) => lead.id === selectedLeadId) ?? remainingLeads[0];
+            setSelectedLeadId(nextSelectedLead?.id ?? '');
+            setDraftLead(nextSelectedLead ?? emptyLead());
+            setIsCreating(false);
+            return remainingLeads;
+        });
+        setLeadAgentSession((currentSession) => currentSession.isMock ? {
+            ...emptyAgentSession(),
+            request: currentSession.request,
+            health: currentSession.health,
+            healthMessage: currentSession.healthMessage,
+            storedBannerDismissed: true,
+        } : currentSession);
+    };
+
     const dismissStoredBanner = () => {
         setLeadAgentSession((currentSession) => ({ ...currentSession, storedBannerDismissed: true }));
     };
@@ -576,6 +657,7 @@ function App() {
             createdAt,
             status: 'searching',
             message: searchingMessage,
+            isMock: false,
             candidates: [],
             analyses: {},
             dismissedCandidateIds: [],
@@ -586,6 +668,28 @@ function App() {
 
         try {
             const response = await discoverLeads(request);
+            if (response.isMock) {
+                const reason = response.diagnostic?.fallbackReason ?? 'unexpected_demo_fallback';
+                const message = `Reálné hledání neběželo. Discovery function selhala: ${reason}. Demo kandidáti nejsou skuteční klienti.`;
+                setLeadAgentSession((currentSession) => ({
+                    ...currentSession,
+                    status: 'error',
+                    message,
+                    isMock: false,
+                    candidates: [],
+                    analyses: {},
+                    diagnostic: {
+                        ...response.diagnostic,
+                        mode: 'error',
+                        discoverProvider: 'error',
+                        source: 'error',
+                        fallbackReason: reason,
+                        userMessage: message,
+                    },
+                }));
+                return;
+            }
+
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 status: response.status === 'needs-config' ? 'needs-config' : 'found',
@@ -593,22 +697,58 @@ function App() {
                 isMock: response.isMock,
                 candidates: response.candidates.map((candidate) => normalizeAgentCandidate({ ...candidate, runId, createdAt, isLegacy: false })),
                 diagnostic: response.diagnostic
-                    ? { ...response.diagnostic, discoverProvider: response.diagnostic.discoverProvider ?? currentSession.diagnostic?.discoverProvider }
+                    ? { ...response.diagnostic, discoverProvider: response.diagnostic.discoverProvider ?? currentSession.diagnostic?.discoverProvider, source: response.diagnostic.source ?? 'real API' }
                     : currentSession.diagnostic,
             }));
         } catch (error) {
+            const reason = 'network_error';
+            const message = `Reálné hledání neběželo. Discovery function selhala: ${reason}. Demo kandidáti nejsou skuteční klienti.`;
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 status: 'error',
-                message: error instanceof Error ? error.message : 'Lead Finder Agent selhal.',
+                message,
+                isMock: false,
+                candidates: [],
+                analyses: {},
                 diagnostic: {
-                    mode: 'demo-fallback',
-                    discoverProvider: 'unknown',
-                    fallbackReason: 'network_error',
+                    mode: 'error',
+                    discoverProvider: 'error',
+                    source: 'error',
+                    fallbackReason: reason,
                     userMessage: error instanceof Error ? error.message : 'Lead Finder Agent selhal.',
                 },
             }));
         }
+    };
+
+    const runDemoLeadAgentSearch = async () => {
+        const request = {
+            ...leadAgentSession.request,
+            knownTargetName: '',
+            knownTargetCity: '',
+            knownTargetWebsiteUrl: '',
+            knownTargetNote: '',
+            knownTargetEmail: '',
+        };
+        const runId = newAgentRunId();
+        const createdAt = nowIso();
+        const response = await discoverDemoLeads(request);
+
+        setLeadAgentSession((currentSession) => ({
+            ...currentSession,
+            request,
+            runId,
+            createdAt,
+            status: 'found',
+            message: response.message,
+            isMock: true,
+            candidates: response.candidates.map((candidate) => normalizeAgentCandidate({ ...candidate, runId, createdAt, isMock: true, isLegacy: false })),
+            analyses: {},
+            dismissedCandidateIds: [],
+            diagnostic: response.diagnostic,
+            loadedFromStorage: false,
+            storedBannerDismissed: true,
+        }));
     };
 
     const runLeadAgentSearch = async () => {
@@ -697,6 +837,12 @@ function App() {
     };
 
     const addAgentCandidateToLeads = (candidate: LeadAgentCandidate) => {
+        if (candidate.isMock) {
+            const confirmed = window.confirm('Toto je demo kandidát, není to skutečný klient. Přidat jen pro test?');
+
+            if (!confirmed) return;
+        }
+
         const analysis = leadAgentSession.analyses[candidate.id];
         const candidateText = candidate.sourceSnippets.join('\n');
         const hasAgentAnalysis = Boolean(analysis);
@@ -741,12 +887,14 @@ function App() {
             extractionStatus: analysis ? 'completed' : 'ready',
             email: candidate.possibleEmail,
             status: analysis ? 'Audit pripraven' : 'Novy',
-            notes: `${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Lead byl pridan bez agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
+            notes: `${candidate.isMock ? `${demoLeadNotice}\n\n` : ''}${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Lead byl pridan bez agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim - fiktivni kandidat, nepouzivat jako realny obchodni lead.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
             leadScore: candidate.leadScore,
             createdFromAgentAnalysis: hasAgentAnalysis,
             addedWithoutAgentAnalysis: !hasAgentAnalysis,
             leadAgentRunId: candidate.runId,
             agentAnalysisProvider: analysis?.provider ?? '',
+            isDemoLead: candidate.isMock,
+            demoReason: candidate.isMock ? demoLeadNotice : '',
             opportunityScore: analysis?.opportunityScore ?? candidate.opportunityScore,
             opportunityType: analysis?.opportunityType ?? candidate.opportunityType,
             fitVerdict: analysis?.fitVerdict ?? candidate.fitVerdict,
@@ -882,9 +1030,11 @@ function App() {
                     onClearAllTestData={clearAllTestData}
                     onClearAnalysis={clearAgentAnalysis}
                     onContinueStoredSession={dismissStoredBanner}
+                    onDeleteDemoData={deleteDemoData}
                     onDeleteResults={deleteAgentResults}
                     onNewSearch={() => resetAgentResults(true)}
                     onRejectCandidate={rejectAgentCandidate}
+                    onRunDemo={runDemoLeadAgentSearch}
                     onRunSearch={runLeadAgentSearch}
                     onRunKnownTarget={runKnownTargetCheck}
                     onUpdateFilter={updateCandidateFilter}
@@ -1063,11 +1213,13 @@ interface LeadFinderPanelProps {
     onRunSearch: () => void;
     onNewSearch: () => void;
     onDeleteResults: () => void;
+    onDeleteDemoData: () => void;
     onClearAllTestData: () => void;
     onContinueStoredSession: () => void;
     onUpdateFilter: (filter: LeadAgentCandidateFilter) => void;
     onUpdateSort: (sort: LeadAgentCandidateSort) => void;
     onCheckHealth: () => void;
+    onRunDemo: () => void;
     onRunKnownTarget: () => void;
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
     onClearAnalysis: (candidateId: string) => void;
@@ -1083,9 +1235,11 @@ function LeadFinderPanel({
     onClearAnalysis,
     onContinueStoredSession,
     onDeleteResults,
+    onDeleteDemoData,
     onNewSearch,
     onRejectCandidate,
     onRunSearch,
+    onRunDemo,
     onRunKnownTarget,
     onUpdateFilter,
     onUpdateRequest,
@@ -1138,6 +1292,12 @@ function LeadFinderPanel({
                             <Sparkles size={18} aria-hidden="true" />
                             Ověřit konfiguraci agenta
                         </button>
+                        <button className="secondary-button" onClick={onRunDemo} type="button">
+                            Zobrazit demo kandidáty
+                        </button>
+                        <button className="secondary-button danger-button" onClick={onDeleteDemoData} type="button">
+                            Smazat demo data
+                        </button>
                         <button className="secondary-button danger-button" onClick={onClearAllTestData} type="button">
                             Smazat všechna testovací data
                         </button>
@@ -1149,11 +1309,20 @@ function LeadFinderPanel({
                 </div>
 
                 <div className="scope-note">
-                    Autonomni hledani vyzaduje TAVILY_API_KEY a OPENAI_API_KEY v Netlify environment variables. Bez nich bezi demo rezim.
+                    Reálné leady vznikají jen z provideru Tavily. Demo kandidáti slouží pouze pro test UI a nejsou skuteční klienti.
                     Aplikace nescrapuje Booking, Airbnb ani Google Maps a neposila e-maily automaticky.
                 </div>
 
-                {session.isMock || session.status === 'needs-config' ? <div className="scope-note demo-note">Demo rezim: vysledky nejsou z realneho API a jsou oznacene jako demo.</div> : null}
+                {session.isMock ? <div className="scope-note demo-note demo-mode-banner"><strong>DEMO REŽIM — tito kandidáti jsou fiktivní</strong><span>Nepřidávej je jako reálné obchodní leady; slouží jen pro test UI.</span></div> : null}
+
+                {session.diagnostic?.discoverProvider === 'error' ? (
+                    <div className="scope-note error-note">
+                        <strong>{session.message}</strong>
+                        <span>Zkontroluj Netlify Functions logs pro discover-leads.</span>
+                        <span>Ověř TAVILY_API_KEY.</span>
+                        <span>Zkus menší max výsledků.</span>
+                    </div>
+                ) : null}
 
                 {hasStoredResults ? (
                     <div className="scope-note stored-note">
@@ -1233,6 +1402,9 @@ function LeadFinderPanel({
                     <p className="eyebrow">Beh</p>
                     <span>Run ID: {session.runId}</span>
                     <span>Created: {formatDateTime(session.createdAt)}</span>
+                    <span>Discovery provider: {session.diagnostic?.discoverProvider ?? 'unknown'}</span>
+                    <span>isMock: {session.isMock ? 'true' : 'false'}</span>
+                    <span>source: {session.diagnostic?.source ?? (session.isMock ? 'demo fallback' : session.diagnostic?.discoverProvider === 'tavily' ? 'real API' : 'error')}</span>
                     <span>{session.loadedFromStorage ? 'Vysledek je ulozeny z predchoziho behu.' : 'Aktualni beh v tomto otevreni aplikace.'}</span>
                 </div>
                 <AgentDiagnosticBox diagnostic={session.diagnostic} />
@@ -1276,7 +1448,7 @@ function LeadFinderPanel({
                 {visibleCandidates.length === 0 ? (
                     <div className="empty-state compact-empty">
                         <h2>Zatim nejsou vytvoreni zadni kandidati</h2>
-                        <p>Spust Lead Finder Agenta. Bez API klicu se zobrazi demo kandidati.</p>
+                        <p>Spust reálné hledání přes Tavily. Pokud discovery selže, demo kandidáti se nezobrazí automaticky; otevřeš je jen tlačítkem Zobrazit demo kandidáty.</p>
                     </div>
                 ) : (
                     <div className="table-wrap">
@@ -1313,10 +1485,11 @@ function LeadFinderPanel({
                                     };
 
                                     return (
-                                    <tr className={['skip', 'weak-opportunity', 'not-enough-evidence'].includes(candidate.fitVerdict) ? 'weak-candidate-row' : ''} key={candidate.id}>
+                                    <tr className={[['skip', 'weak-opportunity', 'not-enough-evidence'].includes(candidate.fitVerdict) ? 'weak-candidate-row' : '', candidate.isMock ? 'demo-candidate-row' : ''].filter(Boolean).join(' ')} key={candidate.id}>
                                         <td>
-                                            <strong>{candidate.name}</strong>
-                                            <small>{candidate.isMock ? 'DEMO vysledek' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
+                                            {candidate.isMock ? <span className="demo-badge">FIKTIVNÍ</span> : null}
+                                            <strong>{candidate.isMock && !candidate.name.startsWith('DEMO') ? `DEMO — ${candidate.name}` : candidate.name}</strong>
+                                            <small>{candidate.isMock ? 'Demo výsledek - není skutečný klient' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
                                             <small>Run: {candidate.runId}</small>
                                             <small>{candidate.isLegacy ? 'uložené z předchozí verze' : candidate.runId === session.runId && !session.loadedFromStorage ? 'aktuální běh' : 'uložené z předchozího běhu'}</small>
                                         </td>
@@ -1429,6 +1602,7 @@ function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }
             <p className="eyebrow">Diagnostika</p>
             {diagnostic.discoverProvider ? <span>Discovery provider: {diagnostic.discoverProvider}</span> : null}
             {diagnostic.analyzeProvider ? <span>Analysis provider: {diagnostic.analyzeProvider}</span> : null}
+            {diagnostic.source ? <span>Source: {diagnostic.source}</span> : null}
             {diagnostic.fallbackReason ? <span>Fallback reason: {diagnostic.fallbackReason}</span> : null}
             {diagnostic.httpStatus ? <span>HTTP status: {diagnostic.httpStatus}</span> : null}
             {typeof diagnostic.elapsedMs === 'number' ? <span>Elapsed: {diagnostic.elapsedMs} ms</span> : null}
@@ -1563,6 +1737,7 @@ function LeadList({ leads, selectedLeadId, onCreateLead, onDeleteLead, onSelectL
                             <tr className={lead.id === selectedLeadId ? 'selected-row' : ''} key={lead.id} onClick={() => onSelectLead(lead.id)}>
                                 <td>
                                     <strong>{lead.name}</strong>
+                                    {lead.isDemoLead ? <span className="demo-badge small-demo-badge">Demo</span> : null}
                                     <small>{lead.email || 'E-mail chybi'}</small>
                                 </td>
                                 <td>{lead.accommodationType}</td>
@@ -1648,6 +1823,14 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                     </div>
                 ) : draftLead.addedWithoutAgentAnalysis ? (
                     <div className="scope-note warning-note">Lead byl přidán bez agentní analýzy. Výstupy je potřeba doplnit ručně nebo kandidáta nejdřív analyzovat v Lead Finderu.</div>
+                ) : null}
+
+                {draftLead.isDemoLead ? (
+                    <div className="scope-note demo-lead-note">
+                        <strong>Demo lead — fiktivní data</strong>
+                        <span>{draftLead.demoReason || demoLeadNotice}</span>
+                        <span>Tento záznam nesmí být zaměněn za reálného obchodního leada.</span>
+                    </div>
                 ) : null}
 
                 <LeadCoreFields draftLead={draftLead} onChange={onChange} />

@@ -384,94 +384,20 @@ const tavilySearch = async (apiKey: string, query: string, maxResults: number) =
     return payload.results || [];
 };
 
-const fallbackCandidates = (request: DiscoverRequest) => ({
+const discoveryErrorResponse = (reason: string, httpStatus = 200) => ({
     status: 'needs-config',
-    message: 'TAVILY_API_KEY neni nakonfigurovany. Vracim demo kandidaty; nejde o realne vyhledani na webu.',
-    isMock: true,
+    message: `Reálné hledání neběželo. Discovery function selhala: ${reason}. Demo kandidáti nejsou skuteční klienti.`,
+    isMock: false,
     diagnostic: {
-        mode: 'demo-fallback',
-        discoverProvider: 'demo',
-        fallbackReason: 'missing_tavily_api_key',
-        httpStatus: 200,
-        userMessage: 'Discovery bezi v demo fallbacku: missing_tavily_api_key',
+        mode: 'error',
+        discoverProvider: 'error',
+        source: 'error',
+        fallbackReason: reason,
+        httpStatus,
+        userMessage: `Discovery function selhala: ${reason}`,
         runtime: 'netlify-function',
     },
-    candidates: [
-        {
-            id: 'mock-agent-river-gate',
-            name: 'Apartmany River Gate',
-            location: request.location || 'Praha',
-            type: 'Apartman',
-            websiteUrl: 'https://example.com/river-gate',
-            sourceUrls: ['https://example.com/river-gate'],
-            sourceSnippets: ['Demo snippet: apartmany se self check-inem, keyboxem, parkovanim a vice jednotkami.'],
-            possibleEmail: 'rezervace@rivergate.example',
-            signals: ['Verejny web', 'Self check-in / keybox', 'Parkovani', 'Vice jednotek'],
-            risks: ['Demo vysledek, ne realne API hledani'],
-            leadScore: 86,
-            opportunityScore: 78,
-            opportunityType: 'fix-existing-process',
-            automationNeedScore: 44,
-            publicMaturityScore: 60,
-            reviewFrictionScore: 72,
-            fitVerdict: 'strong-opportunity',
-            confidence: 'high',
-            contactMissing: false,
-            painSignals: ['Public snippet mentions key or keybox problem', 'Public snippet mentions unclear arrival or entrance'],
-            positiveSolvedSignals: ['Keybox or arrival process appears already documented'],
-            noPainReason: undefined,
-            targetOffer: 'guest-guide',
-            offerHypothesis: 'Fix existing process: arrival/keybox confusion can be addressed with a clearer guest guide and pre-arrival workflow.',
-            websiteSignals: ['Vlastni web mimo OTA agregator'],
-            contactSignals: ['Verejny e-mail nebo kontakt'],
-            missingAutomationSignals: ['Neni videt jednotna predprijezdova stranka'],
-            likelyManualProcessSignals: ['Verejne instrukce pusobi roztrousene'],
-            qualificationReason: 'Demo pain lead: search/review snippet mentions keybox or arrival confusion; evidence is snippet-only.',
-            alreadySolvedSignals: ['Keybox pravdepodobne existuje, ale demo pain signal rika, ze hoste maji problem s instrukcemi'],
-            missingEvidence: ['Demo fallback nema realne review API vysledky'],
-            contradictionWarnings: ['Resit konkretni zmatek kolem instrukci, ne obecne zavadeni self-check-inu'],
-            recommendedAngle: 'guest-guide',
-            evidenceSummary: 'Demo kandidat z fallback rezimu; URL nebyla automaticky ctena.',
-            isMock: true,
-        },
-        {
-            id: 'mock-agent-florian-solved',
-            name: 'Apartmany Florian Benchmark',
-            location: request.location || 'Praha',
-            type: 'Apartman',
-            websiteUrl: 'https://example.com/florian',
-            sourceUrls: ['https://example.com/florian'],
-            sourceSnippets: ['Demo snippet: apartmany prezentuji pohodlny online check-in, jasne instrukce pred prijezdem a parkovani ve dvore. Bez negativniho review signalu.'],
-            possibleEmail: 'info@florian.example',
-            signals: ['Verejny web', 'Self check-in / keybox', 'Parkovani', 'Vice jednotek'],
-            risks: ['Demo benchmark: neni videt verejny pain signal'],
-            leadScore: 70,
-            opportunityScore: 18,
-            opportunityType: 'benchmark',
-            automationNeedScore: 12,
-            publicMaturityScore: 84,
-            reviewFrictionScore: 0,
-            fitVerdict: 'weak-opportunity',
-            confidence: 'low',
-            contactMissing: false,
-            painSignals: [],
-            positiveSolvedSignals: ['Self-check-in appears already solved and presented positively', 'Parking appears presented as an amenity, not a pain'],
-            noPainReason: 'self-check-in appears already solved; no public guest friction found',
-            targetOffer: 'skip',
-            offerHypothesis: 'Benchmark: self check-in and arrival instructions already look well presented; do not outreach by default.',
-            websiteSignals: ['Vlastni web mimo OTA agregator', 'Predprijezdove instrukce jsou videt'],
-            contactSignals: ['Verejny e-mail nebo kontakt'],
-            missingAutomationSignals: [],
-            likelyManualProcessSignals: [],
-            qualificationReason: 'Demo benchmark: provozni komplexita existuje, ale chybi verejny pain signal.',
-            alreadySolvedSignals: ['Online/self check-in a parkovani jsou prezentovane pozitivne'],
-            missingEvidence: ['Chybi negativni review/search signal'],
-            contradictionWarnings: ['Neposilat obchodni osloveni jen kvuli self-check-inu'],
-            recommendedAngle: 'guest-guide',
-            evidenceSummary: 'Demo benchmark kandidat: ukazuje rozdil mezi tematem self-check-in a skutecnym pain leadem.',
-            isMock: true,
-        },
-    ],
+    candidates: [],
 });
 
 export const handler = async (event: { httpMethod: string; body?: string | null }) => {
@@ -481,7 +407,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     const tavilyApiKey = process.env.TAVILY_API_KEY;
     const request = JSON.parse(event.body || '{}') as DiscoverRequest;
 
-    if (!tavilyApiKey) return json(200, fallbackCandidates(request));
+    if (!tavilyApiKey) return json(200, discoveryErrorResponse('missing_tavily_api_key'));
 
     const isKnownTarget = Boolean(request.knownTargetName?.trim() || request.knownTargetWebsiteUrl?.trim());
     const queries = isKnownTarget ? makeKnownTargetQueries(request) : makeQueries(request);
@@ -576,6 +502,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         diagnostic: {
             mode: 'real-api',
             discoverProvider: 'tavily',
+            source: 'real API',
             httpStatus: 200,
             userMessage: 'Discovery provider: tavily',
             runtime: 'netlify-function',
