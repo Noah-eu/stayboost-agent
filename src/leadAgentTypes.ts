@@ -5,8 +5,9 @@ export type LeadAgentConfidence = 'low' | 'medium' | 'high';
 export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback';
 export type LeadAgentFitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
 export type LeadAgentTargetOffer = 'guest-communication-fix' | 'guest-guide' | 'ota-profile-audit' | 'review-response-improvement' | 'self-checkin-setup' | 'skip';
-export type LeadAgentCandidateFilter = 'all' | 'good-leads' | 'pain-signals' | 'no-pain-or-skip' | 'benchmark-solved' | 'weak-or-skip' | 'hidden';
-export type LeadAgentCandidateSort = 'opportunityScore' | 'leadScore' | 'newest';
+export type LeadAgentOpportunityType = 'fix-existing-process' | 'setup-automation' | 'ota-profile-audit' | 'benchmark' | 'skip';
+export type LeadAgentCandidateFilter = 'all' | 'fix-leads' | 'setup-leads' | 'with-contact' | 'without-contact' | 'benchmark-or-skip' | 'hidden' | 'good-leads' | 'pain-signals' | 'no-pain-or-skip' | 'benchmark-solved' | 'weak-or-skip';
+export type LeadAgentCandidateSort = 'opportunityScore' | 'automationNeedScore' | 'reviewFrictionScore' | 'leadScore' | 'newest';
 
 export interface LeadAgentDiagnostic {
     mode: LeadAgentDiagnosticMode;
@@ -38,6 +39,11 @@ export interface LeadAgentSearchRequest {
     segment: string;
     maxResults: number;
     notes: string;
+    knownTargetName?: string;
+    knownTargetCity?: string;
+    knownTargetWebsiteUrl?: string;
+    knownTargetNote?: string;
+    knownTargetEmail?: string;
 }
 
 export interface LeadAgentCandidate {
@@ -55,6 +61,9 @@ export interface LeadAgentCandidate {
     risks: string[];
     leadScore: number;
     opportunityScore: number;
+    opportunityType: LeadAgentOpportunityType;
+    automationNeedScore: number;
+    publicMaturityScore: number;
     reviewFrictionScore: number;
     fitVerdict: LeadAgentFitVerdict;
     confidence: LeadAgentConfidence;
@@ -63,6 +72,11 @@ export interface LeadAgentCandidate {
     positiveSolvedSignals: string[];
     noPainReason?: string;
     targetOffer: LeadAgentTargetOffer;
+    offerHypothesis: string;
+    websiteSignals: string[];
+    contactSignals: string[];
+    missingAutomationSignals: string[];
+    likelyManualProcessSignals: string[];
     qualificationReason: string;
     alreadySolvedSignals: string[];
     missingEvidence: string[];
@@ -92,11 +106,19 @@ export interface LeadAgentAnalysis {
     confidence: LeadAgentConfidence;
     fitVerdict: LeadAgentFitVerdict;
     opportunityScore: number;
+    opportunityType: LeadAgentOpportunityType;
+    automationNeedScore: number;
+    publicMaturityScore: number;
     reviewFrictionScore: number;
     painSignals: string[];
     positiveSolvedSignals: string[];
     noPainReason?: string;
     targetOffer: LeadAgentTargetOffer;
+    offerHypothesis: string;
+    websiteSignals: string[];
+    contactSignals: string[];
+    missingAutomationSignals: string[];
+    likelyManualProcessSignals: string[];
     qualificationReason: string;
     alreadySolvedSignals: string[];
     missingEvidence: string[];

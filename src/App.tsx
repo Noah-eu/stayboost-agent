@@ -215,6 +215,11 @@ const emptyAgentRequest = (): LeadAgentSearchRequest => ({
     segment: 'self check-in / bez recepce',
     maxResults: 10,
     notes: '',
+    knownTargetName: '',
+    knownTargetCity: '',
+    knownTargetWebsiteUrl: '',
+    knownTargetNote: '',
+    knownTargetEmail: '',
 });
 
 const emptyAgentSession = (): LeadAgentSession => ({
@@ -251,6 +256,9 @@ const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAg
     risks: candidate.risks ?? [],
     leadScore: candidate.leadScore ?? 0,
     opportunityScore: candidate.opportunityScore ?? Math.max(0, Math.min(100, candidate.leadScore ?? 0)),
+    opportunityType: candidate.opportunityType ?? (candidate.painSignals?.length ? 'fix-existing-process' : candidate.targetOffer === 'skip' ? 'skip' : 'setup-automation'),
+    automationNeedScore: candidate.automationNeedScore ?? 0,
+    publicMaturityScore: candidate.publicMaturityScore ?? 0,
     reviewFrictionScore: candidate.reviewFrictionScore ?? 0,
     fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
     confidence: candidate.confidence ?? 'low',
@@ -259,6 +267,11 @@ const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAg
     positiveSolvedSignals: candidate.positiveSolvedSignals ?? candidate.alreadySolvedSignals ?? [],
     noPainReason: candidate.noPainReason,
     targetOffer: candidate.targetOffer ?? (['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict ?? '') ? 'guest-guide' : 'skip'),
+    offerHypothesis: candidate.offerHypothesis ?? 'Legacy data nemaji samostatnou offer hypothesis.',
+    websiteSignals: candidate.websiteSignals ?? [],
+    contactSignals: candidate.contactSignals ?? (candidate.possibleEmail ? ['Verejny e-mail'] : []),
+    missingAutomationSignals: candidate.missingAutomationSignals ?? [],
+    likelyManualProcessSignals: candidate.likelyManualProcessSignals ?? [],
     qualificationReason: candidate.qualificationReason ?? 'Legacy data nemaji samostatnou pain kvalifikaci.',
     alreadySolvedSignals: candidate.alreadySolvedSignals ?? [],
     missingEvidence: candidate.missingEvidence ?? ['Ulozena legacy data nemaji kompletni scoring evidence.'],
@@ -288,11 +301,19 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
     confidence: analysis.confidence ?? candidate?.confidence ?? 'low',
     fitVerdict: analysis.fitVerdict ?? candidate?.fitVerdict ?? 'not-enough-evidence',
     opportunityScore: analysis.opportunityScore ?? candidate?.opportunityScore ?? 0,
+    opportunityType: analysis.opportunityType ?? candidate?.opportunityType ?? (analysis.painSignals?.length || candidate?.painSignals.length ? 'fix-existing-process' : 'skip'),
+    automationNeedScore: analysis.automationNeedScore ?? candidate?.automationNeedScore ?? 0,
+    publicMaturityScore: analysis.publicMaturityScore ?? candidate?.publicMaturityScore ?? 0,
     reviewFrictionScore: analysis.reviewFrictionScore ?? candidate?.reviewFrictionScore ?? 0,
     painSignals: analysis.painSignals ?? candidate?.painSignals ?? [],
     positiveSolvedSignals: analysis.positiveSolvedSignals ?? candidate?.positiveSolvedSignals ?? candidate?.alreadySolvedSignals ?? [],
     noPainReason: analysis.noPainReason ?? candidate?.noPainReason,
     targetOffer: analysis.targetOffer ?? candidate?.targetOffer ?? 'skip',
+    offerHypothesis: analysis.offerHypothesis ?? candidate?.offerHypothesis ?? 'Legacy analyza nema offer hypothesis.',
+    websiteSignals: analysis.websiteSignals ?? candidate?.websiteSignals ?? [],
+    contactSignals: analysis.contactSignals ?? candidate?.contactSignals ?? [],
+    missingAutomationSignals: analysis.missingAutomationSignals ?? candidate?.missingAutomationSignals ?? [],
+    likelyManualProcessSignals: analysis.likelyManualProcessSignals ?? candidate?.likelyManualProcessSignals ?? [],
     qualificationReason: analysis.qualificationReason ?? candidate?.qualificationReason ?? 'Legacy analyza nema samostatnou pain kvalifikaci.',
     alreadySolvedSignals: analysis.alreadySolvedSignals ?? candidate?.alreadySolvedSignals ?? [],
     missingEvidence: analysis.missingEvidence ?? candidate?.missingEvidence ?? ['Legacy analyza nema kompletni evidence model.'],
@@ -509,15 +530,16 @@ function App() {
         setLeadAgentSession((currentSession) => ({ ...currentSession, candidateSort }));
     };
 
-    const runLeadAgentSearch = async () => {
+    const executeLeadAgentSearch = async (request: LeadAgentSearchRequest, searchingMessage: string) => {
         const runId = newAgentRunId();
         const createdAt = nowIso();
         setLeadAgentSession((currentSession) => ({
             ...currentSession,
+            request,
             runId,
             createdAt,
             status: 'searching',
-            message: 'Vyhledavam potencialni klienty...',
+            message: searchingMessage,
             candidates: [],
             analyses: {},
             dismissedCandidateIds: [],
@@ -527,7 +549,7 @@ function App() {
         }));
 
         try {
-            const response = await discoverLeads(leadAgentSession.request);
+            const response = await discoverLeads(request);
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 status: response.status === 'needs-config' ? 'needs-config' : 'found',
@@ -551,6 +573,26 @@ function App() {
                 },
             }));
         }
+    };
+
+    const runLeadAgentSearch = async () => {
+        await executeLeadAgentSearch({
+            ...leadAgentSession.request,
+            knownTargetName: '',
+            knownTargetCity: '',
+            knownTargetWebsiteUrl: '',
+            knownTargetNote: '',
+            knownTargetEmail: '',
+        }, 'Vyhledavam potencialni klienty...');
+    };
+
+    const runKnownTargetCheck = async () => {
+        const request = leadAgentSession.request;
+        await executeLeadAgentSearch({
+            ...request,
+            location: request.knownTargetCity?.trim() || request.location,
+            maxResults: 1,
+        }, `Proveruji konkretni provoz ${request.knownTargetName || request.knownTargetWebsiteUrl || 'bez nazvu'}...`);
     };
 
     const verifyAgentConfiguration = async () => {
@@ -780,6 +822,7 @@ function App() {
                     onNewSearch={() => resetAgentResults(true)}
                     onRejectCandidate={rejectAgentCandidate}
                     onRunSearch={runLeadAgentSearch}
+                    onRunKnownTarget={runKnownTargetCheck}
                     onUpdateFilter={updateCandidateFilter}
                     onUpdateRequest={updateAgentRequest}
                     onUpdateSort={updateCandidateSort}
@@ -961,6 +1004,7 @@ interface LeadFinderPanelProps {
     onUpdateFilter: (filter: LeadAgentCandidateFilter) => void;
     onUpdateSort: (sort: LeadAgentCandidateSort) => void;
     onCheckHealth: () => void;
+    onRunKnownTarget: () => void;
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
     onClearAnalysis: (candidateId: string) => void;
     onAddCandidate: (candidate: LeadAgentCandidate) => void;
@@ -978,17 +1022,24 @@ function LeadFinderPanel({
     onNewSearch,
     onRejectCandidate,
     onRunSearch,
+    onRunKnownTarget,
     onUpdateFilter,
     onUpdateRequest,
     onUpdateSort,
     session,
 }: LeadFinderPanelProps) {
     const hasStoredResults = session.loadedFromStorage && !session.storedBannerDismissed && (session.candidates.length > 0 || Object.keys(session.analyses).length > 0);
-    const filteredCandidates = session.candidates.filter((candidate) => {
+    const renderCandidates = session.candidates.map(normalizeAgentCandidate);
+    const filteredCandidates = renderCandidates.filter((candidate) => {
         const isHidden = candidate.rejected || session.dismissedCandidateIds.includes(candidate.id);
 
         if (session.candidateFilter === 'hidden') return isHidden;
         if (isHidden) return false;
+        if (session.candidateFilter === 'fix-leads') return candidate.opportunityType === 'fix-existing-process';
+        if (session.candidateFilter === 'setup-leads') return candidate.opportunityType === 'setup-automation';
+        if (session.candidateFilter === 'with-contact') return !candidate.contactMissing;
+        if (session.candidateFilter === 'without-contact') return candidate.contactMissing;
+        if (session.candidateFilter === 'benchmark-or-skip') return ['benchmark', 'skip'].includes(candidate.opportunityType) || candidate.fitVerdict === 'skip';
         if (session.candidateFilter === 'good-leads') return ['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict);
         if (session.candidateFilter === 'pain-signals') return candidate.painSignals.length > 0;
         if (session.candidateFilter === 'no-pain-or-skip') return candidate.painSignals.length === 0 || ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
@@ -997,6 +1048,8 @@ function LeadFinderPanel({
         return true;
     });
     const visibleCandidates = [...filteredCandidates].sort((first, second) => {
+        if (session.candidateSort === 'automationNeedScore') return second.automationNeedScore - first.automationNeedScore;
+        if (session.candidateSort === 'reviewFrictionScore') return second.reviewFrictionScore - first.reviewFrictionScore;
         if (session.candidateSort === 'leadScore') return second.leadScore - first.leadScore;
         if (session.candidateSort === 'newest') return new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime();
         return second.opportunityScore - first.opportunityScore;
@@ -1071,6 +1124,41 @@ function LeadFinderPanel({
                         <textarea value={session.request.notes} onChange={(event) => onUpdateRequest('notes', event.target.value)} rows={5} />
                     </label>
                 </div>
+
+                <div className="known-target-box">
+                    <div className="panel-header compact-header">
+                        <div>
+                            <p className="eyebrow">Znamy cil / konkretni provoz</p>
+                            <h2>Proverit jeden provoz</h2>
+                        </div>
+                        <button className="secondary-button" disabled={session.status === 'searching' || (!session.request.knownTargetName?.trim() && !session.request.knownTargetWebsiteUrl?.trim())} onClick={onRunKnownTarget} type="button">
+                            <Search size={18} aria-hidden="true" />
+                            Proverit konkretni provoz
+                        </button>
+                    </div>
+                    <div className="form-grid compact-form-grid">
+                        <label>
+                            Nazev provozu
+                            <input value={session.request.knownTargetName || ''} onChange={(event) => onUpdateRequest('knownTargetName', event.target.value)} />
+                        </label>
+                        <label>
+                            Mesto
+                            <input value={session.request.knownTargetCity || ''} onChange={(event) => onUpdateRequest('knownTargetCity', event.target.value)} />
+                        </label>
+                        <label>
+                            Web URL
+                            <input value={session.request.knownTargetWebsiteUrl || ''} onChange={(event) => onUpdateRequest('knownTargetWebsiteUrl', event.target.value)} />
+                        </label>
+                        <label>
+                            E-mail
+                            <input value={session.request.knownTargetEmail || ''} onChange={(event) => onUpdateRequest('knownTargetEmail', event.target.value)} />
+                        </label>
+                        <label className="full-width">
+                            Poznamka
+                            <textarea value={session.request.knownTargetNote || ''} onChange={(event) => onUpdateRequest('knownTargetNote', event.target.value)} rows={3} />
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <aside className="panel query-box">
@@ -1101,11 +1189,11 @@ function LeadFinderPanel({
                         Filtr
                         <select value={session.candidateFilter} onChange={(event) => onUpdateFilter(event.target.value as LeadAgentCandidateFilter)}>
                             <option value="all">Vše</option>
-                            <option value="good-leads">Jen vhodné leady</option>
-                            <option value="pain-signals">Jen leady s pain signálem</option>
-                            <option value="no-pain-or-skip">Bez pain signálu / přeskočit</option>
-                            <option value="benchmark-solved">Benchmark / už vyřešeno</option>
-                            <option value="weak-or-skip">Slabé / přeskočit</option>
+                            <option value="fix-leads">Fix leads</option>
+                            <option value="setup-leads">Setup leads</option>
+                            <option value="with-contact">Jen s kontaktem</option>
+                            <option value="without-contact">Bez kontaktu</option>
+                            <option value="benchmark-or-skip">Benchmark / skip</option>
                             <option value="hidden">Skryté</option>
                         </select>
                     </label>
@@ -1113,6 +1201,8 @@ function LeadFinderPanel({
                         Razeni
                         <select value={session.candidateSort} onChange={(event) => onUpdateSort(event.target.value as LeadAgentCandidateSort)}>
                             <option value="opportunityScore">Nejvyssi opportunityScore</option>
+                            <option value="automationNeedScore">Nejvyssi automationNeedScore</option>
+                            <option value="reviewFrictionScore">Nejvyssi reviewFrictionScore</option>
                             <option value="leadScore">Nejvyssi leadScore</option>
                             <option value="newest">Nejnovejsi</option>
                         </select>
@@ -1134,6 +1224,8 @@ function LeadFinderPanel({
                                     <th>Typ</th>
                                     <th>Skore</th>
                                     <th>Prilezitost</th>
+                                    <th>Typ prilezitosti</th>
+                                    <th>Automation need</th>
                                     <th>Review pain</th>
                                     <th>Kontakt</th>
                                     <th>Duvod</th>
@@ -1146,8 +1238,9 @@ function LeadFinderPanel({
                             <tbody>
                                 {visibleCandidates.map((candidate) => {
                                     const analysis = session.analyses[candidate.id];
+                                    const canAddCandidate = ['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict) && ['fix-existing-process', 'setup-automation'].includes(candidate.opportunityType);
                                     const addCandidate = () => {
-                                        if (!['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict)) {
+                                        if (!canAddCandidate) {
                                             const confirmed = window.confirm('Tento kandidát nemá silnou prodejní příležitost podle dostupné evidence. Přesto přidat do leadů?');
                                             if (!confirmed) return;
                                         }
@@ -1174,6 +1267,15 @@ function LeadFinderPanel({
                                             <small>{candidate.confidence}</small>
                                         </td>
                                         <td>
+                                            <strong>{candidate.opportunityType}</strong>
+                                            <small>{candidate.offerHypothesis}</small>
+                                        </td>
+                                        <td>
+                                            <strong className="score-value">{candidate.automationNeedScore}</strong>
+                                            <small>Maturity {candidate.publicMaturityScore}</small>
+                                            <small>{candidate.missingAutomationSignals.length} missing signals</small>
+                                        </td>
+                                        <td>
                                             <strong className="score-value">{candidate.reviewFrictionScore}</strong>
                                             <small>{candidate.painSignals.length} pain signals</small>
                                             <small>{candidate.targetOffer}</small>
@@ -1182,6 +1284,7 @@ function LeadFinderPanel({
                                         <td>
                                             {candidate.evidenceSummary}
                                             <small>{candidate.qualificationReason}</small>
+                                            <small>{candidate.offerHypothesis}</small>
                                             {candidate.noPainReason ? <small>{candidate.noPainReason}</small> : null}
                                         </td>
                                         <td>
@@ -1208,6 +1311,18 @@ function LeadFinderPanel({
                                                         {candidate.positiveSolvedSignals.map((signal) => <span className="solved-chip" key={signal}>{signal}</span>)}
                                                     </div>
                                                 ) : null}
+                                                {candidate.missingAutomationSignals.length > 0 ? (
+                                                    <div>
+                                                        <p className="eyebrow">Missing automation</p>
+                                                        {candidate.missingAutomationSignals.map((signal) => <span className="setup-chip" key={signal}>{signal}</span>)}
+                                                    </div>
+                                                ) : null}
+                                                {candidate.contactSignals.length > 0 ? (
+                                                    <div>
+                                                        <p className="eyebrow">Contact / website</p>
+                                                        {[...candidate.contactSignals, ...candidate.websiteSignals].slice(0, 5).map((signal) => <span className="contact-chip" key={signal}>{signal}</span>)}
+                                                    </div>
+                                                ) : null}
                                             </div>
                                         </td>
                                         <td>{offerAngleLabels[candidate.recommendedAngle]}</td>
@@ -1217,10 +1332,10 @@ function LeadFinderPanel({
                                                     <Sparkles size={16} aria-hidden="true" />
                                                     Analyzovat
                                                 </button>
-                                                {['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict) ? (
-                                                    <div className="scope-note warning-note compact-warning">Chybí veřejný důkaz problému. Neposílat oslovení bez dalšího ověření.</div>
+                                                {!canAddCandidate ? (
+                                                    <div className="scope-note warning-note compact-warning">Slaby/skip kandidat. Neposilat osloveni bez dalsiho overeni kontaktu, painu nebo setup mezery.</div>
                                                 ) : null}
-                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId) || ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict)} onClick={addCandidate} type="button">
+                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId) || !canAddCandidate} onClick={addCandidate} type="button">
                                                     <Plus size={16} aria-hidden="true" />
                                                     {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
                                                 </button>
@@ -1293,7 +1408,9 @@ function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: Lea
             </div>
             <div className="metadata-row">
                 <span>{analysis.fitVerdict}</span>
+                <span>{analysis.opportunityType}</span>
                 <span>Opportunity {analysis.opportunityScore}</span>
+                <span>Automation {analysis.automationNeedScore}</span>
                 <span>Review pain {analysis.reviewFrictionScore}</span>
                 <span>{analysis.targetOffer}</span>
                 <span>{analysis.confidence}</span>
@@ -1306,6 +1423,7 @@ function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: Lea
                 <div>
                     <p className="eyebrow">Proc kontakt / proc skip</p>
                     <span>{analysis.qualificationReason}</span>
+                    <span>{analysis.offerHypothesis}</span>
                     {analysis.noPainReason ? <span>{analysis.noPainReason}</span> : null}
                 </div>
                 <div>
@@ -1319,6 +1437,10 @@ function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: Lea
                 <div>
                     <p className="eyebrow">Co chybi overit</p>
                     {analysis.missingEvidence.length > 0 ? analysis.missingEvidence.map((item) => <span key={item}>{item}</span>) : <span>Bez zasadni mezery v evidenci.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Setup evidence</p>
+                    {[...analysis.missingAutomationSignals, ...analysis.likelyManualProcessSignals].length > 0 ? [...new Set([...analysis.missingAutomationSignals, ...analysis.likelyManualProcessSignals])].map((item) => <span key={item}>{item}</span>) : <span>Bez setup signalu.</span>}
                 </div>
             </div>
             {analysis.contradictionWarnings.length > 0 ? (

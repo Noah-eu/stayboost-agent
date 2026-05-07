@@ -17,6 +17,51 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
     const location = request.location || 'Praha';
     const segment = request.segment || 'self check-in / bez recepce';
 
+    if (request.knownTargetName?.trim() || request.knownTargetWebsiteUrl?.trim()) {
+        const name = request.knownTargetName?.trim() || 'Znamy cil';
+
+        return [{
+            ...candidateBase,
+            id: stableId('agent-candidate', `${location}-${name}-known-target`),
+            name,
+            location: request.knownTargetCity || location,
+            type: request.accommodationType.toLowerCase().includes('penzion') ? 'Penzion' : 'Apartman',
+            websiteUrl: request.knownTargetWebsiteUrl || 'https://example.com/known-target',
+            sourceUrls: [request.knownTargetWebsiteUrl || 'https://example.com/known-target'],
+            sourceSnippets: [
+                `${name} ${request.knownTargetCity || location} znamy cil z manualniho zadani. ${request.knownTargetNote || 'Verejna prezentace se overuje pres search dotazy.'}`,
+                'Demo known-target fallback: web/kontakt je zadan uzivatelem, guest guide ani FAQ nejsou v zadani videt.',
+            ],
+            possibleEmail: request.knownTargetEmail || '',
+            contactMissing: !request.knownTargetEmail,
+            signals: ['Manualne zadany cil', request.knownTargetWebsiteUrl ? 'Zadany web' : 'Web bude treba dohledat', request.knownTargetEmail ? 'Zadany e-mail' : 'E-mail nezadan'],
+            risks: ['Demo fallback: konkretni Tavily enrichment nebezel lokalne pres Vite'],
+            leadScore: request.knownTargetEmail ? 76 : 58,
+            opportunityScore: request.knownTargetEmail ? 72 : 48,
+            opportunityType: request.knownTargetEmail || request.knownTargetWebsiteUrl ? 'setup-automation' : 'ota-profile-audit',
+            automationNeedScore: 78,
+            publicMaturityScore: 30,
+            reviewFrictionScore: 0,
+            fitVerdict: request.knownTargetEmail || request.knownTargetWebsiteUrl ? 'moderate-opportunity' : 'not-enough-evidence',
+            painSignals: [],
+            positiveSolvedSignals: [],
+            noPainReason: 'No public review pain found; qualification is setup automation, not a fix claim.',
+            targetOffer: 'self-checkin-setup',
+            offerHypothesis: 'Known target setup: zadany provoz ma web/kontakt, ale neni videt online guest guide, FAQ ani predprijezdova stranka.',
+            websiteSignals: request.knownTargetWebsiteUrl ? ['Uzivatelem zadany vlastni web'] : [],
+            contactSignals: request.knownTargetEmail ? ['Uzivatelem zadany e-mail'] : [],
+            missingAutomationSignals: ['Neni videt online guest guide', 'Neni videt FAQ / arrival guide', 'Neni videt predprijezdova stranka'],
+            likelyManualProcessSignals: ['Manualne znamy lokalni provoz', 'Setup mezera vyzaduje rucni overeni'],
+            qualificationReason: 'Known Target Mode: jeden konkretni provoz zadan uzivatelem; demo fallback vytvari setup kandidata bez tvrzeni painu.',
+            alreadySolvedSignals: [],
+            missingEvidence: ['Lokalni Vite fallback nepouzil Tavily enrichment', 'Pred oslovenim overit realny web a guest guide'],
+            contradictionWarnings: [],
+            recommendedAngle: 'guest-guide',
+            evidenceSummary: 'Kandidat vznikl z Known Target Mode. Bez Netlify Functions jde o demo fallback, ne realne vyhledani.',
+            isMock: true,
+        }];
+    }
+
     const candidates: LeadAgentCandidate[] = [
         {
             ...candidateBase,
@@ -35,12 +80,20 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             risks: ['Prakticke informace muzou byt roztrousene', 'Snippet naznacuje dotazy na prijezd'],
             leadScore: 86,
             opportunityScore: 84,
+            opportunityType: 'fix-existing-process',
+            automationNeedScore: 42,
+            publicMaturityScore: 64,
             reviewFrictionScore: 76,
             fitVerdict: 'strong-opportunity',
             painSignals: ['Public snippet mentions key or keybox problem', 'Public snippet mentions unclear arrival or entrance'],
             positiveSolvedSignals: ['Keybox or arrival process appears already documented'],
             noPainReason: undefined,
             targetOffer: 'guest-guide',
+            offerHypothesis: 'Fix existujiciho procesu: zpresnit instrukce kolem prijezdu/keyboxu podle verejneho pain signalu.',
+            websiteSignals: ['Vlastni web'],
+            contactSignals: ['Verejny e-mail'],
+            missingAutomationSignals: ['Neni videt jednotna predprijezdova stranka'],
+            likelyManualProcessSignals: ['Verejne instrukce pusobi roztrousene'],
             qualificationReason: 'Demo pain lead: provozni komplexita plus verejny pain signal kolem keyboxu/prijezdu.',
             alreadySolvedSignals: ['Self check-in / keybox je pravdepodobne zavedeno'],
             missingEvidence: ['Neni overena struktura predprijezdove komunikace mimo snippet'],
@@ -65,14 +118,22 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             signals: ['Vlastni web', 'Verejny kontakt', 'Centrum', 'Moderni apartmany'],
             risks: ['Ze snippetu neni jasny check-in', 'Slabsi evidence k provoznim detailum'],
             leadScore: 72,
-            opportunityScore: 24,
+            opportunityScore: 74,
+            opportunityType: 'setup-automation',
+            automationNeedScore: 82,
+            publicMaturityScore: 38,
             reviewFrictionScore: 0,
-            fitVerdict: 'weak-opportunity',
+            fitVerdict: 'strong-opportunity',
             painSignals: [],
             positiveSolvedSignals: ['Vlastni web a verejny kontakt jsou videt'],
-            noPainReason: 'self-check-in appears already solved; no public guest friction found',
-            targetOffer: 'skip',
-            qualificationReason: 'Demo benchmark: viditelna prezentace bez verejneho pain signalu.',
+            noPainReason: 'No public review pain found; qualification is setup automation, not a fix claim.',
+            targetOffer: 'self-checkin-setup',
+            offerHypothesis: 'Setup automatizace: z verejne prezentace neni videt guest guide, FAQ ani predprijezdova stranka.',
+            websiteSignals: ['Vlastni web mimo OTA', 'Rezervacni prezentace'],
+            contactSignals: ['Verejny e-mail'],
+            missingAutomationSignals: ['Neni videt online guest guide', 'Neni videt FAQ / arrival guide', 'Neni videt predprijezdova stranka'],
+            likelyManualProcessSignals: ['Tradicni verejna prezentace', 'Prakticke instrukce nejsou v ukazce strukturovane'],
+            qualificationReason: 'Demo setup lead: maly apartmanovy provoz s webem a kontaktem, ale bez viditelne moderni guest komunikace.',
             alreadySolvedSignals: ['Vlastni web a verejny kontakt jsou videt'],
             missingEvidence: ['Chybi konkretni verejny signal o predprijezdovych instrukcich'],
             contradictionWarnings: [],
@@ -97,6 +158,9 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             risks: ['Chybi verejny e-mail v demo vysledku', 'Prijezd autem muze vyzadovat jasne instrukce'],
             leadScore: 64,
             opportunityScore: 44,
+            opportunityType: 'fix-existing-process',
+            automationNeedScore: 40,
+            publicMaturityScore: 34,
             reviewFrictionScore: 34,
             fitVerdict: 'weak-opportunity',
             confidence: 'low',
@@ -105,12 +169,56 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             positiveSolvedSignals: ['Parking appears presented as an amenity, not a pain'],
             noPainReason: undefined,
             targetOffer: 'guest-communication-fix',
+            offerHypothesis: 'Fix lead je slaby, protoze chybi kontakt; nejdriv dohledat vlastni web/e-mail.',
+            websiteSignals: ['Mozny vlastni web'],
+            contactSignals: [],
+            missingAutomationSignals: ['Neni videt guest guide'],
+            likelyManualProcessSignals: ['Rodinna atmosfera muze znamenat manualni komunikaci'],
             qualificationReason: 'Demo weak lead: pain signal existuje, ale kontakt chybi a evidence je slaba.',
             alreadySolvedSignals: ['Parkovani a snidane jsou pravdepodobne komunikovane'],
             missingEvidence: ['Chybi verejny e-mail', 'Neni dost konkretni evidence o obchodni bolesti'],
             contradictionWarnings: ['Nevymyslet problem, pokud snippet ukazuje jen pozitivni signaly'],
             recommendedAngle: 'guest-communication',
             evidenceSummary: 'Demo kandidat ukazuje provozni signaly, ale kontakt neni v ukazce nalezen.',
+            isMock: true,
+        },
+        {
+            ...candidateBase,
+            id: stableId('agent-candidate', `${location}-self-checkin-benchmark`),
+            name: 'Penzion Digital Arrival',
+            location,
+            type: 'Penzion',
+            websiteUrl: 'https://example.com/digital-arrival',
+            sourceUrls: ['https://example.com/digital-arrival'],
+            sourceSnippets: [
+                `${location} penzion s pohodlnym online check-inem, QR instrukcemi a jasnou predprijezdovou komunikaci.`,
+                'Snippet popisuje guest guide, parkovani a prehledne instrukce bez negativniho signalu.',
+            ],
+            possibleEmail: 'info@digitalarrival.example',
+            signals: ['Vlastni web', 'Verejny kontakt', 'Online guest guide', 'QR instrukce', 'Self check-in pozitivne prezentovan'],
+            risks: ['Demo benchmark: neni videt obchodni mezera'],
+            leadScore: 78,
+            opportunityScore: 20,
+            opportunityType: 'benchmark',
+            automationNeedScore: 12,
+            publicMaturityScore: 86,
+            reviewFrictionScore: 0,
+            fitVerdict: 'weak-opportunity',
+            painSignals: [],
+            positiveSolvedSignals: ['Self-check-in appears already solved and presented positively', 'Online guest guide appears visible'],
+            noPainReason: 'Self-check-in and guest guide look solved; no public pain found.',
+            targetOffer: 'skip',
+            offerHypothesis: 'Benchmark: neoslovovat, ulozit jako inspiraci pro dobre prezentovanou automatizaci.',
+            websiteSignals: ['Vlastni web', 'Guest guide / QR instrukce jsou videt'],
+            contactSignals: ['Verejny e-mail'],
+            missingAutomationSignals: [],
+            likelyManualProcessSignals: [],
+            qualificationReason: 'Demo benchmark: self-check-in ma dobre signaly a chybi pain i setup mezera.',
+            alreadySolvedSignals: ['Online guest guide', 'QR instrukce', 'Self check-in'],
+            missingEvidence: ['Neni treba oslovovat bez dalsi rucni hypotezy'],
+            contradictionWarnings: ['Neprevadet dobry self-check-in signal na fix lead'],
+            recommendedAngle: 'guest-guide',
+            evidenceSummary: 'Demo benchmark kandidat ukazuje self-check-in bez painu a bez setup mezery.',
             isMock: true,
         },
     ];
@@ -121,11 +229,82 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
 const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
     const evidence = candidate.sourceSnippets[0] || candidate.evidenceSummary;
     const mainFriction = candidate.risks[0] || 'Verejne informace jsou omezeny na search snippet.';
-    const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
+    const isSetup = candidate.opportunityType === 'setup-automation';
+    const isBenchmarkOrSkip = ['benchmark', 'skip'].includes(candidate.opportunityType);
+    const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict) || isBenchmarkOrSkip;
     const primaryPain = candidate.painSignals[0] || 'verejny pain signal';
-    const firstImpression = isLowFit
-        ? `${candidate.name} neni podle dostupnych verejnych snippetů jasna priorita. Evidence zatim neukazuje konkretni obchodni bolest.`
-        : `${candidate.name} pusobi z dostupnych verejnych snippetů jako relevantni lead, ale jde jen o omezeny verejny nahled, ne analyzu cele OTA stranky.`;
+    const firstImpression = isSetup
+        ? `${candidate.name} vypada jako setup lead: z verejne prezentace je videt kontakt/web, ale neni jasne, zda maji online guest guide, QR instrukce nebo predprijezdovou stranku.`
+        : isLowFit
+            ? `${candidate.name} neni podle dostupnych verejnych snippetů jasna priorita. Evidence zatim neukazuje konkretni obchodni bolest ani setup mezeru.`
+            : `${candidate.name} pusobi z dostupnych verejnych snippetů jako fix lead, ale jde jen o omezeny verejny nahled, ne analyzu cele OTA stranky.`;
+    const quickWins = isSetup ? [
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Navrhnout online guest guide',
+            why: 'Z verejne prezentace neni videt jednotna stranka s prijezdem, parkovanim, Wi-Fi a odpovedmi na caste dotazy.',
+            action: 'Nabidnout jednoduchy QR guest guide a predprijezdovou stranku bez tvrzeni, ze dnes delaji neco spatne.',
+            sourceEvidence: evidence,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Zjednodusit predprijezdove zpravy',
+            why: 'Maly lokalni provoz s kontaktem muze cast komunikace resit rucne.',
+            action: 'Pripravit sadu sablon pro prijezd, parkovani, check-in a nejcastejsi odpovedi.',
+            sourceEvidence: candidate.evidenceSummary,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Overit setup mezeru',
+            why: candidate.missingAutomationSignals.join(', ') || 'Neni videt moderni guest komunikace.',
+            action: 'Pred oslovenim jeste rucne zkontrolovat, zda na webu neni skryty guest guide nebo FAQ.',
+            sourceEvidence: candidate.sourceSnippets[1] || evidence,
+        },
+    ] : isLowFit ? [
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: isBenchmarkOrSkip ? 'Pouzit jako benchmark' : 'Neoslovovat zatim',
+            why: 'Z dostupnych snippetů nevyplyva konkretni prodejni bolest ani setup mezera.',
+            action: 'Neposilat obchodni e-mail bez dalsiho verejneho nebo manualne overeneho duvodu.',
+            sourceEvidence: evidence,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Doplnit evidenci',
+            why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
+            action: 'Hledat konkretni recenzni pain nebo chybejici guest guide / FAQ / predprijezdovou stranku.',
+            sourceEvidence: evidence,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Neprepisovat pozitivni signal',
+            why: 'Kandidat muze ukazovat dobre vyreseny proces bez verejneho guest friction.',
+            action: 'Pouzit jako srovnani pro slabsi provozy, ne jako fix lead.',
+            sourceEvidence: evidence,
+        },
+    ] : [
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Resit konkretni guest friction',
+            why: `Search/review snippet ukazuje: ${primaryPain}.`,
+            action: candidate.alreadySolvedSignals.length > 0 ? 'Neprodavat obecne self check-in; nejdriv overit, zda jsou verejne instrukce skutecne nekompletni.' : 'Pridat do verejne prezentace kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.',
+            sourceEvidence: evidence,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Zpresnit predprijezdove instrukce',
+            why: 'Pain signal se tyka prijezdu, orientace, kodu, klicu, parkovani nebo komunikace.',
+            action: 'Udelat kontrolni blok pro hosta: kde prijet, kde zaparkovat, kde je vstup, kdy dorazi kod a co delat pri problemu.',
+            sourceEvidence: candidate.evidenceSummary,
+        },
+        {
+            id: `quick-win-${crypto.randomUUID()}`,
+            title: 'Navazat nabidku na pain',
+            why: 'Nabidka ma byt o odstraneni dolozeneho treni, ne o obecném self-check-inu.',
+            action: `Nabidnout ${candidate.targetOffer === 'skip' ? 'manualni overeni problemu' : candidate.targetOffer} jen jako reakci na dolozeny pain signal.`,
+            sourceEvidence: candidate.sourceSnippets[1] || evidence,
+        },
+    ];
 
     return {
         runId: candidate.runId,
@@ -135,66 +314,32 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
         firstImpression,
         strengths: candidate.signals.slice(0, 3),
         risks: candidate.risks,
-        guestFrictionSignals: isLowFit ? [mainFriction, 'Neni dost konkretni evidence o treni hosta.'] : [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
-        quickWins: isLowFit ? [
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Neoslovovat zatim',
-                why: 'Z dostupnych snippetů nevyplyva konkretni prodejni bolest.',
-                action: 'Neposilat obchodni e-mail bez dalsiho verejneho nebo manualne overeneho pain signalu.',
-                sourceEvidence: evidence,
-            },
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Doplnit evidenci',
-                why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
-                action: 'Hledat konkretni recenzni/search signal: problem s kodem, vstupem, parkovanim, prijezdem nebo komunikaci.',
-                sourceEvidence: evidence,
-            },
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Pouzit jako benchmark',
-                why: 'Kandidat muze ukazovat dobre vyreseny proces bez verejneho guest friction.',
-                action: 'Neprepisovat pozitivni self-check-in signal na problem; pouzit jen jako srovnani pro slabsi provozy.',
-                sourceEvidence: evidence,
-            },
-        ] : [
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Resit konkretni guest friction',
-                why: `Search/review snippet ukazuje: ${primaryPain}.`,
-                action: candidate.alreadySolvedSignals.length > 0 ? 'Neprodavat obecne self check-in; nejdriv overit, zda jsou verejne instrukce skutecne nekompletni.' : 'Pridat do verejne prezentace kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.',
-                sourceEvidence: evidence,
-            },
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Zpresnit predprijezdove instrukce',
-                why: 'Pain signal se tyka prijezdu, orientace, kodu, klicu, parkovani nebo komunikace.',
-                action: 'Udelat kontrolni blok pro hosta: kde prijet, kde zaparkovat, kde je vstup, kdy dorazi kod a co delat pri problemu.',
-                sourceEvidence: candidate.evidenceSummary,
-            },
-            {
-                id: `quick-win-${crypto.randomUUID()}`,
-                title: 'Navazat nabidku na pain',
-                why: 'Nabidka ma byt o odstraneni dolozeneho treni, ne o obecném self-check-inu.',
-                action: `Nabidnout ${candidate.targetOffer === 'skip' ? 'manualni overeni problemu' : candidate.targetOffer} jen jako reakci na dolozeny pain signal.`,
-                sourceEvidence: candidate.sourceSnippets[1] || evidence,
-            },
-        ],
-        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: ${isLowFit ? 'nebrat jako prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
-        outreachEmail: isLowFit
+        guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals : isLowFit ? [mainFriction, 'Neni dost konkretni evidence o treni hosta.'] : [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
+        quickWins,
+        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: ${isSetup ? 'opatrne nabidnout setup online guest guide / QR instrukci bez tvrzeni problemu.' : isLowFit ? 'nebrat jako prioritu bez dalsi evidence.' : `resit dolozeny pain signal: ${primaryPain}.`}`,
+        outreachEmail: isBenchmarkOrSkip
             ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
+            : isSetup
+            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z verejne prezentace neni videt, zda hoste maji jednoduchy online guest guide, QR instrukce nebo predprijezdovou stranku.\n\nU podobnych penzionu a apartmanu to casto pomaha snizit pocet dotazu a zprehlednit prijezd, aniz bych tvrdil, ze dnes neco delate spatne. Poslal bych vam zdarma 3 konkretni napady vychazejici jen z verejnych informaci.\n\nDavid`
             : `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z verejnych search snippetů me zaujal konkretni signal: ${primaryPain}.\n\nPoslal bych vam zdarma 3 navrhy zamerene jen na tento dolozeny problem v prijezdu, instrukcich, parkovani nebo komunikaci. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
         followUp: `Dobry den, jen kratce navazuji k ${candidate.name}. Pokud chcete, poslu mini-audit verejne prezentace ve 3 bodech; nic neposilam automaticky hostum ani nehodnotim interni komunikaci.`,
         offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Zacit bezplatnym mini-auditem verejne prezentace a potom nabidnout placeny audit guest guide / komunikace pred prijezdem.',
         confidence: candidate.isMock ? 'medium' : 'low',
         fitVerdict: candidate.fitVerdict,
         opportunityScore: candidate.opportunityScore,
+        opportunityType: candidate.opportunityType,
+        automationNeedScore: candidate.automationNeedScore,
+        publicMaturityScore: candidate.publicMaturityScore,
         reviewFrictionScore: candidate.reviewFrictionScore,
         painSignals: candidate.painSignals,
         positiveSolvedSignals: candidate.positiveSolvedSignals,
         noPainReason: candidate.noPainReason,
         targetOffer: candidate.targetOffer,
+        offerHypothesis: candidate.offerHypothesis,
+        websiteSignals: candidate.websiteSignals,
+        contactSignals: candidate.contactSignals,
+        missingAutomationSignals: candidate.missingAutomationSignals,
+        likelyManualProcessSignals: candidate.likelyManualProcessSignals,
         qualificationReason: candidate.qualificationReason,
         alreadySolvedSignals: candidate.alreadySolvedSignals,
         missingEvidence: candidate.missingEvidence,

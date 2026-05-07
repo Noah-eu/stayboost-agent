@@ -364,7 +364,9 @@ tbody tr:hover,
 }
 
 .pain-chip,
-.solved-chip {
+.solved-chip,
+.setup-chip,
+.contact-chip {
     border-radius: 999px;
     display: inline-flex;
     font-size: 0.76rem;
@@ -384,8 +386,34 @@ tbody tr:hover,
     color: #22485f;
 }
 
+.setup-chip {
+    background: #eef8ec;
+    border: 1px solid #c7e4c0;
+    color: #285b2b;
+}
+
+.contact-chip {
+    background: #f5f0ff;
+    border: 1px solid #d7c8f5;
+    color: #4c3672;
+}
+
 .candidate-table {
-    min-width: 1440px;
+    min-width: 1680px;
+}
+
+.known-target-box {
+    border-top: 1px solid #dce5e6;
+    margin-top: 20px;
+    padding-top: 20px;
+}
+
+.compact-header {
+    margin-bottom: 14px;
+}
+
+.compact-form-grid textarea {
+    min-height: 90px;
 }
 
 .table-toolbar {
