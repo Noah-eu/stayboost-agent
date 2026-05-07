@@ -4,7 +4,16 @@ import { analyzeLead, checkAgentHealth, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
-import { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAgentHealth, LeadAgentSearchRequest, LeadAgentSession } from './leadAgentTypes';
+import {
+    LeadAgentAnalysis,
+    LeadAgentCandidate,
+    LeadAgentCandidateFilter,
+    LeadAgentCandidateSort,
+    LeadAgentDiagnostic,
+    LeadAgentHealth,
+    LeadAgentSearchRequest,
+    LeadAgentSession,
+} from './leadAgentTypes';
 import {
     accommodationTypes,
     Lead,
@@ -26,6 +35,18 @@ type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach'
 
 const storageKey = 'stayboost-agent-leads';
 const agentStorageKey = 'stayboost-agent-lead-agent';
+const legacyRunId = 'legacy-run';
+
+const newAgentRunId = () => `run-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+const nowIso = () => new Date().toISOString();
+const formatDateTime = (value?: string) => {
+    if (!value) return 'neuvedeno';
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+
+    return date.toLocaleString('cs-CZ', { dateStyle: 'short', timeStyle: 'short' });
+};
 
 const emptyLead = (): Lead => ({
     id: `lead-${crypto.randomUUID()}`,
@@ -197,12 +218,19 @@ const emptyAgentRequest = (): LeadAgentSearchRequest => ({
 });
 
 const emptyAgentSession = (): LeadAgentSession => ({
+    runId: newAgentRunId(),
+    createdAt: nowIso(),
     request: emptyAgentRequest(),
     status: 'idle',
     message: '',
     isMock: false,
     candidates: [],
     analyses: {},
+    dismissedCandidateIds: [],
+    candidateFilter: 'all',
+    candidateSort: 'opportunityScore',
+    loadedFromStorage: false,
+    storedBannerDismissed: false,
     diagnostic: undefined,
     health: undefined,
     healthMessage: '',
@@ -210,6 +238,8 @@ const emptyAgentSession = (): LeadAgentSession => ({
 
 const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAgentCandidate => ({
     id: candidate.id ?? `agent-candidate-${crypto.randomUUID()}`,
+    runId: candidate.runId ?? legacyRunId,
+    createdAt: candidate.createdAt ?? nowIso(),
     name: candidate.name ?? 'Neznamy kandidat',
     location: candidate.location ?? '',
     type: candidate.type ?? 'Jine',
@@ -220,23 +250,74 @@ const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAg
     signals: candidate.signals ?? [],
     risks: candidate.risks ?? [],
     leadScore: candidate.leadScore ?? 0,
+    opportunityScore: candidate.opportunityScore ?? Math.max(0, Math.min(100, candidate.leadScore ?? 0)),
+    fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
+    confidence: candidate.confidence ?? 'low',
+    contactMissing: candidate.contactMissing ?? !candidate.possibleEmail,
+    alreadySolvedSignals: candidate.alreadySolvedSignals ?? [],
+    missingEvidence: candidate.missingEvidence ?? ['Ulozena legacy data nemaji kompletni scoring evidence.'],
+    contradictionWarnings: candidate.contradictionWarnings ?? [],
     recommendedAngle: candidate.recommendedAngle ?? 'main-photo',
     evidenceSummary: candidate.evidenceSummary ?? 'Chybi evidence summary.',
     isMock: candidate.isMock ?? false,
+    isLegacy: candidate.isLegacy ?? !candidate.runId,
     addedLeadId: candidate.addedLeadId,
     rejected: candidate.rejected,
 });
 
-const normalizeAgentSession = (session: Partial<LeadAgentSession>): LeadAgentSession => ({
-    ...emptyAgentSession(),
-    ...session,
-    request: { ...emptyAgentRequest(), ...session.request },
-    candidates: (session.candidates ?? []).map(normalizeAgentCandidate),
-    analyses: session.analyses ?? {},
-    diagnostic: session.diagnostic,
-    health: session.health,
-    healthMessage: session.healthMessage ?? '',
+const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?: LeadAgentCandidate): LeadAgentAnalysis => ({
+    runId: analysis.runId ?? candidate?.runId ?? legacyRunId,
+    analyzedAt: analysis.analyzedAt ?? nowIso(),
+    provider: analysis.provider ?? 'legacy',
+    model: analysis.model ?? null,
+    firstImpression: analysis.firstImpression ?? 'Legacy analyza bez prvniho dojmu.',
+    strengths: analysis.strengths ?? [],
+    risks: analysis.risks ?? [],
+    guestFrictionSignals: analysis.guestFrictionSignals ?? [],
+    quickWins: analysis.quickWins ?? [],
+    miniAudit: analysis.miniAudit ?? '',
+    outreachEmail: analysis.outreachEmail ?? '',
+    followUp: analysis.followUp ?? '',
+    offerRecommendation: analysis.offerRecommendation ?? '',
+    confidence: analysis.confidence ?? candidate?.confidence ?? 'low',
+    fitVerdict: analysis.fitVerdict ?? candidate?.fitVerdict ?? 'not-enough-evidence',
+    opportunityScore: analysis.opportunityScore ?? candidate?.opportunityScore ?? 0,
+    alreadySolvedSignals: analysis.alreadySolvedSignals ?? candidate?.alreadySolvedSignals ?? [],
+    missingEvidence: analysis.missingEvidence ?? candidate?.missingEvidence ?? ['Legacy analyza nema kompletni evidence model.'],
+    contradictionWarnings: analysis.contradictionWarnings ?? candidate?.contradictionWarnings ?? [],
+    evidenceLimits: analysis.evidenceLimits ?? ['Ulozeno z predchozi verze bez kompletni diagnostiky.'],
+    isMock: analysis.isMock ?? false,
+    isLegacy: analysis.isLegacy ?? !analysis.provider,
 });
+
+const normalizeAgentSession = (session: Partial<LeadAgentSession>, loadedFromStorage = false): LeadAgentSession => {
+    const base = emptyAgentSession();
+    const candidates = (session.candidates ?? []).map(normalizeAgentCandidate);
+    const analyses = Object.fromEntries(
+        Object.entries(session.analyses ?? {}).map(([candidateId, analysis]) => [
+            candidateId,
+            normalizeAgentAnalysis(analysis as Partial<LeadAgentAnalysis>, candidates.find((candidate) => candidate.id === candidateId)),
+        ]),
+    );
+
+    return {
+        ...base,
+        ...session,
+        runId: session.runId ?? candidates[0]?.runId ?? base.runId,
+        createdAt: session.createdAt ?? candidates[0]?.createdAt ?? base.createdAt,
+        request: { ...emptyAgentRequest(), ...session.request },
+        candidates,
+        analyses,
+        dismissedCandidateIds: session.dismissedCandidateIds ?? candidates.filter((candidate) => candidate.rejected).map((candidate) => candidate.id),
+        candidateFilter: session.candidateFilter ?? 'all',
+        candidateSort: session.candidateSort ?? 'opportunityScore',
+        loadedFromStorage: loadedFromStorage && (candidates.length > 0 || Object.keys(analyses).length > 0),
+        storedBannerDismissed: session.storedBannerDismissed ?? false,
+        diagnostic: session.diagnostic,
+        health: session.health,
+        healthMessage: session.healthMessage ?? '',
+    };
+};
 
 function App() {
     const [leads, setLeads] = useState<Lead[]>(() => {
@@ -265,7 +346,7 @@ function App() {
         }
 
         try {
-            return normalizeAgentSession(JSON.parse(storedSession) as Partial<LeadAgentSession>);
+            return normalizeAgentSession(JSON.parse(storedSession) as Partial<LeadAgentSession>, true);
         } catch {
             return emptyAgentSession();
         }
@@ -373,8 +454,65 @@ function App() {
         }));
     };
 
+    const resetAgentResults = (preserveNotice = false) => {
+        setLeadAgentSession((currentSession) => ({
+            ...emptyAgentSession(),
+            request: currentSession.request,
+            health: currentSession.health,
+            healthMessage: currentSession.healthMessage,
+            storedBannerDismissed: preserveNotice ? currentSession.storedBannerDismissed : false,
+        }));
+    };
+
+    const deleteAgentResults = () => {
+        const confirmed = window.confirm('Smazat aktualni vysledky hledani a analyzy z localStorage? Ulozene leady v CRM zustanou zachovane.');
+
+        if (!confirmed) return;
+        resetAgentResults();
+    };
+
+    const clearAllTestData = () => {
+        const confirmed = window.confirm('Smazat vsechna lokalni testovaci data v tomto prohlizeci? Smazou se Lead Finder vysledky i lokalne ulozene leady v CRM. Tato akce nejde vratit zpet.');
+
+        if (!confirmed) return;
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(agentStorageKey);
+        setLeads([]);
+        setSelectedLeadId('');
+        setDraftLead(emptyLead());
+        setIsCreating(false);
+        setLeadAgentSession(emptyAgentSession());
+        setActiveScreen('finder');
+    };
+
+    const dismissStoredBanner = () => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, storedBannerDismissed: true }));
+    };
+
+    const updateCandidateFilter = (candidateFilter: LeadAgentCandidateFilter) => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, candidateFilter }));
+    };
+
+    const updateCandidateSort = (candidateSort: LeadAgentCandidateSort) => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, candidateSort }));
+    };
+
     const runLeadAgentSearch = async () => {
-        setLeadAgentSession((currentSession) => ({ ...currentSession, status: 'searching', message: 'Vyhledavam potencialni klienty...', candidates: [], diagnostic: undefined }));
+        const runId = newAgentRunId();
+        const createdAt = nowIso();
+        setLeadAgentSession((currentSession) => ({
+            ...currentSession,
+            runId,
+            createdAt,
+            status: 'searching',
+            message: 'Vyhledavam potencialni klienty...',
+            candidates: [],
+            analyses: {},
+            dismissedCandidateIds: [],
+            diagnostic: undefined,
+            loadedFromStorage: false,
+            storedBannerDismissed: true,
+        }));
 
         try {
             const response = await discoverLeads(leadAgentSession.request);
@@ -383,7 +521,7 @@ function App() {
                 status: response.status === 'needs-config' ? 'needs-config' : 'found',
                 message: response.message,
                 isMock: response.isMock,
-                candidates: response.candidates,
+                candidates: response.candidates.map((candidate) => normalizeAgentCandidate({ ...candidate, runId, createdAt, isLegacy: false })),
                 diagnostic: response.diagnostic
                     ? { ...response.diagnostic, discoverProvider: response.diagnostic.discoverProvider ?? currentSession.diagnostic?.discoverProvider }
                     : currentSession.diagnostic,
@@ -432,7 +570,7 @@ function App() {
                 status: response.status === 'needs-config' ? 'needs-config' : 'completed',
                 message: response.message,
                 isMock: response.isMock,
-                analyses: response.analysis ? { ...currentSession.analyses, [candidate.id]: response.analysis } : currentSession.analyses,
+                analyses: response.analysis ? { ...currentSession.analyses, [candidate.id]: normalizeAgentAnalysis(response.analysis, candidate) } : currentSession.analyses,
                 diagnostic: response.diagnostic
                     ? { ...response.diagnostic, discoverProvider: currentSession.diagnostic?.discoverProvider }
                     : currentSession.diagnostic,
@@ -455,8 +593,17 @@ function App() {
     const rejectAgentCandidate = (candidateId: string) => {
         setLeadAgentSession((currentSession) => ({
             ...currentSession,
+            dismissedCandidateIds: [...new Set([...currentSession.dismissedCandidateIds, candidateId])],
             candidates: currentSession.candidates.map((candidate) => (candidate.id === candidateId ? { ...candidate, rejected: true } : candidate)),
         }));
+    };
+
+    const clearAgentAnalysis = (candidateId: string) => {
+        setLeadAgentSession((currentSession) => {
+            const remainingAnalyses = { ...currentSession.analyses };
+            delete remainingAnalyses[candidateId];
+            return { ...currentSession, analyses: remainingAnalyses };
+        });
     };
 
     const addAgentCandidateToLeads = (candidate: LeadAgentCandidate) => {
@@ -614,9 +761,16 @@ function App() {
                     onAddCandidate={addAgentCandidateToLeads}
                     onAnalyzeCandidate={analyzeAgentCandidate}
                     onCheckHealth={verifyAgentConfiguration}
+                    onClearAllTestData={clearAllTestData}
+                    onClearAnalysis={clearAgentAnalysis}
+                    onContinueStoredSession={dismissStoredBanner}
+                    onDeleteResults={deleteAgentResults}
+                    onNewSearch={() => resetAgentResults(true)}
                     onRejectCandidate={rejectAgentCandidate}
                     onRunSearch={runLeadAgentSearch}
+                    onUpdateFilter={updateCandidateFilter}
                     onUpdateRequest={updateAgentRequest}
+                    onUpdateSort={updateCandidateSort}
                     session={leadAgentSession}
                 />
             );
@@ -788,14 +942,50 @@ interface LeadFinderPanelProps {
     session: LeadAgentSession;
     onUpdateRequest: <Field extends keyof LeadAgentSearchRequest>(field: Field, value: LeadAgentSearchRequest[Field]) => void;
     onRunSearch: () => void;
+    onNewSearch: () => void;
+    onDeleteResults: () => void;
+    onClearAllTestData: () => void;
+    onContinueStoredSession: () => void;
+    onUpdateFilter: (filter: LeadAgentCandidateFilter) => void;
+    onUpdateSort: (sort: LeadAgentCandidateSort) => void;
     onCheckHealth: () => void;
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
+    onClearAnalysis: (candidateId: string) => void;
     onAddCandidate: (candidate: LeadAgentCandidate) => void;
     onRejectCandidate: (candidateId: string) => void;
 }
 
-function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, onRejectCandidate, onRunSearch, onUpdateRequest, session }: LeadFinderPanelProps) {
-    const visibleCandidates = session.candidates.filter((candidate) => !candidate.rejected);
+function LeadFinderPanel({
+    onAddCandidate,
+    onAnalyzeCandidate,
+    onCheckHealth,
+    onClearAllTestData,
+    onClearAnalysis,
+    onContinueStoredSession,
+    onDeleteResults,
+    onNewSearch,
+    onRejectCandidate,
+    onRunSearch,
+    onUpdateFilter,
+    onUpdateRequest,
+    onUpdateSort,
+    session,
+}: LeadFinderPanelProps) {
+    const hasStoredResults = session.loadedFromStorage && !session.storedBannerDismissed && (session.candidates.length > 0 || Object.keys(session.analyses).length > 0);
+    const filteredCandidates = session.candidates.filter((candidate) => {
+        const isHidden = candidate.rejected || session.dismissedCandidateIds.includes(candidate.id);
+
+        if (session.candidateFilter === 'hidden') return isHidden;
+        if (isHidden) return false;
+        if (session.candidateFilter === 'good-leads') return ['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict);
+        if (session.candidateFilter === 'weak-or-skip') return ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
+        return true;
+    });
+    const visibleCandidates = [...filteredCandidates].sort((first, second) => {
+        if (session.candidateSort === 'leadScore') return second.leadScore - first.leadScore;
+        if (session.candidateSort === 'newest') return new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime();
+        return second.opportunityScore - first.opportunityScore;
+    });
 
     return (
         <section className="finder-layout">
@@ -806,9 +996,18 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                         <h2>Spustit Lead Finder Agenta</h2>
                     </div>
                     <div className="button-group">
+                        <button className="secondary-button" onClick={onNewSearch} type="button">
+                            Nové hledání
+                        </button>
+                        <button className="secondary-button" onClick={onDeleteResults} type="button">
+                            Smazat výsledky hledání
+                        </button>
                         <button className="secondary-button" onClick={onCheckHealth} type="button">
                             <Sparkles size={18} aria-hidden="true" />
                             Ověřit konfiguraci agenta
+                        </button>
+                        <button className="secondary-button danger-button" onClick={onClearAllTestData} type="button">
+                            Smazat všechna testovací data
                         </button>
                         <button className="primary-button" disabled={session.status === 'searching'} onClick={onRunSearch} type="button">
                             <Search size={18} aria-hidden="true" />
@@ -823,6 +1022,17 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                 </div>
 
                 {session.isMock || session.status === 'needs-config' ? <div className="scope-note demo-note">Demo rezim: vysledky nejsou z realneho API a jsou oznacene jako demo.</div> : null}
+
+                {hasStoredResults ? (
+                    <div className="scope-note stored-note">
+                        Zobrazuješ uložené výsledky z předchozího běhu.
+                        <div className="button-group inline-actions">
+                            <button className="secondary-button compact-button" onClick={onContinueStoredSession} type="button">Pokračovat</button>
+                            <button className="secondary-button compact-button" onClick={onNewSearch} type="button">Nové hledání</button>
+                            <button className="secondary-button compact-button danger-button" onClick={onDeleteResults} type="button">Smazat výsledky</button>
+                        </div>
+                    </div>
+                ) : null}
 
                 <div className="form-grid">
                     <label>
@@ -852,6 +1062,12 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                 <p className="eyebrow">Stav agenta</p>
                 <h2>{session.status}</h2>
                 <p className="section-help">{session.message || 'Zadej lokalitu a segment, potom spust hledani.'}</p>
+                <div className="diagnostic-box">
+                    <p className="eyebrow">Beh</p>
+                    <span>Run ID: {session.runId}</span>
+                    <span>Created: {formatDateTime(session.createdAt)}</span>
+                    <span>{session.loadedFromStorage ? 'Vysledek je ulozeny z predchoziho behu.' : 'Aktualni beh v tomto otevreni aplikace.'}</span>
+                </div>
                 <AgentDiagnosticBox diagnostic={session.diagnostic} />
                 <AgentHealthBox health={session.health} message={session.healthMessage} />
             </aside>
@@ -863,6 +1079,26 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                         <h2>Vyhodnocene nalezy</h2>
                     </div>
                     <span className="status-pill">{visibleCandidates.length} kandidatu</span>
+                </div>
+
+                <div className="table-toolbar">
+                    <label>
+                        Filtr
+                        <select value={session.candidateFilter} onChange={(event) => onUpdateFilter(event.target.value as LeadAgentCandidateFilter)}>
+                            <option value="all">Vše</option>
+                            <option value="good-leads">Jen vhodné leady</option>
+                            <option value="weak-or-skip">Slabé / přeskočit</option>
+                            <option value="hidden">Skryté</option>
+                        </select>
+                    </label>
+                    <label>
+                        Razeni
+                        <select value={session.candidateSort} onChange={(event) => onUpdateSort(event.target.value as LeadAgentCandidateSort)}>
+                            <option value="opportunityScore">Nejvyssi opportunityScore</option>
+                            <option value="leadScore">Nejvyssi leadScore</option>
+                            <option value="newest">Nejnovejsi</option>
+                        </select>
+                    </label>
                 </div>
 
                 {visibleCandidates.length === 0 ? (
@@ -879,6 +1115,8 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                                     <th>Lokalita</th>
                                     <th>Typ</th>
                                     <th>Skore</th>
+                                    <th>Prilezitost</th>
+                                    <th>Kontakt</th>
                                     <th>Duvod</th>
                                     <th>Zdroje</th>
                                     <th>Signaly</th>
@@ -889,18 +1127,34 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                             <tbody>
                                 {visibleCandidates.map((candidate) => {
                                     const analysis = session.analyses[candidate.id];
+                                    const addCandidate = () => {
+                                        if (!['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict)) {
+                                            const confirmed = window.confirm('Tento kandidát nemá silnou prodejní příležitost podle dostupné evidence. Přesto přidat do leadů?');
+                                            if (!confirmed) return;
+                                        }
+
+                                        onAddCandidate(candidate);
+                                    };
 
                                     return (
-                                    <tr key={candidate.id}>
+                                    <tr className={['skip', 'weak-opportunity', 'not-enough-evidence'].includes(candidate.fitVerdict) ? 'weak-candidate-row' : ''} key={candidate.id}>
                                         <td>
                                             <strong>{candidate.name}</strong>
                                             <small>{candidate.isMock ? 'DEMO vysledek' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
+                                            <small>Run: {candidate.runId}</small>
+                                            <small>{candidate.isLegacy ? 'uložené z předchozí verze' : candidate.runId === session.runId && !session.loadedFromStorage ? 'aktuální běh' : 'uložené z předchozího běhu'}</small>
                                         </td>
                                         <td>{candidate.location || 'Neuvedeno'}</td>
                                         <td>{candidate.type}</td>
                                         <td>
                                             <strong className="score-value">{candidate.leadScore}</strong>
                                         </td>
+                                        <td>
+                                            <strong className="score-value">{candidate.opportunityScore}</strong>
+                                            <small>{candidate.fitVerdict}</small>
+                                            <small>{candidate.confidence}</small>
+                                        </td>
+                                        <td>{candidate.contactMissing ? 'neznamy' : 'znamy'}</td>
                                         <td>{candidate.evidenceSummary}</td>
                                         <td>
                                             <div className="source-list">
@@ -921,15 +1175,15 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, on
                                                     <Sparkles size={16} aria-hidden="true" />
                                                     Analyzovat
                                                 </button>
-                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId)} onClick={() => onAddCandidate(candidate)} type="button">
+                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId)} onClick={addCandidate} type="button">
                                                     <Plus size={16} aria-hidden="true" />
                                                     {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
                                                 </button>
                                                 <button className="secondary-button compact-button danger-button" onClick={() => onRejectCandidate(candidate.id)} type="button">
-                                                    Zamítnout
+                                                    Odebrat z výsledků
                                                 </button>
                                             </div>
-                                            {analysis ? <AgentAnalysisPreview analysis={analysis} diagnostic={session.diagnostic} /> : null}
+                                            {analysis ? <AgentAnalysisPreview analysis={analysis} diagnostic={session.diagnostic} onClear={() => onClearAnalysis(candidate.id)} /> : null}
                                         </td>
                                     </tr>
                                     );
@@ -982,12 +1236,40 @@ function AgentHealthBox({ health, message }: { health?: LeadAgentHealth; message
     );
 }
 
-function AgentAnalysisPreview({ analysis, diagnostic }: { analysis: LeadAgentAnalysis; diagnostic?: LeadAgentDiagnostic }) {
+function AgentAnalysisPreview({ analysis, diagnostic, onClear }: { analysis: LeadAgentAnalysis; diagnostic?: LeadAgentDiagnostic; onClear: () => void }) {
     return (
         <div className="analysis-preview">
-            <p className="eyebrow">Analyza</p>
-            <strong>{analysis.firstImpression}</strong>
+            <div className="analysis-preview-header">
+                <div>
+                    <p className="eyebrow">Analyza</p>
+                    <strong>{analysis.firstImpression}</strong>
+                </div>
+                <button className="secondary-button compact-button" onClick={onClear} type="button">Vymazat analýzu</button>
+            </div>
+            <div className="metadata-row">
+                <span>{analysis.fitVerdict}</span>
+                <span>Opportunity {analysis.opportunityScore}</span>
+                <span>{analysis.confidence}</span>
+                <span>{analysis.provider}</span>
+                <span>{analysis.model || 'bez modelu'}</span>
+                <span>{formatDateTime(analysis.analyzedAt)}</span>
+            </div>
             {diagnostic?.analyzeProvider && diagnostic.analyzeProvider !== 'openai' ? <AgentDiagnosticBox diagnostic={diagnostic} /> : null}
+            <div className="analysis-grid">
+                <div>
+                    <p className="eyebrow">Co uz pravdepodobne maji vyresene</p>
+                    {analysis.alreadySolvedSignals.length > 0 ? analysis.alreadySolvedSignals.map((item) => <span key={item}>{item}</span>) : <span>Bez silneho pozitivniho signalu.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Co chybi overit</p>
+                    {analysis.missingEvidence.length > 0 ? analysis.missingEvidence.map((item) => <span key={item}>{item}</span>) : <span>Bez zasadni mezery v evidenci.</span>}
+                </div>
+            </div>
+            {analysis.contradictionWarnings.length > 0 ? (
+                <div className="scope-note warning-note">
+                    {analysis.contradictionWarnings.map((warning) => <span key={warning}>{warning}</span>)}
+                </div>
+            ) : null}
             <div className="signal-list">
                 {analysis.quickWins.slice(0, 3).map((win) => (
                     <span key={win.title}>{win.title}</span>

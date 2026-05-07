@@ -1,11 +1,21 @@
 type CandidateInput = {
+    runId?: string;
     name?: string;
     signals?: string[];
     risks?: string[];
+    opportunityScore?: number;
+    fitVerdict?: FitVerdict;
+    confidence?: Confidence;
+    alreadySolvedSignals?: string[];
+    missingEvidence?: string[];
+    contradictionWarnings?: string[];
     sourceSnippets?: string[];
     evidenceSummary?: string;
     isMock?: boolean;
 };
+
+type FitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
+type Confidence = 'low' | 'medium' | 'high';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -67,6 +77,12 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
     evidenceSummary: trimText(candidate.evidenceSummary, 500),
     signals: trimList(candidate.signals, 8, 120),
     risks: trimList(candidate.risks, 6, 140),
+    opportunityScore: candidate.opportunityScore ?? 0,
+    fitVerdict: candidate.fitVerdict ?? 'not-enough-evidence',
+    confidence: candidate.confidence ?? 'low',
+    alreadySolvedSignals: trimList(candidate.alreadySolvedSignals, 6, 160),
+    missingEvidence: trimList(candidate.missingEvidence, 6, 160),
+    contradictionWarnings: trimList(candidate.contradictionWarnings, 4, 180),
     sourceSnippets: trimList(sourceSnippets.length > 0 ? sourceSnippets : candidate.sourceSnippets, MAX_SNIPPETS, MAX_SNIPPET_LENGTH),
 });
 
@@ -75,17 +91,26 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
     const signals = candidate.signals || [];
     const risks = candidate.risks || [];
     const evidence = candidate.sourceSnippets?.[0] || candidate.evidenceSummary || 'Omezeny verejny search snippet.';
+    const fitVerdict = candidate.fitVerdict || 'not-enough-evidence';
+    const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(fitVerdict);
+    const solvedSignals = candidate.alreadySolvedSignals || [];
+    const firstImpression = isLowFit
+        ? `${name} neni podle dostupnych snippetu jasna priorita. Evidence neukazuje konkretni obchodni bolest, kterou by mel StayBoost resit.`
+        : `${name} vypada z verejnych snippetu jako relevantni lead, ale evidence je omezena na search vysledky.`;
+    const practicalAction = solvedSignals.length > 0
+        ? 'Neprodavat obecne self check-in. Overit jen to, zda jsou verejne instrukce opravdu srozumitelne a kompletni.'
+        : 'Pridat kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.';
 
     return {
-        firstImpression: `${name} vypada z verejnych snippetu jako relevantni lead, ale evidence je omezena na search vysledky.`,
+        firstImpression,
         strengths: signals.slice(0, 3),
         risks: risks.length > 0 ? risks : ['Omezeny verejny nahled, neni potvrzen detail nabidky.'],
-        guestFrictionSignals: ['Host muze pred rezervaci hledat jasne informace k prijezdu, check-inu, parkovani a komunikaci.'],
+        guestFrictionSignals: isLowFit ? ['Neni dost konkretni evidence o treni hosta.'] : ['Host muze pred rezervaci hledat jasne informace k prijezdu, check-inu, parkovani a komunikaci.'],
         quickWins: [
             {
                 title: 'Zviditelnit informace pred prijezdem',
                 why: 'Search snippet naznacuje provozni tema, ktere host resi pred rezervaci.',
-                action: 'Pridat kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.',
+                action: practicalAction,
                 sourceEvidence: evidence,
             },
             {
@@ -101,11 +126,18 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
                 sourceEvidence: evidence,
             },
         ],
-        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni krok: zviditelnit prakticke informace pred prijezdem.`,
-        outreachEmail: `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z dostupnych verejnych snippetu pusobi zajimave hlavne ${signals.slice(0, 2).join(' a ') || 'prvni dojem nabidky'}.\n\nPoslal bych vam zdarma 3 konkretni navrhy, jak zlepsit verejnou prezentaci pred rezervaci - hlavne prijezd, check-in a prakticke instrukce. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
+        miniAudit: `Mini-audit pro ${name}: vystup vychazi jen z verejnych search snippetu. Silne signaly: ${signals.join(', ') || 'omezeny verejny signal'}. Rizika: ${risks.join(', ') || 'nedostatek detailu'}. Prvni zaver: ${isLowFit ? 'nejde o jasnou prioritu bez dalsi evidence.' : 'zviditelnit prakticke informace pred prijezdem.'}`,
+        outreachEmail: isLowFit
+            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z dostupnych verejnych snippetu zatim nevidim jasny problem, ktery by bylo fer prodavat jako hotove reseni. Pokud chcete, muzu poslat kratkou verejnou kontrolu, co je uz vyresene a co by stalo za overeni.\n\nDavid`
+            : `Dobry den,\n\nvsiml jsem si verejne prezentace ${name}. Z dostupnych verejnych snippetu pusobi zajimave hlavne ${signals.slice(0, 2).join(' a ') || 'prvni dojem nabidky'}.\n\nPoslal bych vam zdarma 3 konkretni navrhy, jak zlepsit verejnou prezentaci pred rezervaci - hlavne prijezd, check-in a prakticke instrukce. Nehodnotim interni komunikaci ani automaticky neprochazim OTA stranky.\n\nDavid`,
         followUp: `Dobry den, jen se kratce vracim k verejne prezentaci ${name}. Pokud chcete, poslu kratky mini-audit ve 3 bodech bez zavazku.`,
-        offerRecommendation: 'Doporucit bezplatny mini-audit a potom placeny audit guest guide / komunikace pred prijezdem.',
-        confidence: 'low',
+        offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Doporucit bezplatny mini-audit a potom placeny audit guest guide / komunikace pred prijezdem.',
+        confidence: candidate.confidence || 'low',
+        fitVerdict,
+        opportunityScore: candidate.opportunityScore || 0,
+        alreadySolvedSignals: candidate.alreadySolvedSignals || [],
+        missingEvidence: candidate.missingEvidence || ['Fallback analyza nema dost evidence pro jistou obchodni bolest.'],
+        contradictionWarnings: candidate.contradictionWarnings || [],
         evidenceLimits: ['Omezeno na search snippety a dodane verejne texty.', 'Netvrdi, ze byla prectena Booking/Airbnb/Google stranka.', 'E-maily se automaticky neposilaji.'],
     };
 };
@@ -145,8 +177,10 @@ const extractTextContent = (payload: unknown): string => {
         .join('\n') || '';
 };
 
+const isFitVerdict = (value: unknown): value is FitVerdict => ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(String(value));
+
 const validateAnalysis = (value: unknown) => {
-    const analysis = value as { quickWins?: unknown[]; miniAudit?: unknown; outreachEmail?: unknown; confidence?: unknown };
+    const analysis = value as { quickWins?: unknown[]; miniAudit?: unknown; outreachEmail?: unknown; confidence?: unknown; fitVerdict?: unknown; opportunityScore?: unknown };
 
     if (!analysis || !Array.isArray(analysis.quickWins) || analysis.quickWins.length < 3 || typeof analysis.miniAudit !== 'string' || typeof analysis.outreachEmail !== 'string') {
         throw new Error('Invalid analysis JSON shape.');
@@ -154,6 +188,14 @@ const validateAnalysis = (value: unknown) => {
 
     if (!['low', 'medium', 'high'].includes(String(analysis.confidence))) {
         throw new Error('Invalid confidence value.');
+    }
+
+    if (!isFitVerdict(analysis.fitVerdict)) {
+        throw new Error('Invalid fitVerdict value.');
+    }
+
+    if (typeof analysis.opportunityScore !== 'number') {
+        throw new Error('Invalid opportunityScore value.');
     }
 
     return value;
@@ -202,7 +244,14 @@ const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOp
             elapsedMs,
             sanitizedSample,
         },
-        analysis: { ...fallbackAnalysis(candidate || {}), isMock: true },
+        analysis: {
+            ...fallbackAnalysis(candidate || {}),
+            runId: candidate?.runId || 'legacy-run',
+            analyzedAt: new Date().toISOString(),
+            provider: 'demo-fallback',
+            model,
+            isMock: true,
+        },
     });
 };
 
@@ -235,8 +284,9 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
         const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych search snippetu.
-Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
-JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","evidenceLimits":string[]}.
+    Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Presne 3 quickWins. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
+    Kvalita: Neopakuj doporuceni na vec, kterou zdroj uz prezentuje jako vyresenou. Pokud zdroj rika, ze online/self check-in je pohodlny nebo uz existuje, nedoporucuj obecne zavadet ani zlepsovat self check-in bez konkretniho problemoveho signalu. Pokud neni konkretni obchodni bolest, vrat fitVerdict "not-enough-evidence" nebo "weak-opportunity" a rekni, ze kandidat neni priorita. Kazdy quick win musi stat na konkretnim problemovem signalu nebo chybejici verejne informaci. Radsi kandidata zamitni nez generovat vagne prodejni rady.
+    JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 
@@ -325,7 +375,14 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
                     model,
                     elapsedMs,
                 },
-                analysis: { ...(parsed as Record<string, unknown>), isMock: false },
+                analysis: {
+                    ...(parsed as Record<string, unknown>),
+                    runId: candidate.runId || 'legacy-run',
+                    analyzedAt: new Date().toISOString(),
+                    provider: 'openai',
+                    model,
+                    isMock: false,
+                },
             });
         } catch {
             return fallbackResponse({

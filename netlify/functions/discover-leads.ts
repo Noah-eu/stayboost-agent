@@ -4,6 +4,8 @@ declare const process: { env: Record<string, string | undefined> };
 declare const Buffer: { from(value: string): { toString(encoding: string): string } };
 
 type AccommodationType = 'Hotel' | 'Penzion' | 'Apartman' | 'Glamping' | 'Jine';
+type FitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
+type Confidence = 'low' | 'medium' | 'high';
 
 interface DiscoverRequest {
     location: string;
@@ -50,10 +52,14 @@ const inferAngle = (content: string): OfferAngle => {
     return 'main-photo';
 };
 
-const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, type: AccommodationType) => {
+const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, type: AccommodationType, snippetCount: number) => {
     const signals: string[] = [];
     const risks: string[] = [];
+    const alreadySolvedSignals: string[] = [];
+    const missingEvidence: string[] = [];
+    const contradictionWarnings: string[] = [];
     let score = 0;
+    let opportunityScore = 0;
 
     if (hasUrl) {
         score += 12;
@@ -65,7 +71,9 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, typ
         signals.push('Verejny kontakt / e-mail');
     } else {
         risks.push('V search vysledku neni videt verejny e-mail');
+        missingEvidence.push('Chybi verejny kontakt / e-mail');
         score -= 8;
+        opportunityScore -= 12;
     }
 
     if (['Apartman', 'Penzion', 'Hotel'].includes(type)) {
@@ -76,9 +84,14 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, typ
         score -= 12;
     }
 
-    if (includesAny(content, ['self check-in', 'self checkin', 'keybox', 'bez recepce', 'online check-in'])) {
+    const hasSolvedCheckIn = includesAny(content, ['pohodlny online check-in', 'online check-in', 'self check-in', 'self checkin', 'keybox', 'bez recepce', 'automaticky check-in']);
+    const hasCheckInPain = includesAny(content, ['nejasny check-in', 'problem s check-in', 'tezke najit vstup', 'unclear check-in', 'hard to find entrance', 'spatne instrukce']);
+
+    if (hasSolvedCheckIn) {
         score += 14;
         signals.push('Self check-in / keybox / bez recepce');
+        alreadySolvedSignals.push('Zdroj naznacuje, ze online/self check-in je uz pravdepodobne vyreseny');
+        contradictionWarnings.push('Nedoporucovat obecne zavadet nebo zlepsovat self check-in bez konkretniho problemoveho signalu');
     }
 
     if (includesAny(content, ['parking', 'parkovani'])) {
@@ -91,17 +104,62 @@ const scoreCandidate = (content: string, hasUrl: boolean, hasEmail: boolean, typ
         signals.push('Vice jednotek nebo apartmanovy provoz');
     }
 
-    if (includesAny(content, ['check-in', 'prijezd', 'communication', 'komunikace', 'unclear', 'nejasn', 'parking', 'parkovani'])) {
+    if (hasCheckInPain || includesAny(content, ['unclear', 'nejasn', 'hard to find', 'tezke najit', 'problem', 'stiznost', 'review mentions', 'complaint'])) {
         score += 14;
         signals.push('Snippet zminuje provozni tema nebo mozne treni hosta');
+        opportunityScore += 28;
+    }
+
+    if (includesAny(content, ['slaby web', 'neprehledny', 'chybi faq', 'chybi guest guide', 'roztrousene informace', 'unclear information'])) {
+        opportunityScore += 24;
+        risks.push('Snippet naznacuje slabsi verejnou strukturu informaci');
     }
 
     if (includesAny(content, ['chain', 'resort', 'marriott', 'hilton', 'accor'])) {
         score -= 20;
+        opportunityScore -= 25;
         risks.push('Muze jit o velky hotelovy retezec');
     }
 
-    return { leadScore: Math.max(0, Math.min(100, score)), signals, risks };
+    if (snippetCount <= 1) {
+        missingEvidence.push('K dispozici je jen jeden nebo zadny verejny snippet');
+        opportunityScore -= 15;
+    }
+
+    if (alreadySolvedSignals.length > 0 && !hasCheckInPain) {
+        missingEvidence.push('Neni konkretni dukaz, ze check-in nebo predprijezdove instrukce jsou problem');
+        opportunityScore -= 10;
+    }
+
+    if (hasEmail) opportunityScore += 14;
+    if (['Apartman', 'Penzion'].includes(type)) opportunityScore += 12;
+    if (risks.length === 0 && alreadySolvedSignals.length > 0) opportunityScore -= 10;
+
+    const boundedLeadScore = Math.max(0, Math.min(100, score));
+    const boundedOpportunityScore = Math.max(0, Math.min(100, opportunityScore));
+    const confidence: Confidence = snippetCount <= 1 ? 'low' : boundedOpportunityScore >= 60 ? 'medium' : 'low';
+    const fitVerdict: FitVerdict = !hasUrl || includesAny(content, ['marriott', 'hilton', 'accor'])
+        ? 'skip'
+        : boundedOpportunityScore >= 70 && hasEmail
+            ? 'strong-opportunity'
+            : boundedOpportunityScore >= 50 && hasEmail
+                ? 'moderate-opportunity'
+                : snippetCount <= 1
+                    ? 'not-enough-evidence'
+                    : 'weak-opportunity';
+
+    return {
+        leadScore: boundedLeadScore,
+        opportunityScore: boundedOpportunityScore,
+        fitVerdict,
+        confidence,
+        contactMissing: !hasEmail,
+        alreadySolvedSignals,
+        missingEvidence,
+        contradictionWarnings,
+        signals,
+        risks,
+    };
 };
 
 const makeQueries = (request: DiscoverRequest) => {
@@ -142,6 +200,13 @@ const fallbackCandidates = (request: DiscoverRequest) => ({
             signals: ['Verejny web', 'Self check-in / keybox', 'Parkovani', 'Vice jednotek'],
             risks: ['Demo vysledek, ne realne API hledani'],
             leadScore: 86,
+            opportunityScore: 34,
+            fitVerdict: 'not-enough-evidence',
+            confidence: 'low',
+            contactMissing: false,
+            alreadySolvedSignals: ['Demo snippet rika, ze self check-in a keybox uz existuji'],
+            missingEvidence: ['Demo fallback nema realny problemovy signal'],
+            contradictionWarnings: ['Nedoporucovat zavadet self check-in, kdyz snippet tvrdi, ze existuje'],
             recommendedAngle: 'guest-guide',
             evidenceSummary: 'Demo kandidat z fallback rezimu; URL nebyla automaticky ctena.',
             isMock: true,
@@ -181,7 +246,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             const content = `${title} ${snippet} ${result.url}`.toLowerCase();
             const possibleEmail = content.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i)?.[0] || '';
             const type = inferType(content);
-            const scoring = scoreCandidate(content, Boolean(result.url), Boolean(possibleEmail), type);
+            const scoring = scoreCandidate(content, Boolean(result.url), Boolean(possibleEmail), type, [snippet].filter(Boolean).length);
 
             return {
                 id: `agent-${index}-${Buffer.from(result.url || title).toString('base64url').slice(0, 16)}`,
@@ -195,6 +260,13 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
                 signals: scoring.signals,
                 risks: scoring.risks,
                 leadScore: scoring.leadScore,
+                opportunityScore: scoring.opportunityScore,
+                fitVerdict: scoring.fitVerdict,
+                confidence: scoring.confidence,
+                contactMissing: scoring.contactMissing,
+                alreadySolvedSignals: scoring.alreadySolvedSignals,
+                missingEvidence: scoring.missingEvidence,
+                contradictionWarnings: scoring.contradictionWarnings,
                 recommendedAngle: inferAngle(content),
                 evidenceSummary: `Vytvoreno z Tavily search vysledku/snippetu. URL nebyla scrapovana ani automaticky prochazena: ${snippet.slice(0, 240)}`,
                 isMock: false,

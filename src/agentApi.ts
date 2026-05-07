@@ -3,6 +3,15 @@ import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, L
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 const stableId = (prefix: string, value: string) => `${prefix}-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || crypto.randomUUID()}`;
+const legacyRunId = 'local-demo-run';
+
+const candidateBase = {
+    runId: legacyRunId,
+    createdAt: new Date().toISOString(),
+    confidence: 'medium' as const,
+    contactMissing: false,
+    isLegacy: false,
+};
 
 const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] => {
     const location = request.location || 'Praha';
@@ -10,6 +19,7 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
 
     const candidates: LeadAgentCandidate[] = [
         {
+            ...candidateBase,
             id: stableId('agent-candidate', `${location}-river-gate`),
             name: 'Apartmany River Gate',
             location,
@@ -24,11 +34,17 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             signals: ['Verejny web', 'Self check-in / keybox', 'Parkovani', 'Vice jednotek', 'Snippet zminuje check-in instrukce'],
             risks: ['Prakticke informace muzou byt roztrousene', 'Snippet naznacuje dotazy na prijezd'],
             leadScore: 86,
+            opportunityScore: 82,
+            fitVerdict: 'strong-opportunity',
+            alreadySolvedSignals: ['Self check-in / keybox je pravdepodobne zavedeno'],
+            missingEvidence: ['Neni overena struktura predprijezdove komunikace mimo snippet'],
+            contradictionWarnings: ['Nedoporucovat obecne zavadet self check-in, zdroj ho uz zminuje'],
             recommendedAngle: 'guest-guide',
             evidenceSummary: `Demo kandidat pro ${location}: odpovida segmentu ${segment}; zdrojem jsou mock search snippety, ne prectena OTA stranka.`,
             isMock: true,
         },
         {
+            ...candidateBase,
             id: stableId('agent-candidate', `${location}-old-town-stay`),
             name: 'Old Town Stay Apartments',
             location,
@@ -43,11 +59,17 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             signals: ['Vlastni web', 'Verejny kontakt', 'Centrum', 'Moderni apartmany'],
             risks: ['Ze snippetu neni jasny check-in', 'Slabsi evidence k provoznim detailum'],
             leadScore: 72,
+            opportunityScore: 58,
+            fitVerdict: 'moderate-opportunity',
+            alreadySolvedSignals: ['Vlastni web a verejny kontakt jsou videt'],
+            missingEvidence: ['Chybi konkretni verejny signal o predprijezdovych instrukcich'],
+            contradictionWarnings: [],
             recommendedAngle: 'description',
             evidenceSummary: 'Demo kandidat ma silny verejny prvni dojem, ale jen omezeny snippet k praktickym informacim.',
             isMock: true,
         },
         {
+            ...candidateBase,
             id: stableId('agent-candidate', `${location}-penzion-u-parku`),
             name: 'Penzion U Parku',
             location,
@@ -62,6 +84,13 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
             signals: ['Penzion', 'Parkovani', 'Snidane', 'Komunikace pred pobytem'],
             risks: ['Chybi verejny e-mail v demo vysledku', 'Prijezd autem muze vyzadovat jasne instrukce'],
             leadScore: 64,
+            opportunityScore: 44,
+            fitVerdict: 'weak-opportunity',
+            confidence: 'low',
+            contactMissing: true,
+            alreadySolvedSignals: ['Parkovani a snidane jsou pravdepodobne komunikovane'],
+            missingEvidence: ['Chybi verejny e-mail', 'Neni dost konkretni evidence o obchodni bolesti'],
+            contradictionWarnings: ['Nevymyslet problem, pokud snippet ukazuje jen pozitivni signaly'],
             recommendedAngle: 'guest-communication',
             evidenceSummary: 'Demo kandidat ukazuje provozni signaly, ale kontakt neni v ukazce nalezen.',
             isMock: true,
@@ -74,18 +103,26 @@ const mockCandidates = (request: LeadAgentSearchRequest): LeadAgentCandidate[] =
 const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
     const evidence = candidate.sourceSnippets[0] || candidate.evidenceSummary;
     const mainFriction = candidate.risks[0] || 'Verejne informace jsou omezeny na search snippet.';
+    const isLowFit = ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
+    const firstImpression = isLowFit
+        ? `${candidate.name} neni podle dostupnych verejnych snippetů jasna priorita. Evidence zatim neukazuje konkretni obchodni bolest.`
+        : `${candidate.name} pusobi z dostupnych verejnych snippetů jako relevantni lead, ale jde jen o omezeny verejny nahled, ne analyzu cele OTA stranky.`;
 
     return {
-        firstImpression: `${candidate.name} pusobi z dostupnych verejnych snippetů jako relevantni lead, ale jde jen o omezeny verejny nahled, ne analyzu cele OTA stranky.`,
+        runId: candidate.runId,
+        analyzedAt: new Date().toISOString(),
+        provider: candidate.isMock ? 'demo-fallback' : 'legacy',
+        model: null,
+        firstImpression,
         strengths: candidate.signals.slice(0, 3),
         risks: candidate.risks,
-        guestFrictionSignals: [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
+        guestFrictionSignals: isLowFit ? [mainFriction, 'Neni dost konkretni evidence o treni hosta.'] : [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
         quickWins: [
             {
                 id: `quick-win-${crypto.randomUUID()}`,
                 title: 'Zviditelnit informace pred prijezdem',
                 why: 'Kandidat ma provozni signaly jako check-in, parkovani nebo prijezd, ktere host resi pred rezervaci.',
-                action: 'Pridat do verejne prezentace kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.',
+                action: candidate.alreadySolvedSignals.length > 0 ? 'Neprodavat obecne self check-in; nejdriv overit, zda jsou verejne instrukce skutecne nekompletni.' : 'Pridat do verejne prezentace kratky blok: prijezd, check-in, parkovani a kde host najde instrukce.',
                 sourceEvidence: evidence,
             },
             {
@@ -103,11 +140,18 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
                 sourceEvidence: candidate.sourceSnippets[1] || evidence,
             },
         ],
-        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: zviditelnit prakticke informace pred prijezdem a navazat na nejsilnejsi verejny benefit.`,
-        outreachEmail: `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z dostupnych verejnych snippetů na me pusobi zajimave hlavne ${candidate.signals.slice(0, 2).join(' a ') || 'prvni dojem nabidky'}.\n\nSoucasne bych videl rychly prostor v tom, jak host pred rezervaci pochopi prijezd, check-in a prakticke instrukce. Poslal bych vam zdarma 3 konkretni navrhy vychazejici jen z verejne dostupnych informaci.\n\nDavid`,
+        miniAudit: `Mini-audit pro ${candidate.name}\n\nVychodisko: pracujeme jen s verejnymi search snippety a ulozenymi odkazy, ne s internimi daty ani automaticky prectenou OTA strankou.\n\nCo funguje: ${candidate.signals.slice(0, 3).join(', ')}.\n\nRiziko: ${candidate.risks.join(' ')}\n\nDoporuceny prvni krok: ${isLowFit ? 'nebrat jako prioritu bez dalsi evidence.' : 'zviditelnit prakticke informace pred prijezdem a navazat na nejsilnejsi verejny benefit.'}`,
+        outreachEmail: isLowFit
+            ? `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z dostupnych verejnych snippetů zatim nevidim jasny problem, ktery by bylo fer prodavat jako hotove reseni. Pokud chcete, muzu poslat kratkou verejnou kontrolu, co je uz vyresene a co by stalo za overeni.\n\nDavid`
+            : `Dobry den,\n\nvsiml jsem si verejne prezentace ${candidate.name}. Z dostupnych verejnych snippetů na me pusobi zajimave hlavne ${candidate.signals.slice(0, 2).join(' a ') || 'prvni dojem nabidky'}.\n\nSoucasne bych videl rychly prostor v tom, jak host pred rezervaci pochopi prijezd, check-in a prakticke instrukce. Poslal bych vam zdarma 3 konkretni navrhy vychazejici jen z verejne dostupnych informaci.\n\nDavid`,
         followUp: `Dobry den, jen kratce navazuji k ${candidate.name}. Pokud chcete, poslu mini-audit verejne prezentace ve 3 bodech; nic neposilam automaticky hostum ani nehodnotim interni komunikaci.`,
-        offerRecommendation: 'Zacit bezplatnym mini-auditem verejne prezentace a potom nabidnout placeny audit guest guide / komunikace pred prijezdem.',
+        offerRecommendation: isLowFit ? 'Neposilat jako prioritni obchodni lead; nejdrive ziskat lepsi dukaz o problemu.' : 'Zacit bezplatnym mini-auditem verejne prezentace a potom nabidnout placeny audit guest guide / komunikace pred prijezdem.',
         confidence: candidate.isMock ? 'medium' : 'low',
+        fitVerdict: candidate.fitVerdict,
+        opportunityScore: candidate.opportunityScore,
+        alreadySolvedSignals: candidate.alreadySolvedSignals,
+        missingEvidence: candidate.missingEvidence,
+        contradictionWarnings: candidate.contradictionWarnings,
         evidenceLimits: ['Vystup vychazi ze search snippetů a ulozenych URL.', 'Netvrdi, ze byla prectena Booking/Airbnb/Google stranka.', 'E-maily se automaticky neposilaji.'],
         isMock: candidate.isMock,
     };

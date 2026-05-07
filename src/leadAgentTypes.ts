@@ -3,6 +3,9 @@ import type { AccommodationType, OfferAngle, QuickWin } from './types';
 export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 'completed' | 'error' | 'needs-config';
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
 export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback';
+export type LeadAgentFitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
+export type LeadAgentCandidateFilter = 'all' | 'good-leads' | 'weak-or-skip' | 'hidden';
+export type LeadAgentCandidateSort = 'opportunityScore' | 'leadScore' | 'newest';
 
 export interface LeadAgentDiagnostic {
     mode: LeadAgentDiagnosticMode;
@@ -38,6 +41,8 @@ export interface LeadAgentSearchRequest {
 
 export interface LeadAgentCandidate {
     id: string;
+    runId: string;
+    createdAt: string;
     name: string;
     location: string;
     type: AccommodationType;
@@ -48,14 +53,26 @@ export interface LeadAgentCandidate {
     signals: string[];
     risks: string[];
     leadScore: number;
+    opportunityScore: number;
+    fitVerdict: LeadAgentFitVerdict;
+    confidence: LeadAgentConfidence;
+    contactMissing: boolean;
+    alreadySolvedSignals: string[];
+    missingEvidence: string[];
+    contradictionWarnings: string[];
     recommendedAngle: OfferAngle;
     evidenceSummary: string;
     isMock: boolean;
+    isLegacy?: boolean;
     addedLeadId?: string;
     rejected?: boolean;
 }
 
 export interface LeadAgentAnalysis {
+    runId: string;
+    analyzedAt: string;
+    provider: 'openai' | 'demo-fallback' | 'legacy';
+    model: string | null;
     firstImpression: string;
     strengths: string[];
     risks: string[];
@@ -66,8 +83,14 @@ export interface LeadAgentAnalysis {
     followUp: string;
     offerRecommendation: string;
     confidence: LeadAgentConfidence;
+    fitVerdict: LeadAgentFitVerdict;
+    opportunityScore: number;
+    alreadySolvedSignals: string[];
+    missingEvidence: string[];
+    contradictionWarnings: string[];
     evidenceLimits: string[];
     isMock: boolean;
+    isLegacy?: boolean;
 }
 
 export interface LeadAgentDiscoverResponse {
@@ -87,12 +110,19 @@ export interface LeadAgentAnalyzeResponse {
 }
 
 export interface LeadAgentSession {
+    runId: string;
+    createdAt: string;
     request: LeadAgentSearchRequest;
     status: LeadAgentRunStatus;
     message: string;
     isMock: boolean;
     candidates: LeadAgentCandidate[];
     analyses: Record<string, LeadAgentAnalysis>;
+    dismissedCandidateIds: string[];
+    candidateFilter: LeadAgentCandidateFilter;
+    candidateSort: LeadAgentCandidateSort;
+    loadedFromStorage: boolean;
+    storedBannerDismissed: boolean;
     diagnostic?: LeadAgentDiagnostic;
     health?: LeadAgentHealth;
     healthMessage?: string;

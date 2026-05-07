@@ -171,6 +171,10 @@ h2 {
     gap: 10px;
 }
 
+.inline-actions {
+    margin-top: 10px;
+}
+
 .detail-stack {
     display: grid;
     gap: 18px;
@@ -345,6 +349,22 @@ tbody tr:hover,
     min-width: 1440px;
 }
 
+.table-toolbar {
+    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 14px;
+}
+
+.table-toolbar label {
+    min-width: 220px;
+}
+
+.weak-candidate-row {
+    background: #fbf8f2;
+}
+
 .source-list,
 .table-actions {
     display: grid;
@@ -370,6 +390,51 @@ tbody tr:hover,
     margin-top: 10px;
     min-width: 360px;
     padding: 12px;
+}
+
+.analysis-preview-header {
+    align-items: start;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.metadata-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.metadata-row span {
+    background: #eef4f2;
+    border: 1px solid #dce5e6;
+    border-radius: 999px;
+    color: #314147;
+    font-size: 0.76rem;
+    font-weight: 800;
+    padding: 4px 8px;
+}
+
+.analysis-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.analysis-grid div {
+    background: #f7fbfb;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+}
+
+.analysis-grid span,
+.warning-note span {
+    display: block;
+    font-size: 0.82rem;
+    line-height: 1.45;
 }
 
 .analysis-preview strong {
@@ -503,6 +568,19 @@ textarea:focus {
     background: #fff8ef;
     border-color: #ead6bd;
     color: #5a4631;
+}
+
+.stored-note {
+    background: #eef7ff;
+    border-color: #cde4f7;
+    color: #22485f;
+}
+
+.warning-note {
+    background: #fff8ef;
+    border-color: #ead6bd;
+    color: #5a4631;
+    margin-bottom: 0;
 }
 
 .section-help {
