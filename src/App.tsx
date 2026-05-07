@@ -1,5 +1,6 @@
 import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
+import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { leadFinderMockText, parseLeadCandidates, recommendedSearchQueries } from './leadScoring';
 import { mockLeads } from './mockData';
@@ -17,6 +18,9 @@ import {
     PublicProfileLink,
     PublicProfileSourceType,
     QuickWin,
+    sourceMaterialTypeLabels,
+    SourceMaterial,
+    SourceMaterialType,
 } from './types';
 
 type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
@@ -37,6 +41,8 @@ const emptyLead = (): Lead => ({
     quickWins: [],
     publicProfileUrl: '',
     publicLinks: [],
+    sourceMaterials: [],
+    extractionStatus: 'idle',
     firstImpression: '',
     mainPhotoVerdict: 'unknown',
     mainPhotoObservation: '',
@@ -123,6 +129,15 @@ const emptyQuickWin = (): QuickWin => ({
     sourceEvidence: '',
 });
 
+const emptySourceMaterial = (): SourceMaterial => ({
+    id: `source-${crypto.randomUUID()}`,
+    type: 'pasted-text',
+    sourceLinkId: '',
+    title: '',
+    content: '',
+    createdAt: new Date().toISOString(),
+});
+
 const migratePublicLinks = (lead: Partial<Lead>): PublicProfileLink[] => {
     if (lead.publicLinks && lead.publicLinks.length > 0) {
         return lead.publicLinks;
@@ -164,6 +179,8 @@ const normalizeLead = (lead: Partial<Lead>): Lead => ({
     ...emptyLead(),
     ...lead,
     publicLinks: migratePublicLinks(lead),
+    sourceMaterials: lead.sourceMaterials ?? [],
+    extractionStatus: lead.extractionStatus ?? 'idle',
     publicSignals: lead.publicSignals ?? [],
     quickWins: lead.quickWins ?? [],
     proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
@@ -330,6 +347,19 @@ function App() {
                       },
                   ]
                 : [],
+            sourceMaterials: candidate.sourceNotes
+                ? [
+                      {
+                          id: `source-${crypto.randomUUID()}`,
+                          type: 'manual-note',
+                          sourceLinkId: '',
+                          title: 'Lead Finder poznamky',
+                          content: candidate.sourceNotes,
+                          createdAt: new Date().toISOString(),
+                      },
+                  ]
+                : [],
+            extractionStatus: 'ready',
             email: candidate.email,
             status: 'Novy',
             notes: `Lead Finder kandidat. Segment: ${leadSearchSession.targetSegment || 'neuvedeno'}. ${candidate.sourceNotes}`,
@@ -373,6 +403,41 @@ function App() {
             ),
         }));
         setActiveScreen('leads');
+    };
+
+    const prepareAuditObservations = () => {
+        const runningLead: Lead = { ...draftLead, extractionStatus: 'running' };
+        setDraftLead(runningLead);
+
+        const result = extractAuditObservations({
+            leadName: runningLead.name,
+            publicLinks: runningLead.publicLinks ?? [],
+            sourceMaterials: runningLead.sourceMaterials ?? [],
+        });
+        const nextLead: Lead = {
+            ...runningLead,
+            extractionStatus: result.status,
+            notes: result.message ? `${runningLead.notes}${runningLead.notes ? '\n\n' : ''}Extractor: ${result.message}` : runningLead.notes,
+        };
+
+        if (result.status === 'completed' && result.draft) {
+            nextLead.firstImpression = result.draft.firstImpression;
+            nextLead.strengths = result.draft.strengths;
+            nextLead.reviewSignals = result.draft.reviewSignals;
+            nextLead.guestFrictionSignals = result.draft.guestFrictionSignals;
+            nextLead.guestConfusion = result.draft.guestConfusion;
+            nextLead.risks = result.draft.risks;
+            nextLead.businessOpportunity = result.draft.businessOpportunity;
+            nextLead.mainPhotoVerdict = result.draft.mainPhotoVerdict;
+            nextLead.mainPhotoObservation = result.draft.mainPhotoObservation;
+            nextLead.checkInParkingInfo = result.draft.checkInParkingInfo;
+            nextLead.structuredQuickWins = result.draft.structuredQuickWins;
+            nextLead.publicSignals = result.draft.publicSignals;
+            nextLead.selectedOfferAngle = result.draft.selectedOfferAngle;
+            nextLead.status = 'Audit pripraven';
+        }
+
+        persistLead(nextLead);
     };
 
     const generateText = (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => {
@@ -450,6 +515,7 @@ function App() {
                     onChange={updateDraft}
                     onCopyText={copyText}
                     onGenerateText={generateText}
+                    onPrepareAudit={prepareAuditObservations}
                     onSave={saveDraft}
                 />
             );
@@ -463,6 +529,7 @@ function App() {
                     onChange={updateDraft}
                     onCopyText={copyText}
                     onGenerateText={generateText}
+                    onPrepareAudit={prepareAuditObservations}
                     onSave={saveDraft}
                 />
             );
@@ -489,6 +556,7 @@ function App() {
                 onChange={updateDraft}
                 onCopyText={copyText}
                 onGenerateText={generateText}
+                onPrepareAudit={prepareAuditObservations}
                 onSave={saveDraft}
             />
         );
@@ -812,11 +880,12 @@ interface LeadEditorProps {
     onChange: <Field extends keyof Lead>(field: Field, value: Lead[Field]) => void;
     onCopyText?: (textId: string, value: string) => void;
     onGenerateText?: (field: 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
+    onPrepareAudit?: () => void;
     onSave: (event?: FormEvent) => void;
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onGenerateText, onSave }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
     return (
         <form className="detail-stack" onSubmit={onSave}>
             <section className="panel form-panel">
@@ -840,6 +909,7 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                 onChange={onChange}
                 onCopyText={onCopyText}
                 onGenerateText={onGenerateText}
+                onPrepareAudit={onPrepareAudit}
                 onSave={onSave}
             />
         </form>
@@ -871,10 +941,6 @@ function LeadCoreFields({ draftLead, onChange }: Pick<LeadEditorProps, 'draftLea
                 <input value={draftLead.city} onChange={(event) => onChange('city', event.target.value)} />
             </label>
             <label>
-                Web / OTA odkaz
-                <input value={draftLead.websiteOrOtaUrl} onChange={(event) => onChange('websiteOrOtaUrl', event.target.value)} />
-            </label>
-            <label>
                 E-mail
                 <input type="email" value={draftLead.email} onChange={(event) => onChange('email', event.target.value)} />
             </label>
@@ -892,11 +958,24 @@ function LeadCoreFields({ draftLead, onChange }: Pick<LeadEditorProps, 'draftLea
                 Poznamky
                 <textarea value={draftLead.notes} onChange={(event) => onChange('notes', event.target.value)} rows={5} />
             </label>
+            <details className="full-width legacy-fields">
+                <summary>Starsi pole</summary>
+                <div className="form-grid">
+                    <label>
+                        Legacy Web / OTA odkaz
+                        <input value={draftLead.websiteOrOtaUrl} onChange={(event) => onChange('websiteOrOtaUrl', event.target.value)} />
+                    </label>
+                    <label>
+                        Legacy verejny profil / OTA odkaz
+                        <input value={draftLead.publicProfileUrl} onChange={(event) => onChange('publicProfileUrl', event.target.value)} />
+                    </label>
+                </div>
+            </details>
         </div>
     );
 }
 
-function AuditPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText, onSave }: LeadEditorProps) {
+function AuditPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
     return (
         <form className="panel form-panel" onSubmit={onSave}>
             <div className="panel-header">
@@ -916,6 +995,7 @@ function AuditPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
                 onChange={onChange}
                 onCopyText={onCopyText}
                 onGenerateText={onGenerateText}
+                onPrepareAudit={onPrepareAudit}
                 onSave={onSave}
             />
         </form>
@@ -1028,7 +1108,12 @@ function OfferPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
     );
 }
 
-function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText }: LeadEditorProps) {
+function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText, onPrepareAudit }: LeadEditorProps) {
+    const [sourceDraft, setSourceDraft] = useState<SourceMaterial>(emptySourceMaterial);
+    const publicLinks = draftLead.publicLinks ?? [];
+    const sourceMaterials = draftLead.sourceMaterials ?? [];
+    const structuredQuickWins = draftLead.structuredQuickWins ?? [];
+    const extractionStatus = draftLead.extractionStatus ?? 'idle';
     const concreteObservationCount = [
         draftLead.firstImpression,
         draftLead.mainPhotoObservation,
@@ -1039,9 +1124,9 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
         draftLead.guestConfusion,
         draftLead.businessOpportunity,
     ].filter((value) => value.trim()).length;
-    const completeQuickWins = draftLead.structuredQuickWins.filter((win) => win.title.trim() && win.action.trim() && win.why.trim());
+    const completeQuickWins = structuredQuickWins.filter((win) => win.title.trim() && win.action.trim() && win.why.trim());
     const checklist = [
-        { label: 'alespon 1 verejny link', done: draftLead.publicLinks.some((link) => link.url.trim()) },
+        { label: 'alespon 1 verejny link', done: publicLinks.some((link) => link.url.trim()) },
         { label: 'alespon 1 silna stranka', done: Boolean(draftLead.strengths.trim()) },
         { label: 'alespon 2 konkretni pozorovani', done: concreteObservationCount >= 2 },
         { label: 'presne 3 quick wins s title/action/why', done: completeQuickWins.length === 3 },
@@ -1050,68 +1135,89 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
     const updatePublicLink = <Field extends keyof PublicProfileLink>(linkId: string, field: Field, value: PublicProfileLink[Field]) => {
         onChange(
             'publicLinks',
-            draftLead.publicLinks.map((link) => (link.id === linkId ? { ...link, [field]: value } : link)),
+            publicLinks.map((link) => (link.id === linkId ? { ...link, [field]: value } : link)),
         );
     };
 
-    const addPublicLink = () => {
-        onChange('publicLinks', [...draftLead.publicLinks, emptyPublicLink()]);
+    const addPublicLink = (sourceType: PublicProfileSourceType = 'other') => {
+        onChange('publicLinks', [
+            ...publicLinks,
+            {
+                ...emptyPublicLink(),
+                sourceType,
+                label: publicProfileSourceLabels[sourceType],
+            },
+        ]);
     };
 
     const removePublicLink = (linkId: string) => {
         onChange(
             'publicLinks',
-            draftLead.publicLinks.filter((link) => link.id !== linkId),
+            publicLinks.filter((link) => link.id !== linkId),
         );
     };
 
     const updateQuickWin = <Field extends keyof QuickWin>(quickWinId: string, field: Field, value: QuickWin[Field]) => {
         onChange(
             'structuredQuickWins',
-            draftLead.structuredQuickWins.map((quickWin) => (quickWin.id === quickWinId ? { ...quickWin, [field]: value } : quickWin)),
+            structuredQuickWins.map((quickWin) => (quickWin.id === quickWinId ? { ...quickWin, [field]: value } : quickWin)),
         );
     };
 
     const addQuickWin = () => {
-        onChange('structuredQuickWins', [...draftLead.structuredQuickWins, emptyQuickWin()]);
+        onChange('structuredQuickWins', [...structuredQuickWins, emptyQuickWin()]);
     };
 
     const removeQuickWin = (quickWinId: string) => {
         onChange(
             'structuredQuickWins',
-            draftLead.structuredQuickWins.filter((quickWin) => quickWin.id !== quickWinId),
+            structuredQuickWins.filter((quickWin) => quickWin.id !== quickWinId),
         );
     };
+
+    const updateSourceDraft = <Field extends keyof SourceMaterial>(field: Field, value: SourceMaterial[Field]) => {
+        setSourceDraft((current) => ({ ...current, [field]: value }));
+    };
+
+    const addSourceMaterial = () => {
+        if (!sourceDraft.content.trim()) {
+            return;
+        }
+
+        onChange('sourceMaterials', [
+            ...sourceMaterials,
+            {
+                ...sourceDraft,
+                id: `source-${crypto.randomUUID()}`,
+                title: sourceDraft.title.trim() || sourceMaterialTypeLabels[sourceDraft.type],
+                content: sourceDraft.content.trim(),
+                createdAt: new Date().toISOString(),
+            },
+        ]);
+        onChange('extractionStatus', 'ready');
+        setSourceDraft(emptySourceMaterial());
+    };
+
+    const removeSourceMaterial = (materialId: string) => {
+        onChange(
+            'sourceMaterials',
+            sourceMaterials.filter((material) => material.id !== materialId),
+        );
+    };
+
+    const canGenerateAudit = extractionStatus === 'completed' || completeQuickWins.length === 3;
 
     return (
         <section className="panel form-panel audit-workspace">
             <div className="panel-header">
                 <div>
-                    <p className="eyebrow">Rucni / poloautomaticky audit</p>
+                    <p className="eyebrow">Bot workflow</p>
                     <h2>Veřejný audit</h2>
-                </div>
-                <div className="button-group">
-                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedMiniAudit')} type="button">
-                        <Sparkles size={18} aria-hidden="true" />
-                        Vygenerovat mini-audit
-                    </button>
-                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedOutreach')} type="button">
-                        <Mail size={18} aria-hidden="true" />
-                        Vygenerovat prvni osloveni
-                    </button>
-                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedFollowUp')} type="button">
-                        <Send size={18} aria-hidden="true" />
-                        Vygenerovat follow-up
-                    </button>
-                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedOffer')} type="button">
-                        <ClipboardCheck size={18} aria-hidden="true" />
-                        Vygenerovat nabidku dalsiho kroku
-                    </button>
                 </div>
             </div>
 
             <div className="scope-note">
-                V teto verzi aplikace odkazy necte automaticky. Otevri link, dopln konkretni pozorovani a z nich se vygeneruje audit.
+                Odkaz slouzi k otevreni zdroje. Pro automaticke vyplneni vloz verejny text nebo screenshoty.
             </div>
 
             <div className="quality-grid">
@@ -1128,18 +1234,21 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     <div>
                         <p className="eyebrow">Zdroj k rucni kontrole</p>
                         <h2>Verejne odkazy</h2>
+                        <p className="section-help">Pridej Booking, Airbnb, Google profil, vlastni web nebo jiny verejny zdroj.</p>
                     </div>
-                    <button className="secondary-button" onClick={addPublicLink} type="button">
-                        <Plus size={18} aria-hidden="true" />
-                        Pridat link
-                    </button>
+                    <div className="button-group">
+                        <button className="secondary-button compact-button" onClick={() => addPublicLink('booking')} type="button">Pridat Booking</button>
+                        <button className="secondary-button compact-button" onClick={() => addPublicLink('airbnb')} type="button">Pridat Airbnb</button>
+                        <button className="secondary-button compact-button" onClick={() => addPublicLink('google')} type="button">Pridat Google</button>
+                        <button className="secondary-button compact-button" onClick={() => addPublicLink('website')} type="button">Pridat web</button>
+                    </div>
                 </div>
 
                 <div className="link-list">
-                    {draftLead.publicLinks.length === 0 ? (
-                        <div className="scope-note">Zatim neni ulozeny zadny verejny link. Link slouzi jen jako zdroj pro rucni kontrolu.</div>
+                    {publicLinks.length === 0 ? (
+                        <div className="empty-inline">Zatim neni ulozeny zadny verejny link. Pridej vice zdroju nahore; aplikace URL necte automaticky.</div>
                     ) : (
-                        draftLead.publicLinks.map((link) => (
+                        publicLinks.map((link) => (
                             <div className="link-card" key={link.id}>
                                 <label>
                                     Typ zdroje
@@ -1182,11 +1291,115 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                 </div>
             </section>
 
-            <div className="form-grid two-column">
-                <label className="full-width">
-                    Legacy verejny profil / OTA odkaz
-                    <input value={draftLead.publicProfileUrl} onChange={(event) => onChange('publicProfileUrl', event.target.value)} />
-                </label>
+            <section className="nested-section source-intake">
+                <div className="panel-header compact-header">
+                    <div>
+                        <p className="eyebrow">Podklady pro bota</p>
+                        <h2>Source Intake</h2>
+                        <p className="section-help">Vloz verejny text z Bookingu/Airbnb/Google/webu nebo vlastni poznamky. Z toho se predvyplni auditova pozorovani.</p>
+                    </div>
+                    <span className={`status-pill extraction-${extractionStatus}`}>{extractionStatus}</span>
+                </div>
+
+                <div className="form-grid two-column">
+                    <label>
+                        Verejny odkaz / zdroj
+                        <select value={sourceDraft.sourceLinkId || ''} onChange={(event) => updateSourceDraft('sourceLinkId', event.target.value)}>
+                            <option value="">Bez vazby na konkretni link</option>
+                            {publicLinks.map((link) => (
+                                <option key={link.id} value={link.id}>
+                                    {link.label || publicProfileSourceLabels[link.sourceType]} - {link.url || 'URL chybi'}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label>
+                        Typ materialu
+                        <select value={sourceDraft.type} onChange={(event) => updateSourceDraft('type', event.target.value as SourceMaterialType)}>
+                            {(Object.keys(sourceMaterialTypeLabels) as SourceMaterialType[]).map((type) => (
+                                <option key={type} value={type}>
+                                    {sourceMaterialTypeLabels[type]}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="full-width">
+                        Nazev podkladu
+                        <input value={sourceDraft.title} onChange={(event) => updateSourceDraft('title', event.target.value)} placeholder="Napriklad Booking text, Google recenze, screenshot poznamka" />
+                    </label>
+                    <label className="full-width">
+                        Vloz verejny text z Bookingu/Airbnb/Google/webu nebo vlastni poznamky
+                        <textarea value={sourceDraft.content} onChange={(event) => updateSourceDraft('content', event.target.value)} rows={6} />
+                    </label>
+                </div>
+
+                <div className="button-group">
+                    <button className="secondary-button" disabled={!sourceDraft.content.trim()} onClick={addSourceMaterial} type="button">
+                        <Plus size={18} aria-hidden="true" />
+                        Pridat podklad
+                    </button>
+                    <button className="primary-button" disabled={sourceMaterials.length === 0} onClick={onPrepareAudit} type="button">
+                        <Sparkles size={18} aria-hidden="true" />
+                        Pripravit auditova pozorovani
+                    </button>
+                </div>
+
+                <div className="material-list">
+                    {sourceMaterials.length === 0 ? (
+                        <div className="empty-inline">Zatim tu nejsou zadne podklady. URL otevri rucne a vloz verejny text nebo poznamku ze screenshotu.</div>
+                    ) : (
+                        sourceMaterials.map((material) => {
+                            const linkedSource = publicLinks.find((link) => link.id === material.sourceLinkId);
+                            return (
+                                <div className="material-card" key={material.id}>
+                                    <div>
+                                        <strong>{material.title || sourceMaterialTypeLabels[material.type]}</strong>
+                                        <small>{sourceMaterialTypeLabels[material.type]}{linkedSource ? ` · ${linkedSource.label || linkedSource.url}` : ''}</small>
+                                    </div>
+                                    <p>{material.content}</p>
+                                    <button className="secondary-button compact-button danger-button" onClick={() => removeSourceMaterial(material.id)} type="button">
+                                        <Trash2 size={16} aria-hidden="true" />
+                                        Odebrat
+                                    </button>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            </section>
+
+            <section className="nested-section generation-controls">
+                <div>
+                    <p className="eyebrow">Vystupy</p>
+                    <h2>Generovani z pripravenych pozorovani</h2>
+                    {!canGenerateAudit ? <p className="section-help">Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani.</p> : null}
+                </div>
+                <div className="button-group">
+                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedMiniAudit')} type="button">
+                        <Sparkles size={18} aria-hidden="true" />
+                        Vygenerovat mini-audit
+                    </button>
+                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedOutreach')} type="button">
+                        <Mail size={18} aria-hidden="true" />
+                        Vygenerovat prvni osloveni
+                    </button>
+                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedFollowUp')} type="button">
+                        <Send size={18} aria-hidden="true" />
+                        Vygenerovat follow-up
+                    </button>
+                    <button className="secondary-button" onClick={() => onGenerateText?.('generatedOffer')} type="button">
+                        <ClipboardCheck size={18} aria-hidden="true" />
+                        Vygenerovat nabidku dalsiho kroku
+                    </button>
+                </div>
+            </section>
+
+            <section className="nested-section manual-tuning">
+                <div>
+                    <p className="eyebrow">Rucni doladeni</p>
+                    <h2>Auditova pole</h2>
+                </div>
+                <div className="form-grid two-column">
                 <label>
                     Prvni dojem z nabidky
                     <textarea value={draftLead.firstImpression} onChange={(event) => onChange('firstImpression', event.target.value)} rows={5} />
@@ -1271,7 +1484,8 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                         rows={5}
                     />
                 </label>
-            </div>
+                </div>
+            </section>
 
             <section className="nested-section">
                 <div className="panel-header compact-header">
@@ -1285,8 +1499,8 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     </button>
                 </div>
                 <div className="quick-win-list">
-                    {draftLead.structuredQuickWins.length === 0 ? <div className="scope-note">Dopln 3 hlavni quick wins. Bez nich generator nevytvori obecne rady.</div> : null}
-                    {draftLead.structuredQuickWins.map((quickWin, index) => (
+                    {structuredQuickWins.length === 0 ? <div className="scope-note">Dopln 3 hlavni quick wins. Bez nich generator nevytvori obecne rady.</div> : null}
+                    {structuredQuickWins.map((quickWin, index) => (
                         <div className="quick-win-card" key={quickWin.id}>
                             <div className="label-row">
                                 <strong>Quick win #{index + 1}</strong>

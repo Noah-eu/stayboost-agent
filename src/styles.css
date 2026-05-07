@@ -444,6 +444,22 @@ textarea:focus {
     padding: 12px 14px;
 }
 
+.section-help {
+    color: #607178;
+    font-weight: 700;
+    line-height: 1.45;
+    margin: 6px 0 0;
+}
+
+.empty-inline {
+    background: #fbfdfd;
+    border: 1px dashed #b9c9cc;
+    border-radius: 8px;
+    color: #607178;
+    font-weight: 800;
+    padding: 16px;
+}
+
 .quality-grid {
     display: grid;
     gap: 10px;
@@ -497,13 +513,15 @@ textarea:focus {
 }
 
 .link-list,
-.quick-win-list {
+.quick-win-list,
+.material-list {
     display: grid;
     gap: 12px;
 }
 
 .link-card,
-.quick-win-card {
+.quick-win-card,
+.material-card {
     background: #f8fbfb;
     border: 1px solid #dce5e6;
     border-radius: 8px;
@@ -530,6 +548,70 @@ textarea:focus {
 
 .danger-button:hover {
     background: #edd7d1;
+}
+
+.source-intake {
+    background: #fbfdfd;
+}
+
+.material-card {
+    align-items: start;
+    grid-template-columns: minmax(180px, 0.6fr) minmax(240px, 1fr) auto;
+}
+
+.material-card small {
+    color: #607178;
+    display: block;
+    margin-top: 4px;
+}
+
+.material-card p {
+    color: #314147;
+    line-height: 1.5;
+    margin-bottom: 0;
+}
+
+.generation-controls {
+    background: #f7faf9;
+}
+
+.legacy-fields {
+    background: #f8fbfb;
+    border: 1px solid #e4ebec;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
+.legacy-fields summary {
+    color: #607178;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.legacy-fields .form-grid {
+    margin-top: 14px;
+}
+
+.extraction-idle,
+.extraction-ready {
+    background: #edf4ef;
+    color: #176b57;
+}
+
+.extraction-running {
+    background: #eef4f4;
+    color: #17323a;
+}
+
+.extraction-completed {
+    background: #dff4ea;
+    color: #145442;
+}
+
+.extraction-needs-more-input,
+.extraction-error {
+    background: #fff0e6;
+    color: #7b3c1d;
 }
 
 .query-box {
@@ -608,7 +690,8 @@ textarea:focus {
     }
 
     .quality-grid,
-    .link-card {
+    .link-card,
+    .material-card {
         grid-template-columns: 1fr;
     }
 

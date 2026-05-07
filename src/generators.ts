@@ -5,7 +5,7 @@ const hasText = (value: string) => value.trim().length > 0;
 const cleanSentence = (value: string) => value.trim().replace(/[.!?]+$/, '');
 
 const completedQuickWins = (lead: Lead) =>
-    lead.structuredQuickWins.filter((win) => hasText(win.title) && hasText(win.action) && hasText(win.why));
+    (lead.structuredQuickWins ?? []).filter((win) => hasText(win.title) && hasText(win.action) && hasText(win.why));
 
 const concreteObservations = (lead: Lead) =>
     [
@@ -23,7 +23,7 @@ const qualityGate = (lead: Lead) => {
     const missing: string[] = [];
     const completeWins = completedQuickWins(lead);
 
-    if (lead.publicLinks.filter((link) => hasText(link.url)).length < 1) {
+    if ((lead.publicLinks ?? []).filter((link) => hasText(link.url)).length < 1) {
         missing.push('alespon 1 verejny link');
     }
 
@@ -44,7 +44,7 @@ const qualityGate = (lead: Lead) => {
 
 const missingQuickWins = (lead: Lead) =>
     [0, 1, 2]
-        .map((index) => lead.structuredQuickWins[index])
+        .map((index) => (lead.structuredQuickWins ?? [])[index])
         .map((win, index) => (win && hasText(win.title) && hasText(win.action) && hasText(win.why) ? undefined : `Dopln quick win #${index + 1}`))
         .filter((value): value is string => Boolean(value));
 
@@ -60,6 +60,10 @@ export function generateMiniAudit(lead: Lead) {
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
+        if (lead.extractionStatus !== 'completed' && (lead.sourceMaterials ?? []).length === 0) {
+            return 'Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani. Odkazy slouzi jen k otevreni zdroje; aplikace URL sama necte.';
+        }
+
         return `Audit zatim neni dost konkretni. Dopln alespon 2 konkretni pozorovani a 3 quick wins.
 
 Chybi:
@@ -115,6 +119,10 @@ export function generateFirstOutreach(lead: Lead) {
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
+        if (lead.extractionStatus !== 'completed' && (lead.sourceMaterials ?? []).length === 0) {
+            return 'Nejdriv vloz verejny text nebo poznamky a klikni na Pripravit auditova pozorovani. Potom pujde osloveni postavit na konkretnim pozitivnim pozorovani a navrhu.';
+        }
+
         return `Osloveni zatim neni dost konkretni.
 
 Chybi:

@@ -21,6 +21,10 @@ export type PublicProfileSourceType = 'booking' | 'airbnb' | 'google' | 'website
 
 export type MainPhotoVerdict = 'strong' | 'average' | 'weak' | 'unknown';
 
+export type SourceMaterialType = 'pasted-text' | 'screenshot-note' | 'manual-note';
+
+export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'needs-more-input' | 'error';
+
 export interface PublicProfileLink {
     id: string;
     sourceType: PublicProfileSourceType;
@@ -35,6 +39,44 @@ export interface QuickWin {
     why: string;
     action: string;
     sourceEvidence: string;
+}
+
+export interface SourceMaterial {
+    id: string;
+    type: SourceMaterialType;
+    sourceLinkId?: string;
+    title: string;
+    content: string;
+    createdAt: string;
+}
+
+export interface AuditExtractionInput {
+    leadName: string;
+    publicLinks: PublicProfileLink[];
+    sourceMaterials: SourceMaterial[];
+}
+
+export interface AuditExtractionDraft {
+    firstImpression: string;
+    strengths: string;
+    reviewSignals: string;
+    guestFrictionSignals: string;
+    risks: string;
+    businessOpportunity: string;
+    mainPhotoVerdict: MainPhotoVerdict;
+    mainPhotoObservation: string;
+    checkInParkingInfo: string;
+    guestConfusion: string;
+    structuredQuickWins: QuickWin[];
+    publicSignals: string[];
+    selectedOfferAngle: OfferAngle;
+}
+
+export interface AuditExtractionResult {
+    status: Extract<ExtractionStatus, 'completed' | 'needs-more-input' | 'error'>;
+    message: string;
+    draft?: AuditExtractionDraft;
+    evidenceNotes: string[];
 }
 
 export interface LeadCandidate {
@@ -74,6 +116,8 @@ export interface Lead {
     quickWins: string[];
     publicProfileUrl: string;
     publicLinks: PublicProfileLink[];
+    sourceMaterials: SourceMaterial[];
+    extractionStatus: ExtractionStatus;
     firstImpression: string;
     mainPhotoVerdict: MainPhotoVerdict;
     mainPhotoObservation: string;
@@ -138,4 +182,10 @@ export const mainPhotoVerdictLabels: Record<MainPhotoVerdict, string> = {
     average: 'prumerna',
     weak: 'slaba',
     unknown: 'nevim / nehodnoceno',
+};
+
+export const sourceMaterialTypeLabels: Record<SourceMaterialType, string> = {
+    'pasted-text': 'zkopirovany verejny text',
+    'screenshot-note': 'poznamka ze screenshotu',
+    'manual-note': 'rucni poznamka',
 };
