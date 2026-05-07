@@ -2,6 +2,30 @@ import type { AccommodationType, OfferAngle, QuickWin } from './types';
 
 export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 'completed' | 'error' | 'needs-config';
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
+export type LeadAgentDiagnosticMode = 'real-api' | 'demo-fallback';
+
+export interface LeadAgentDiagnostic {
+    mode: LeadAgentDiagnosticMode;
+    discoverProvider?: 'tavily' | 'demo' | 'unknown';
+    analyzeProvider?: 'openai' | 'demo-fallback' | 'unknown';
+    fallbackReason?: string;
+    httpStatus?: number;
+    debugId?: string;
+    userMessage: string;
+    runtime?: string;
+    hasOpenAIKey?: boolean;
+    model?: string | null;
+    sanitizedSample?: string;
+}
+
+export interface LeadAgentHealth {
+    ok: boolean;
+    runtime: string;
+    hasTavilyKey: boolean;
+    hasOpenAIKey: boolean;
+    openAIModel: string | null;
+    timestamp: string;
+}
 
 export interface LeadAgentSearchRequest {
     location: string;
@@ -50,6 +74,7 @@ export interface LeadAgentDiscoverResponse {
     message: string;
     isMock: boolean;
     candidates: LeadAgentCandidate[];
+    diagnostic?: LeadAgentDiagnostic;
 }
 
 export interface LeadAgentAnalyzeResponse {
@@ -57,6 +82,7 @@ export interface LeadAgentAnalyzeResponse {
     message: string;
     isMock: boolean;
     analysis?: LeadAgentAnalysis;
+    diagnostic?: LeadAgentDiagnostic;
 }
 
 export interface LeadAgentSession {
@@ -66,4 +92,7 @@ export interface LeadAgentSession {
     isMock: boolean;
     candidates: LeadAgentCandidate[];
     analyses: Record<string, LeadAgentAnalysis>;
+    diagnostic?: LeadAgentDiagnostic;
+    health?: LeadAgentHealth;
+    healthMessage?: string;
 }

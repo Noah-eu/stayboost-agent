@@ -1,10 +1,10 @@
 import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { analyzeLead, discoverLeads } from './agentApi';
+import { analyzeLead, checkAgentHealth, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
-import { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentSearchRequest, LeadAgentSession } from './leadAgentTypes';
+import { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAgentHealth, LeadAgentSearchRequest, LeadAgentSession } from './leadAgentTypes';
 import {
     accommodationTypes,
     Lead,
@@ -203,14 +203,39 @@ const emptyAgentSession = (): LeadAgentSession => ({
     isMock: false,
     candidates: [],
     analyses: {},
+    diagnostic: undefined,
+    health: undefined,
+    healthMessage: '',
+});
+
+const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAgentCandidate => ({
+    id: candidate.id ?? `agent-candidate-${crypto.randomUUID()}`,
+    name: candidate.name ?? 'Neznamy kandidat',
+    location: candidate.location ?? '',
+    type: candidate.type ?? 'Jine',
+    websiteUrl: candidate.websiteUrl ?? '',
+    sourceUrls: candidate.sourceUrls ?? [],
+    sourceSnippets: candidate.sourceSnippets ?? [],
+    possibleEmail: candidate.possibleEmail ?? '',
+    signals: candidate.signals ?? [],
+    risks: candidate.risks ?? [],
+    leadScore: candidate.leadScore ?? 0,
+    recommendedAngle: candidate.recommendedAngle ?? 'main-photo',
+    evidenceSummary: candidate.evidenceSummary ?? 'Chybi evidence summary.',
+    isMock: candidate.isMock ?? false,
+    addedLeadId: candidate.addedLeadId,
+    rejected: candidate.rejected,
 });
 
 const normalizeAgentSession = (session: Partial<LeadAgentSession>): LeadAgentSession => ({
     ...emptyAgentSession(),
     ...session,
     request: { ...emptyAgentRequest(), ...session.request },
-    candidates: session.candidates ?? [],
+    candidates: (session.candidates ?? []).map(normalizeAgentCandidate),
     analyses: session.analyses ?? {},
+    diagnostic: session.diagnostic,
+    health: session.health,
+    healthMessage: session.healthMessage ?? '',
 });
 
 function App() {
@@ -349,7 +374,7 @@ function App() {
     };
 
     const runLeadAgentSearch = async () => {
-        setLeadAgentSession((currentSession) => ({ ...currentSession, status: 'searching', message: 'Vyhledavam potencialni klienty...', candidates: [] }));
+        setLeadAgentSession((currentSession) => ({ ...currentSession, status: 'searching', message: 'Vyhledavam potencialni klienty...', candidates: [], diagnostic: undefined }));
 
         try {
             const response = await discoverLeads(leadAgentSession.request);
@@ -359,12 +384,40 @@ function App() {
                 message: response.message,
                 isMock: response.isMock,
                 candidates: response.candidates,
+                diagnostic: response.diagnostic
+                    ? { ...response.diagnostic, discoverProvider: response.diagnostic.discoverProvider ?? currentSession.diagnostic?.discoverProvider }
+                    : currentSession.diagnostic,
             }));
         } catch (error) {
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 status: 'error',
                 message: error instanceof Error ? error.message : 'Lead Finder Agent selhal.',
+                diagnostic: {
+                    mode: 'demo-fallback',
+                    discoverProvider: 'unknown',
+                    fallbackReason: 'network_error',
+                    userMessage: error instanceof Error ? error.message : 'Lead Finder Agent selhal.',
+                },
+            }));
+        }
+    };
+
+    const verifyAgentConfiguration = async () => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, healthMessage: 'Overuji Netlify Functions konfiguraci...' }));
+
+        try {
+            const health = await checkAgentHealth();
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                health,
+                healthMessage: 'Konfigurace agenta overena pres Netlify Function.',
+            }));
+        } catch {
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                health: undefined,
+                healthMessage: 'Netlify Functions nejsou dostupne z teto URL.',
             }));
         }
     };
@@ -380,12 +433,21 @@ function App() {
                 message: response.message,
                 isMock: response.isMock,
                 analyses: response.analysis ? { ...currentSession.analyses, [candidate.id]: response.analysis } : currentSession.analyses,
+                diagnostic: response.diagnostic
+                    ? { ...response.diagnostic, discoverProvider: currentSession.diagnostic?.discoverProvider }
+                    : currentSession.diagnostic,
             }));
         } catch (error) {
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 status: 'error',
                 message: error instanceof Error ? error.message : 'Analyza kandidata selhala.',
+                diagnostic: {
+                    mode: 'demo-fallback',
+                    analyzeProvider: 'unknown',
+                    fallbackReason: 'network_error',
+                    userMessage: error instanceof Error ? error.message : 'Analyza kandidata selhala.',
+                },
             }));
         }
     };
@@ -551,6 +613,7 @@ function App() {
                 <LeadFinderPanel
                     onAddCandidate={addAgentCandidateToLeads}
                     onAnalyzeCandidate={analyzeAgentCandidate}
+                    onCheckHealth={verifyAgentConfiguration}
                     onRejectCandidate={rejectAgentCandidate}
                     onRunSearch={runLeadAgentSearch}
                     onUpdateRequest={updateAgentRequest}
@@ -725,12 +788,13 @@ interface LeadFinderPanelProps {
     session: LeadAgentSession;
     onUpdateRequest: <Field extends keyof LeadAgentSearchRequest>(field: Field, value: LeadAgentSearchRequest[Field]) => void;
     onRunSearch: () => void;
+    onCheckHealth: () => void;
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
     onAddCandidate: (candidate: LeadAgentCandidate) => void;
     onRejectCandidate: (candidateId: string) => void;
 }
 
-function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate, onRunSearch, onUpdateRequest, session }: LeadFinderPanelProps) {
+function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onCheckHealth, onRejectCandidate, onRunSearch, onUpdateRequest, session }: LeadFinderPanelProps) {
     const visibleCandidates = session.candidates.filter((candidate) => !candidate.rejected);
 
     return (
@@ -742,6 +806,10 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate
                         <h2>Spustit Lead Finder Agenta</h2>
                     </div>
                     <div className="button-group">
+                        <button className="secondary-button" onClick={onCheckHealth} type="button">
+                            <Sparkles size={18} aria-hidden="true" />
+                            Ověřit konfiguraci agenta
+                        </button>
                         <button className="primary-button" disabled={session.status === 'searching'} onClick={onRunSearch} type="button">
                             <Search size={18} aria-hidden="true" />
                             {session.status === 'searching' ? 'Hledam...' : 'Najit potencialni klienty'}
@@ -784,6 +852,8 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate
                 <p className="eyebrow">Stav agenta</p>
                 <h2>{session.status}</h2>
                 <p className="section-help">{session.message || 'Zadej lokalitu a segment, potom spust hledani.'}</p>
+                <AgentDiagnosticBox diagnostic={session.diagnostic} />
+                <AgentHealthBox health={session.health} message={session.healthMessage} />
             </aside>
 
             <div className="panel finder-results">
@@ -859,7 +929,7 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate
                                                     Zamítnout
                                                 </button>
                                             </div>
-                                            {analysis ? <AgentAnalysisPreview analysis={analysis} /> : null}
+                                            {analysis ? <AgentAnalysisPreview analysis={analysis} diagnostic={session.diagnostic} /> : null}
                                         </td>
                                     </tr>
                                     );
@@ -873,11 +943,50 @@ function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate
     );
 }
 
-function AgentAnalysisPreview({ analysis }: { analysis: LeadAgentAnalysis }) {
+function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }) {
+    if (!diagnostic) return null;
+
+    return (
+        <div className="diagnostic-box">
+            <p className="eyebrow">Diagnostika</p>
+            {diagnostic.discoverProvider ? <span>Discovery provider: {diagnostic.discoverProvider}</span> : null}
+            {diagnostic.analyzeProvider ? <span>Analysis provider: {diagnostic.analyzeProvider}</span> : null}
+            {diagnostic.fallbackReason ? <span>Fallback reason: {diagnostic.fallbackReason}</span> : null}
+            {diagnostic.httpStatus ? <span>HTTP status: {diagnostic.httpStatus}</span> : null}
+            {diagnostic.debugId ? <span>Debug ID: {diagnostic.debugId}</span> : null}
+            {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>OpenAI key: {diagnostic.hasOpenAIKey ? 'OK' : 'chybi'}</span> : null}
+            {diagnostic.model ? <span>Model: {diagnostic.model}</span> : null}
+            <span>{diagnostic.userMessage}</span>
+        </div>
+    );
+}
+
+function AgentHealthBox({ health, message }: { health?: LeadAgentHealth; message?: string }) {
+    if (!health && !message) return null;
+
+    return (
+        <div className="diagnostic-box">
+            <p className="eyebrow">Konfigurace</p>
+            {message ? <span>{message}</span> : null}
+            {health ? (
+                <>
+                    <span>Runtime: {health.runtime}</span>
+                    <span>Tavily key: {health.hasTavilyKey ? 'OK' : 'chybi'}</span>
+                    <span>OpenAI key: {health.hasOpenAIKey ? 'OK' : 'chybi'}</span>
+                    <span>Model: {health.openAIModel || 'nenastaveno'}</span>
+                    <span>Timestamp: {health.timestamp}</span>
+                </>
+            ) : null}
+        </div>
+    );
+}
+
+function AgentAnalysisPreview({ analysis, diagnostic }: { analysis: LeadAgentAnalysis; diagnostic?: LeadAgentDiagnostic }) {
     return (
         <div className="analysis-preview">
             <p className="eyebrow">Analyza</p>
             <strong>{analysis.firstImpression}</strong>
+            {diagnostic?.analyzeProvider && diagnostic.analyzeProvider !== 'openai' ? <AgentDiagnosticBox diagnostic={diagnostic} /> : null}
             <div className="signal-list">
                 {analysis.quickWins.slice(0, 3).map((win) => (
                     <span key={win.title}>{win.title}</span>

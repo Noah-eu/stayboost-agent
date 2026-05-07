@@ -382,6 +382,24 @@ tbody tr:hover,
     min-height: 170px;
 }
 
+.diagnostic-box {
+    background: #f7fbfb;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    color: #314147;
+    display: grid;
+    font-size: 0.84rem;
+    font-weight: 750;
+    gap: 7px;
+    line-height: 1.35;
+    margin-top: 12px;
+    padding: 10px 12px;
+}
+
+.diagnostic-box .eyebrow {
+    margin-bottom: 0;
+}
+
 .compact-button {
     min-height: 36px;
     padding: 7px 10px;

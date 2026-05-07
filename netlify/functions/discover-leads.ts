@@ -1,5 +1,8 @@
 type OfferAngle = 'main-photo' | 'photo-order' | 'description' | 'reviews' | 'guest-communication' | 'guest-guide';
 
+declare const process: { env: Record<string, string | undefined> };
+declare const Buffer: { from(value: string): { toString(encoding: string): string } };
+
 type AccommodationType = 'Hotel' | 'Penzion' | 'Apartman' | 'Glamping' | 'Jine';
 
 interface DiscoverRequest {
@@ -118,6 +121,14 @@ const fallbackCandidates = (request: DiscoverRequest) => ({
     status: 'needs-config',
     message: 'TAVILY_API_KEY neni nakonfigurovany. Vracim demo kandidaty; nejde o realne vyhledani na webu.',
     isMock: true,
+    diagnostic: {
+        mode: 'demo-fallback',
+        discoverProvider: 'demo',
+        fallbackReason: 'missing_tavily_api_key',
+        httpStatus: 200,
+        userMessage: 'Discovery bezi v demo fallbacku: missing_tavily_api_key',
+        runtime: 'netlify-function',
+    },
     candidates: [
         {
             id: 'mock-agent-river-gate',
@@ -194,6 +205,13 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         status: 'found',
         message: 'Kandidati vznikli z Tavily search vysledku a snippetů. Nejde o scraping Booking/Airbnb/Google stranek.',
         isMock: false,
+        diagnostic: {
+            mode: 'real-api',
+            discoverProvider: 'tavily',
+            httpStatus: 200,
+            userMessage: 'Discovery provider: tavily',
+            runtime: 'netlify-function',
+        },
         candidates,
     });
 };

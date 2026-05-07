@@ -1,4 +1,4 @@
-import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentSearchRequest } from './leadAgentTypes';
+import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentHealth, LeadAgentSearchRequest } from './leadAgentTypes';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -113,6 +113,17 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
     };
 };
 
+class ApiError extends Error {
+    data: unknown;
+    status: number;
+
+    constructor(message: string, status: number, data: unknown) {
+        super(message);
+        this.data = data;
+        this.status = status;
+    }
+}
+
 async function postJson<ResponseType>(url: string, body: unknown): Promise<ResponseType> {
     const response = await fetch(url, {
         method: 'POST',
@@ -120,22 +131,59 @@ async function postJson<ResponseType>(url: string, body: unknown): Promise<Respo
         body: JSON.stringify(body),
     });
 
+    const data = await response.json().catch(() => null) as ResponseType | null;
+
     if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new ApiError(`HTTP ${response.status}`, response.status, data);
     }
 
-    return (await response.json()) as ResponseType;
+    return data as ResponseType;
 }
+
+async function getJson<ResponseType>(url: string): Promise<ResponseType> {
+    const response = await fetch(url);
+    const data = await response.json().catch(() => null) as ResponseType | null;
+
+    if (!response.ok) {
+        throw new ApiError(`HTTP ${response.status}`, response.status, data);
+    }
+
+    if (!data) {
+        throw new ApiError('Invalid JSON response', response.status, data);
+    }
+
+    return data as ResponseType;
+}
+
+const isAgentHealth = (value: unknown): value is LeadAgentHealth => {
+    const health = value as Partial<LeadAgentHealth> | null;
+    return Boolean(
+        health
+        && health.ok === true
+        && typeof health.runtime === 'string'
+        && typeof health.hasTavilyKey === 'boolean'
+        && typeof health.hasOpenAIKey === 'boolean'
+        && typeof health.timestamp === 'string',
+    );
+};
 
 export async function discoverLeads(request: LeadAgentSearchRequest): Promise<LeadAgentDiscoverResponse> {
     try {
         const response = await postJson<LeadAgentDiscoverResponse>('/.netlify/functions/discover-leads', request);
         return response;
-    } catch {
+    } catch (error) {
+        const httpStatus = error instanceof ApiError ? error.status : undefined;
         return {
             status: 'needs-config',
-            message: 'Autonomni hledani vyzaduje TAVILY_API_KEY a OPENAI_API_KEY v Netlify environment variables. Bez nich bezi demo rezim.',
+            message: httpStatus === 404 ? 'Discovery fallback: function_404' : 'Discovery fallback: network_error',
             isMock: true,
+            diagnostic: {
+                mode: 'demo-fallback',
+                discoverProvider: 'demo',
+                fallbackReason: httpStatus === 404 ? 'function_404' : 'network_error',
+                httpStatus,
+                userMessage: httpStatus === 404 ? 'Discovery function neni dostupna: function_404' : 'Discovery function neni dostupna: network_error',
+            },
             candidates: mockCandidates(request),
         };
     }
@@ -150,12 +198,36 @@ export async function analyzeLead(candidate: LeadAgentCandidate, userNotes = '')
             userNotes,
         });
         return response;
-    } catch {
+    } catch (error) {
+        if (error instanceof ApiError && error.data) {
+            return error.data as LeadAgentAnalyzeResponse;
+        }
+
+        const httpStatus = error instanceof ApiError ? error.status : undefined;
+        const fallbackReason = httpStatus === 404 ? 'function_404' : 'network_error';
+
         return {
             status: 'completed',
-            message: 'AI analyza neni dostupna v lokalnim Vite rezimu nebo chybi konfigurace. Pouzivam demo analyzu ze search snippetů.',
+            message: `OpenAI analyza nebezela: ${fallbackReason}`,
             isMock: true,
+            diagnostic: {
+                mode: 'demo-fallback',
+                analyzeProvider: 'demo-fallback',
+                fallbackReason,
+                httpStatus,
+                userMessage: `OpenAI analyza nebezela: ${fallbackReason}`,
+            },
             analysis: mockAnalysis(candidate),
         };
     }
+}
+
+export async function checkAgentHealth(): Promise<LeadAgentHealth> {
+    const health = await getJson<LeadAgentHealth>('/.netlify/functions/agent-health');
+
+    if (!isAgentHealth(health)) {
+        throw new Error('Invalid agent health response');
+    }
+
+    return health;
 }
