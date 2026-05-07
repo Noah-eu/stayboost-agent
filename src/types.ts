@@ -21,11 +21,11 @@ export type PublicProfileSourceType = 'booking' | 'airbnb' | 'google' | 'website
 
 export type MainPhotoVerdict = 'strong' | 'average' | 'weak' | 'unknown';
 
-export type SourceMaterialType = 'pasted-text' | 'screenshot-note' | 'manual-note';
+export type SourceMaterialType = 'pasted-text' | 'screenshot-note' | 'manual-note' | 'website-extraction';
 
 export type AgentLeadStatus = 'quick-discovery' | 'analyzed' | 'added-without-analysis' | 'manual';
 
-export type EvidenceLevel = 'search-snippet-only' | 'website-snippet' | 'pasted-public-text' | 'screenshot-analysis' | 'full-agent-analysis';
+export type EvidenceLevel = 'search-snippet-only' | 'website-snippet' | 'website-extracted' | 'pasted-public-text' | 'screenshot-analysis' | 'full-agent-analysis';
 
 export type LeadScreenshotType = 'ota-profile-screenshot' | 'photo-gallery-screenshot' | 'review-screenshot' | 'website-screenshot' | 'other';
 
@@ -95,6 +95,47 @@ export interface ScreenshotAnalysisDiagnostic {
     model?: string | null;
     elapsedMs?: number;
     hasOpenAIKey?: boolean;
+}
+
+export interface WebsiteExtractedPage {
+    url: string;
+    title: string;
+    textPreview: string;
+    contentLength: number;
+}
+
+export interface WebsiteExtractionContact {
+    emails: string[];
+    phones: string[];
+    contactPageUrl: string | null;
+}
+
+export interface WebsiteExtractionResult {
+    provider: 'tavily-extract' | 'fallback' | 'error';
+    status: 'completed' | 'partial' | 'unsupported' | 'error';
+    websiteUrl: string;
+    pagesExtracted: WebsiteExtractedPage[];
+    contact: WebsiteExtractionContact;
+    websiteSignals: string[];
+    arrivalSignals: string[];
+    parkingSignals: string[];
+    faqSignals: string[];
+    guestGuideSignals: string[];
+    automationSignals: string[];
+    missingPublicInfoSignals: string[];
+    likelyManualProcessSignals: string[];
+    strengths: string[];
+    risks: string[];
+    setupOpportunitySignals: string[];
+    fixOpportunitySignals: string[];
+    evidenceLimits: string[];
+    summary: string;
+    debug: {
+        debugId: string;
+        elapsedMs: number;
+        partial: boolean;
+        reason: string | null;
+    };
 }
 
 export interface AuditExtractionInput {
@@ -188,6 +229,7 @@ export interface Lead {
     screenshots: LeadScreenshot[];
     screenshotAnalysis?: ScreenshotAnalysisResult;
     screenshotAnalysisDiagnostic?: ScreenshotAnalysisDiagnostic;
+    websiteExtraction?: WebsiteExtractionResult;
     extractionStatus: ExtractionStatus;
     firstImpression: string;
     mainPhotoVerdict: MainPhotoVerdict;
@@ -261,6 +303,7 @@ export const sourceMaterialTypeLabels: Record<SourceMaterialType, string> = {
     'pasted-text': 'zkopirovany verejny text',
     'screenshot-note': 'poznamka ze screenshotu',
     'manual-note': 'rucni poznamka',
+    'website-extraction': 'extrakce vlastniho webu',
 };
 
 export const agentLeadStatusLabels: Record<AgentLeadStatus, string> = {
@@ -273,6 +316,7 @@ export const agentLeadStatusLabels: Record<AgentLeadStatus, string> = {
 export const evidenceLevelLabels: Record<EvidenceLevel, string> = {
     'search-snippet-only': 'Search snippet only',
     'website-snippet': 'Website evidence',
+    'website-extracted': 'Web přečten',
     'pasted-public-text': 'Vložený veřejný text',
     'screenshot-analysis': 'Screenshot analyzed',
     'full-agent-analysis': 'Full agent analysis',

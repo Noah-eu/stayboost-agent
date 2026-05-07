@@ -1,6 +1,6 @@
 import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads } from './agentApi';
+import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
@@ -35,6 +35,7 @@ import {
     sourceMaterialTypeLabels,
     SourceMaterial,
     SourceMaterialType,
+    WebsiteExtractionResult,
 } from './types';
 
 type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
@@ -147,6 +148,10 @@ const splitLines = (value: string) =>
 
 const joinLines = (value: string[]) => value.join('\n');
 
+const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
+const isOtaOrAggregatorUrl = (url = '') => blockedWebsiteExtractorHosts.some((host) => url.toLowerCase().includes(host));
+const hasOwnWebsiteUrl = (candidate: Pick<LeadAgentCandidate, 'websiteUrl' | 'sourceUrls'>) => Boolean(candidate.websiteUrl && !isOtaOrAggregatorUrl(candidate.websiteUrl)) || candidate.sourceUrls.some((url) => !isOtaOrAggregatorUrl(url));
+
 const detectSourceType = (url: string): PublicProfileSourceType => {
     const normalizedUrl = url.toLowerCase();
 
@@ -162,7 +167,7 @@ const detectSourceType = (url: string): PublicProfileSourceType => {
         return 'google';
     }
 
-    return normalizedUrl ? 'other' : 'website';
+    return normalizedUrl ? 'website' : 'other';
 };
 
 const emptyPublicLink = (): PublicProfileLink => ({
@@ -253,6 +258,7 @@ const inferAgentLeadStatus = (lead: Partial<Lead>): Lead['agentLeadStatus'] => {
 const inferEvidenceLevel = (lead: Partial<Lead>): Lead['evidenceLevel'] => {
     if (lead.evidenceLevel) return lead.evidenceLevel;
     if (lead.createdFromAgentAnalysis) return 'full-agent-analysis';
+    if (lead.websiteExtraction?.status === 'completed' || lead.websiteExtraction?.status === 'partial') return 'website-extracted';
     if ((lead.screenshotAnalysis || lead.screenshots?.length) && lead.structuredQuickWins?.length) return 'screenshot-analysis';
     if ((lead.sourceMaterials ?? []).some((material) => material.content?.trim())) return 'pasted-public-text';
     if (lead.addedWithoutAgentAnalysis) return 'search-snippet-only';
@@ -338,6 +344,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         screenshots: lead.screenshots ?? [],
         screenshotAnalysis: lead.screenshotAnalysis,
         screenshotAnalysisDiagnostic: lead.screenshotAnalysisDiagnostic ?? { status: 'idle' },
+        websiteExtraction: lead.websiteExtraction,
     };
 };
 
@@ -429,6 +436,7 @@ const normalizeAgentCandidate = (candidate: Partial<LeadAgentCandidate>): LeadAg
         contradictionWarnings: candidate.contradictionWarnings ?? [],
         recommendedAngle: candidate.recommendedAngle ?? 'main-photo',
         evidenceSummary: candidate.evidenceSummary ?? 'Chybi evidence summary.',
+        websiteExtraction: candidate.websiteExtraction,
         isMock,
         isLegacy: candidate.isLegacy ?? !candidate.runId,
         addedLeadId: candidate.addedLeadId,
@@ -477,6 +485,7 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
 
 const evidenceBadgeForCandidate = (candidate: LeadAgentCandidate, analysis?: LeadAgentAnalysis) => {
     if (analysis) return 'Full agent analysis';
+    if (candidate.websiteExtraction && ['completed', 'partial'].includes(candidate.websiteExtraction.status)) return 'Web přečten';
     if (candidate.websiteSignals.length > 0 || candidate.websiteUrl) return 'Website evidence';
     return 'Search snippet only';
 };
@@ -524,6 +533,7 @@ const candidateFromLead = (lead: Lead): LeadAgentCandidate => ({
     contradictionWarnings: ['Netvrdit, že nemají guest guide, pokud to není v dodaných podkladech prokazatelné.'],
     recommendedAngle: lead.selectedOfferAngle,
     evidenceSummary: lead.notes || lead.firstImpression || 'CRM lead bez plné agentní analýzy.',
+    websiteExtraction: lead.websiteExtraction,
     isMock: lead.isDemoLead ?? false,
     isLegacy: false,
 });
@@ -577,6 +587,64 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
     };
 };
 
+const candidateWithWebsiteExtraction = (candidate: LeadAgentCandidate, websiteExtraction: WebsiteExtractionResult): LeadAgentCandidate => {
+    if (!['completed', 'partial'].includes(websiteExtraction.status)) {
+        return {
+            ...candidate,
+            websiteExtraction,
+            missingEvidence: [...new Set([...candidate.missingEvidence, ...websiteExtraction.evidenceLimits])],
+            evidenceSummary: `${candidate.evidenceSummary}\nWebsite extraction: ${websiteExtraction.summary}`.trim(),
+        };
+    }
+
+    const hasContact = websiteExtraction.contact.emails.length > 0 || websiteExtraction.contact.phones.length > 0 || Boolean(candidate.possibleEmail);
+    const hasStructuredArrival = websiteExtraction.arrivalSignals.length > 0 || websiteExtraction.parkingSignals.length > 0 || websiteExtraction.faqSignals.length > 0;
+    const hasSetupOpportunity = websiteExtraction.setupOpportunitySignals.length > 0 && !hasStructuredArrival;
+    const hasFixOpportunity = websiteExtraction.fixOpportunitySignals.length > 0;
+    const publicMaturityScore = Math.max(candidate.publicMaturityScore, Math.min(100, 20 + websiteExtraction.websiteSignals.length * 10 + websiteExtraction.arrivalSignals.length * 18 + websiteExtraction.parkingSignals.length * 12 + websiteExtraction.faqSignals.length * 18 + websiteExtraction.automationSignals.length * 16));
+    const automationNeedScore = hasSetupOpportunity ? Math.max(candidate.automationNeedScore, 68) : Math.max(0, candidate.automationNeedScore - (hasStructuredArrival ? 18 : 0));
+    const opportunityType: LeadAgentOpportunityType = hasFixOpportunity
+        ? 'fix-existing-process'
+        : hasSetupOpportunity
+            ? 'setup-automation'
+            : publicMaturityScore >= 70
+                ? 'benchmark'
+                : candidate.opportunityType;
+    const opportunityScore = Math.max(candidate.opportunityScore, hasFixOpportunity ? 72 : hasSetupOpportunity ? 70 : hasContact ? 44 : 28);
+    const fitVerdict = hasFixOpportunity || hasSetupOpportunity
+        ? hasContact ? 'strong-opportunity' : 'moderate-opportunity'
+        : publicMaturityScore >= 70 ? 'weak-opportunity' : candidate.fitVerdict;
+
+    return {
+        ...candidate,
+        websiteExtraction,
+        sourceUrls: [...new Set([candidate.websiteUrl, ...candidate.sourceUrls, ...websiteExtraction.pagesExtracted.map((page) => page.url)].filter(Boolean))],
+        possibleEmail: candidate.possibleEmail || websiteExtraction.contact.emails[0] || '',
+        contactMissing: !hasContact,
+        signals: [...new Set([...candidate.signals, ...websiteExtraction.strengths, ...websiteExtraction.websiteSignals])],
+        risks: [...new Set([...candidate.risks, ...websiteExtraction.risks])],
+        websiteSignals: [...new Set([...candidate.websiteSignals, ...websiteExtraction.websiteSignals, ...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals])],
+        contactSignals: [...new Set([...candidate.contactSignals, ...websiteExtraction.contact.emails.map((email) => `E-mail: ${email}`), ...websiteExtraction.contact.phones.map((phone) => `Telefon: ${phone}`)])],
+        missingAutomationSignals: [...new Set([...websiteExtraction.missingPublicInfoSignals, ...candidate.missingAutomationSignals])],
+        likelyManualProcessSignals: [...new Set([...candidate.likelyManualProcessSignals, ...websiteExtraction.likelyManualProcessSignals])],
+        opportunityType,
+        automationNeedScore,
+        publicMaturityScore,
+        opportunityScore,
+        fitVerdict,
+        confidence: websiteExtraction.status === 'completed' ? 'medium' : candidate.confidence,
+        qualificationReason: hasSetupOpportunity
+            ? 'Website Extractor našel vlastní web a setup příležitost: praktické příjezdové informace nejsou veřejně jasně strukturované. Guest guide může existovat neveřejně.'
+            : hasFixOpportunity
+                ? 'Website Extractor našel vlastní web a konkrétní mezeru ve veřejné struktuře praktických informací.'
+                : publicMaturityScore >= 70
+                    ? 'Website Extractor ukazuje dobře strukturovaný vlastní web; kandidát je spíš benchmark nebo slabší priorita.'
+                    : candidate.qualificationReason,
+        evidenceSummary: `${candidate.evidenceSummary}\nWebsite extraction: ${websiteExtraction.summary}`.trim(),
+        missingEvidence: [...new Set([...candidate.missingEvidence, ...websiteExtraction.evidenceLimits])],
+    };
+};
+
 const normalizeAgentSession = (session: Partial<LeadAgentSession>, loadedFromStorage = false): LeadAgentSession => {
     const base = emptyAgentSession();
     const candidates = (session.candidates ?? []).map(normalizeAgentCandidate);
@@ -625,6 +693,7 @@ function App() {
     const [draftLead, setDraftLead] = useState<Lead>(() => leads[0] ?? emptyLead());
     const [isCreating, setIsCreating] = useState(false);
     const [copiedTextId, setCopiedTextId] = useState('');
+    const [extractingWebsiteCandidateIds, setExtractingWebsiteCandidateIds] = useState<string[]>([]);
     const [leadAgentSession, setLeadAgentSession] = useState<LeadAgentSession>(() => {
         const storedSession = localStorage.getItem(agentStorageKey);
 
@@ -1015,6 +1084,24 @@ function App() {
         });
     };
 
+    const extractCandidateWebsite = async (candidate: LeadAgentCandidate) => {
+        if (!hasOwnWebsiteUrl(candidate)) return;
+
+        setExtractingWebsiteCandidateIds((current) => [...new Set([...current, candidate.id])]);
+        try {
+            const websiteExtraction = await extractWebsite(candidate, leadAgentSession.request.notes);
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                candidates: currentSession.candidates.map((currentCandidate) => currentCandidate.id === candidate.id
+                    ? candidateWithWebsiteExtraction(currentCandidate, websiteExtraction)
+                    : currentCandidate),
+                message: `Website extraction: ${websiteExtraction.status} pro ${candidate.name}`,
+            }));
+        } finally {
+            setExtractingWebsiteCandidateIds((current) => current.filter((candidateId) => candidateId !== candidate.id));
+        }
+    };
+
     const addAgentCandidateToLeads = (candidate: LeadAgentCandidate) => {
         if (candidate.isMock) {
             const confirmed = window.confirm('Toto je demo kandidát, není to skutečný klient. Přidat jen pro test?');
@@ -1023,6 +1110,7 @@ function App() {
         }
 
         const analysis = leadAgentSession.analyses[candidate.id];
+        const websiteExtraction = candidate.websiteExtraction;
         const candidateText = candidate.sourceSnippets.join('\n');
         const hasAgentAnalysis = Boolean(analysis);
         const quickWins = (analysis?.quickWins ?? []).slice(0, 3).map((win) => ({
@@ -1038,6 +1126,8 @@ function App() {
             '',
             'Source snippets:',
             candidateText,
+            websiteExtraction ? `\nWebsite extraction summary:\n${websiteExtraction.summary}` : '',
+            websiteExtraction ? `Pages extracted:\n${websiteExtraction.pagesExtracted.map((page) => `${page.url} (${page.contentLength})`).join('\n')}` : '',
         ].filter(Boolean).join('\n');
         const selectedOfferAngle = offerAngleForAgentLead(analysis?.opportunityType ?? candidate.opportunityType, analysis?.targetOffer ?? candidate.targetOffer, candidate.recommendedAngle);
         const nextLeadBase: Lead = {
@@ -1055,14 +1145,35 @@ function App() {
                 label: publicProfileSourceLabels[detectSourceType(url)],
                 notes: candidate.isMock ? 'Demo agentni kandidat; URL nebyla automaticky ctena.' : 'Agentni kandidat ze search API; URL nebyla scrapovana.',
             })),
-            sourceMaterials: [{
-                id: `source-${crypto.randomUUID()}`,
-                type: 'pasted-text',
-                sourceLinkId: '',
-                title: hasAgentAnalysis ? 'Agent analysis source' : 'Agent candidate source without analysis',
-                content: agentSourceContent,
-                createdAt: new Date().toISOString(),
-            }],
+            sourceMaterials: [
+                {
+                    id: `source-${crypto.randomUUID()}`,
+                    type: 'pasted-text',
+                    sourceLinkId: '',
+                    title: hasAgentAnalysis ? 'Agent analysis source' : 'Agent candidate source without analysis',
+                    content: agentSourceContent,
+                    createdAt: new Date().toISOString(),
+                },
+                ...(websiteExtraction ? [{
+                    id: `source-${crypto.randomUUID()}`,
+                    type: 'website-extraction' as const,
+                    sourceLinkId: '',
+                    title: 'Website extraction source',
+                    content: [
+                        websiteExtraction.summary,
+                        '',
+                        'Contacts:',
+                        [...websiteExtraction.contact.emails, ...websiteExtraction.contact.phones].join('\n') || 'Kontakt nenalezen',
+                        '',
+                        'Pages:',
+                        websiteExtraction.pagesExtracted.map((page) => `${page.title}\n${page.url}\n${page.textPreview}`).join('\n\n'),
+                        '',
+                        'Evidence limits:',
+                        websiteExtraction.evidenceLimits.join('\n'),
+                    ].join('\n'),
+                    createdAt: new Date().toISOString(),
+                }] : []),
+            ],
             extractionStatus: analysis ? 'completed' : 'ready',
             email: candidate.possibleEmail,
             status: analysis ? 'Audit pripraven' : 'Novy',
@@ -1071,11 +1182,13 @@ function App() {
             createdFromAgentAnalysis: hasAgentAnalysis,
             addedWithoutAgentAnalysis: !hasAgentAnalysis,
             agentLeadStatus: hasAgentAnalysis ? 'analyzed' : 'quick-discovery',
-            evidenceLevel: hasAgentAnalysis ? 'full-agent-analysis' : candidate.websiteSignals.length > 0 || candidate.websiteUrl ? 'website-snippet' : 'search-snippet-only',
+            evidenceLevel: hasAgentAnalysis ? 'full-agent-analysis' : websiteExtraction && ['completed', 'partial'].includes(websiteExtraction.status) ? 'website-extracted' : candidate.websiteSignals.length > 0 || candidate.websiteUrl ? 'website-snippet' : 'search-snippet-only',
             needsAgentAnalysis: !hasAgentAnalysis,
             sourceLimitations: hasAgentAnalysis
                 ? analysis.evidenceLimits
-                : ['Tento lead vznikl jen z rychlého vyhledání.', 'Search snippety nejsou kompletní OTA profil.', 'OTA URL jsou jen odkazy k otevření, ne automaticky přečtený zdroj.', 'Screenshoty jsou analyzované jen tehdy, když je uživatel nahraje.', 'Nelze veřejně ověřit, zda mají guest guide; guest guide může existovat neveřejně.'],
+                : websiteExtraction
+                    ? websiteExtraction.evidenceLimits
+                    : ['Tento lead vznikl jen z rychlého vyhledání.', 'Search snippety nejsou kompletní OTA profil.', 'OTA URL jsou jen odkazy k otevření, ne automaticky přečtený zdroj.', 'Screenshoty jsou analyzované jen tehdy, když je uživatel nahraje.', 'Nelze veřejně ověřit, zda mají guest guide; guest guide může existovat neveřejně.'],
             leadAgentRunId: candidate.runId,
             agentAnalysisProvider: analysis?.provider ?? '',
             isDemoLead: candidate.isMock,
@@ -1090,19 +1203,20 @@ function App() {
             automationNeedScore: analysis?.automationNeedScore ?? candidate.automationNeedScore,
             reviewFrictionScore: analysis?.reviewFrictionScore ?? candidate.reviewFrictionScore,
             publicMaturityScore: analysis?.publicMaturityScore ?? candidate.publicMaturityScore,
-            publicSignals: [...new Set([...candidate.signals, ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals)])],
+            publicSignals: [...new Set([...candidate.signals, ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals), ...(websiteExtraction?.strengths ?? [])])],
             quickWins: quickWins.map((win) => win.title),
             proposedQuickWins: quickWins.map((win) => win.title),
-            firstImpression: analysis?.firstImpression ?? '',
+            firstImpression: analysis?.firstImpression ?? websiteExtraction?.summary ?? '',
             mainPhotoVerdict: 'unknown',
-            descriptionObservation: analysis?.offerHypothesis ?? candidate.offerHypothesis,
-            checkInParkingInfo: (analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals).join('\n'),
+            descriptionObservation: analysis?.offerHypothesis ?? websiteExtraction?.summary ?? candidate.offerHypothesis,
+            checkInParkingInfo: [...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals), ...(websiteExtraction?.arrivalSignals ?? []), ...(websiteExtraction?.parkingSignals ?? []), ...(websiteExtraction?.faqSignals ?? [])].join('\n'),
             reviewSignals: [...(analysis?.painSignals ?? candidate.painSignals), ...(analysis?.positiveSolvedSignals ?? candidate.positiveSolvedSignals), candidateText].filter(Boolean).join('\n'),
             guestFrictionSignals: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
             guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
-            strengths: analysis?.strengths.join('\n') ?? candidate.signals.join('\n'),
-            risks: analysis?.risks.join('\n') ?? candidate.risks.join('\n'),
-            businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : '',
+            strengths: analysis?.strengths.join('\n') ?? [...candidate.signals, ...(websiteExtraction?.strengths ?? [])].join('\n'),
+            risks: analysis?.risks.join('\n') ?? [...candidate.risks, ...(websiteExtraction?.risks ?? [])].join('\n'),
+            businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : websiteExtraction ? [...websiteExtraction.setupOpportunitySignals, ...websiteExtraction.fixOpportunitySignals].join('\n') : '',
+            websiteExtraction,
             structuredQuickWins: quickWins,
             internalAgentBrief: analysis?.miniAudit ?? '',
             clientMiniAudit: '',
@@ -1326,6 +1440,8 @@ function App() {
                     onDeleteResults={deleteAgentResults}
                     onNewSearch={() => resetAgentResults(true)}
                     onRejectCandidate={rejectAgentCandidate}
+                    onExtractWebsite={extractCandidateWebsite}
+                    extractingWebsiteCandidateIds={extractingWebsiteCandidateIds}
                     onRunDemo={runDemoLeadAgentSearch}
                     onRunSearch={runLeadAgentSearch}
                     onRunKnownTarget={runKnownTargetCheck}
@@ -1518,6 +1634,8 @@ interface LeadFinderPanelProps {
     onRunKnownTarget: () => void;
     onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
     onClearAnalysis: (candidateId: string) => void;
+    onExtractWebsite: (candidate: LeadAgentCandidate) => void;
+    extractingWebsiteCandidateIds: string[];
     onAddCandidate: (candidate: LeadAgentCandidate) => void;
     onRejectCandidate: (candidateId: string) => void;
 }
@@ -1531,6 +1649,7 @@ function LeadFinderPanel({
     onContinueStoredSession,
     onDeleteResults,
     onDeleteDemoData,
+    onExtractWebsite,
     onNewSearch,
     onRejectCandidate,
     onRunSearch,
@@ -1539,6 +1658,7 @@ function LeadFinderPanel({
     onUpdateFilter,
     onUpdateRequest,
     onUpdateSort,
+    extractingWebsiteCandidateIds,
     session,
 }: LeadFinderPanelProps) {
     const hasStoredResults = session.loadedFromStorage && !session.storedBannerDismissed && (session.candidates.length > 0 || Object.keys(session.analyses).length > 0);
@@ -1558,9 +1678,17 @@ function LeadFinderPanel({
         if (session.candidateFilter === 'no-pain-or-skip') return candidate.painSignals.length === 0 || ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
         if (session.candidateFilter === 'benchmark-solved') return candidate.positiveSolvedSignals.length > 0 && candidate.painSignals.length === 0;
         if (session.candidateFilter === 'weak-or-skip') return ['weak-opportunity', 'not-enough-evidence', 'skip'].includes(candidate.fitVerdict);
+        if (session.candidateFilter === 'website-extracted') return ['completed', 'partial'].includes(candidate.websiteExtraction?.status ?? '');
+        if (session.candidateFilter === 'setup-opportunity') return candidate.websiteExtraction?.setupOpportunitySignals.length ? true : candidate.opportunityType === 'setup-automation';
+        if (session.candidateFilter === 'fix-opportunity') return candidate.websiteExtraction?.fixOpportunitySignals.length ? true : candidate.opportunityType === 'fix-existing-process';
+        if (session.candidateFilter === 'without-own-website') return !hasOwnWebsiteUrl(candidate);
         return true;
     });
     const visibleCandidates = [...filteredCandidates].sort((first, second) => {
+        if (session.candidateSort === 'websiteExtracted') return Number(Boolean(second.websiteExtraction)) - Number(Boolean(first.websiteExtraction));
+        if (session.candidateSort === 'contactFirst') return Number(!second.contactMissing) - Number(!first.contactMissing);
+        if (session.candidateSort === 'setupOpportunity') return (second.websiteExtraction?.setupOpportunitySignals.length ?? 0) - (first.websiteExtraction?.setupOpportunitySignals.length ?? 0);
+        if (session.candidateSort === 'fixOpportunity') return (second.websiteExtraction?.fixOpportunitySignals.length ?? 0) - (first.websiteExtraction?.fixOpportunitySignals.length ?? 0);
         if (session.candidateSort === 'automationNeedScore') return second.automationNeedScore - first.automationNeedScore;
         if (session.candidateSort === 'reviewFrictionScore') return second.reviewFrictionScore - first.reviewFrictionScore;
         if (session.candidateSort === 'leadScore') return second.leadScore - first.leadScore;
@@ -1605,7 +1733,7 @@ function LeadFinderPanel({
 
                 <div className="scope-note">
                     Reálné leady vznikají jen z provideru Tavily. Demo kandidáti slouží pouze pro test UI a nejsou skuteční klienti.
-                    Aplikace nescrapuje Booking, Airbnb ani Google Maps a neposila e-maily automaticky.
+                    Website Extractor čte pouze vlastní veřejný web provozu. OTA profily jako Booking/Airbnb/Google Maps automaticky neprochází a neposílá e-maily automaticky.
                 </div>
 
                 {session.isMock ? <div className="scope-note demo-note demo-mode-banner"><strong>DEMO REŽIM — tito kandidáti jsou fiktivní</strong><span>Nepřidávej je jako reálné obchodní leady; slouží jen pro test UI.</span></div> : null}
@@ -1731,6 +1859,10 @@ function LeadFinderPanel({
                             <option value="setup-leads">Setup leads</option>
                             <option value="with-contact">Jen s kontaktem</option>
                             <option value="without-contact">Bez kontaktu</option>
+                            <option value="website-extracted">Jen s extrahovaným webem</option>
+                            <option value="setup-opportunity">Setup opportunity</option>
+                            <option value="fix-opportunity">Fix opportunity</option>
+                            <option value="without-own-website">Bez vlastního webu</option>
                             <option value="benchmark-or-skip">Benchmark / skip</option>
                             <option value="hidden">Skryté</option>
                         </select>
@@ -1743,6 +1875,10 @@ function LeadFinderPanel({
                             <option value="reviewFrictionScore">Nejvyssi reviewFrictionScore</option>
                             <option value="leadScore">Nejvyssi leadScore</option>
                             <option value="newest">Nejnovejsi</option>
+                            <option value="websiteExtracted">Web přečtený první</option>
+                            <option value="contactFirst">Kontakt první</option>
+                            <option value="setupOpportunity">Setup opportunity z webu</option>
+                            <option value="fixOpportunity">Fix opportunity z webu</option>
                         </select>
                     </label>
                 </div>
@@ -1777,6 +1913,8 @@ function LeadFinderPanel({
                                 {visibleCandidates.map((candidate) => {
                                     const analysis = session.analyses[candidate.id];
                                     const canAddCandidate = ['strong-opportunity', 'moderate-opportunity'].includes(candidate.fitVerdict) && ['fix-existing-process', 'setup-automation'].includes(candidate.opportunityType);
+                                    const canExtractWebsite = hasOwnWebsiteUrl(candidate);
+                                    const isExtractingWebsite = extractingWebsiteCandidateIds.includes(candidate.id);
                                     const addCandidate = () => {
                                         if (!canAddCandidate) {
                                             const confirmed = window.confirm('Tento kandidát nemá silnou prodejní příležitost podle dostupné evidence. Přesto přidat do leadů?');
@@ -1792,7 +1930,7 @@ function LeadFinderPanel({
                                             {candidate.isMock ? <span className="demo-badge">FIKTIVNÍ</span> : null}
                                             {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <span className="quick-badge">Rychlý nález</span> : null}
                                             <span className="evidence-badge">{evidenceBadgeForCandidate(candidate, analysis)}</span>
-                                            {!analysis ? <span className="evidence-badge warning-evidence">Needs screenshots</span> : null}
+                                            {!analysis ? <span className="evidence-badge warning-evidence">Needs web/analysis</span> : null}
                                             <strong>{candidate.isMock && !candidate.name.startsWith('DEMO') ? `DEMO — ${candidate.name}` : candidate.name}</strong>
                                             <small>{candidate.isMock ? 'Demo výsledek - není skutečný klient' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
                                             {!candidate.isMock && session.diagnostic?.discoverProvider === 'tavily' ? <small>Vyžaduje analýzu</small> : null}
@@ -1875,6 +2013,14 @@ function LeadFinderPanel({
                                                     <Sparkles size={16} aria-hidden="true" />
                                                     Analyzovat
                                                 </button>
+                                                {canExtractWebsite ? (
+                                                    <button className="secondary-button compact-button" disabled={isExtractingWebsite} onClick={() => onExtractWebsite(candidate)} type="button">
+                                                        <Search size={16} aria-hidden="true" />
+                                                        {isExtractingWebsite ? 'Extrahuji web...' : 'Extrahovat web'}
+                                                    </button>
+                                                ) : (
+                                                    <div className="scope-note warning-note compact-warning">Vlastní web nenalezen</div>
+                                                )}
                                                 {!canAddCandidate ? (
                                                     <div className="scope-note warning-note compact-warning">Slaby/skip kandidat. Neposilat osloveni bez dalsiho overeni kontaktu, painu nebo setup mezery.</div>
                                                 ) : null}
@@ -1886,6 +2032,7 @@ function LeadFinderPanel({
                                                     Odebrat z výsledků
                                                 </button>
                                             </div>
+                                            {candidate.websiteExtraction ? <WebsiteExtractionPanel extraction={candidate.websiteExtraction} /> : null}
                                             {analysis ? <AgentAnalysisPreview analysis={analysis} diagnostic={session.diagnostic} onClear={() => onClearAnalysis(candidate.id)} /> : null}
                                         </td>
                                     </tr>
@@ -1897,6 +2044,56 @@ function LeadFinderPanel({
                 )}
             </div>
         </section>
+    );
+}
+
+function WebsiteExtractionPanel({ extraction }: { extraction: WebsiteExtractionResult }) {
+    const hasContact = extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0;
+
+    return (
+        <div className="analysis-preview website-extraction-preview">
+            <div className="analysis-preview-header">
+                <div>
+                    <p className="eyebrow">Website extraction</p>
+                    <strong>{extraction.status}</strong>
+                    <span>{extraction.summary}</span>
+                </div>
+            </div>
+            <div className="metadata-row">
+                <span>{extraction.provider}</span>
+                <span>kontakt nalezen: {hasContact ? 'ano' : 'ne'}</span>
+                <span>stránky přečtené: {extraction.pagesExtracted.length}</span>
+                <span>partial: {extraction.debug.partial ? 'ano' : 'ne'}</span>
+            </div>
+            <div className="analysis-grid">
+                <div>
+                    <p className="eyebrow">Kontakty</p>
+                    {extraction.contact.emails.length > 0 ? extraction.contact.emails.map((email) => <span key={email}>{email}</span>) : <span>E-mail nenalezen</span>}
+                    {extraction.contact.phones.map((phone) => <span key={phone}>{phone}</span>)}
+                    {extraction.contact.contactPageUrl ? <a href={extraction.contact.contactPageUrl} rel="noreferrer" target="_blank">Kontakt stránka</a> : null}
+                </div>
+                <div>
+                    <p className="eyebrow">Stránky</p>
+                    {extraction.pagesExtracted.length > 0 ? extraction.pagesExtracted.map((page) => <a href={page.url} key={page.url} rel="noreferrer" target="_blank">{page.title || page.url} ({page.contentLength})</a>) : <span>Žádná stránka nebyla přečtena.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Hlavní signály</p>
+                    {[...extraction.websiteSignals, ...extraction.arrivalSignals, ...extraction.parkingSignals, ...extraction.faqSignals].slice(0, 8).map((signal) => <span key={signal}>{signal}</span>)}
+                </div>
+                <div>
+                    <p className="eyebrow">Setup opportunity</p>
+                    {extraction.setupOpportunitySignals.length > 0 ? extraction.setupOpportunitySignals.map((signal) => <span key={signal}>{signal}</span>) : <span>Bez setup signálu z webu.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Fix opportunity</p>
+                    {extraction.fixOpportunitySignals.length > 0 ? extraction.fixOpportunitySignals.map((signal) => <span key={signal}>{signal}</span>) : <span>Bez fix signálu z webu.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Evidence limits</p>
+                    {extraction.evidenceLimits.map((limit) => <span key={limit}>{limit}</span>)}
+                </div>
+            </div>
+        </div>
     );
 }
 
@@ -2154,8 +2351,19 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onAnalyz
                 <div className="evidence-status-panel">
                     <span>{agentLeadStatusLabels[draftLead.agentLeadStatus]}</span>
                     <span>{evidenceLevelLabels[draftLead.evidenceLevel]}</span>
+                    {draftLead.websiteExtraction && ['completed', 'partial'].includes(draftLead.websiteExtraction.status) ? <span>Web přečten</span> : null}
                     <span>{draftLead.needsAgentAnalysis ? 'Needs agent analysis' : 'Evidence ready'}</span>
                 </div>
+
+                {draftLead.websiteExtraction ? (
+                    <div className="scope-note website-lead-note">
+                        <strong>Web přečten</strong>
+                        <span>{draftLead.websiteExtraction.summary}</span>
+                        <span>Kontakt: {[...draftLead.websiteExtraction.contact.emails, ...draftLead.websiteExtraction.contact.phones].join(', ') || 'nenalezen'}</span>
+                        <span>Stránky: {draftLead.websiteExtraction.pagesExtracted.map((page) => page.url).join(', ') || 'žádná stránka nebyla přečtena'}</span>
+                        <span>Website Extractor čte pouze vlastní veřejný web provozu. OTA stránky nebyly automaticky čtené.</span>
+                    </div>
+                ) : null}
 
                 {draftLead.sourceLimitations.length > 0 ? (
                     <div className="scope-note source-limit-note">

@@ -1,5 +1,5 @@
 import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentHealth, LeadAgentSearchRequest } from './leadAgentTypes';
-import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult } from './types';
+import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult, WebsiteExtractionResult } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -418,6 +418,95 @@ const clientAnalyzeMessage = (fallbackReason: string) => {
 
 const clientDiscoveryMessage = (fallbackReason: string) => `Reálné hledání neběželo. Discovery function selhala: ${fallbackReason}. Demo kandidáti nejsou skuteční klienti.`;
 
+const blockedAggregatorHosts = [
+    'booking.',
+    'airbnb.',
+    'google.',
+    'maps.google.',
+    'tripadvisor.',
+    'expedia.',
+    'agoda.',
+    'trivago.',
+    'slevomat.',
+    'hotelscombined.',
+    'hotels.com',
+];
+
+const isBlockedAggregatorUrl = (url = '') => blockedAggregatorHosts.some((host) => url.toLowerCase().includes(host));
+
+const websiteExtractionFallback = (candidate: LeadAgentCandidate, fallbackReason: string): WebsiteExtractionResult => ({
+    provider: fallbackReason === 'function_404' ? 'fallback' : 'error',
+    status: isBlockedAggregatorUrl(candidate.websiteUrl) ? 'unsupported' : fallbackReason === 'function_404' ? 'partial' : 'error',
+    websiteUrl: candidate.websiteUrl,
+    pagesExtracted: [],
+    contact: { emails: [], phones: [], contactPageUrl: null },
+    websiteSignals: [],
+    arrivalSignals: [],
+    parkingSignals: [],
+    faqSignals: [],
+    guestGuideSignals: [],
+    automationSignals: [],
+    missingPublicInfoSignals: isBlockedAggregatorUrl(candidate.websiteUrl)
+        ? ['Zdroj je OTA/agregátor, Website Extractor ho nečte.']
+        : ['Web nebyl v lokálním režimu přečten automaticky.'],
+    likelyManualProcessSignals: [],
+    strengths: [],
+    risks: [isBlockedAggregatorUrl(candidate.websiteUrl) ? 'unsupported_source: ota_or_aggregator' : `Website extraction neběžela: ${fallbackReason}`],
+    setupOpportunitySignals: [],
+    fixOpportunitySignals: [],
+    evidenceLimits: [
+        isBlockedAggregatorUrl(candidate.websiteUrl) ? 'Website Extractor odmítl OTA/agregátor.' : `Website Extractor neběžel: ${fallbackReason}.`,
+        'Website Extractor čte pouze vlastní veřejný web provozu.',
+        'Z veřejného webu nelze ověřit, zda hosté dostávají neveřejný guest guide po rezervaci.',
+    ],
+    summary: isBlockedAggregatorUrl(candidate.websiteUrl)
+        ? 'Website Extractor odmítl OTA/agregátor.'
+        : `Website Extractor neběžel: ${fallbackReason}.`,
+    debug: {
+        debugId: `client-${Date.now().toString(36)}`,
+        elapsedMs: 0,
+        partial: fallbackReason === 'function_404',
+        reason: fallbackReason,
+    },
+});
+
+const mockWebsiteExtraction = (candidate: LeadAgentCandidate): WebsiteExtractionResult => {
+    const url = candidate.websiteUrl || candidate.sourceUrls[0] || 'https://example.com/demo-website';
+    const email = candidate.possibleEmail || `info@${new URL(url).hostname.replace(/^www\./, '')}`;
+
+    return {
+        provider: 'fallback',
+        status: 'completed',
+        websiteUrl: url,
+        pagesExtracted: [
+            { url, title: `${candidate.name} - homepage`, textPreview: `${candidate.name} predstavuje ubytovani, pokoje, lokalitu a kontakt. Demo extrakce slouzi pouze pro test UI.`, contentLength: 4200 },
+            { url: `${url.replace(/\/$/, '')}/kontakt`, title: 'Kontakt', textPreview: `Kontaktni stranka obsahuje e-mail ${email} a telefon pro rezervace.`, contentLength: 1100 },
+            { url: `${url.replace(/\/$/, '')}/prijezd`, title: 'Příjezd', textPreview: 'Demo text: veřejný web má jen stručné informace k příjezdu; FAQ a detailní check-in nejsou jasně strukturované.', contentLength: 900 },
+        ],
+        contact: { emails: [email], phones: ['+420 777 000 000'], contactPageUrl: `${url.replace(/\/$/, '')}/kontakt` },
+        websiteSignals: ['Vlastní veřejný web provozu', 'Ubytování popisuje pokoje nebo apartmány'],
+        arrivalSignals: ['Web obsahuje základní informace k příjezdu'],
+        parkingSignals: [],
+        faqSignals: [],
+        guestGuideSignals: [],
+        automationSignals: [],
+        missingPublicInfoSignals: ['Na přečteném veřejném webu není vidět FAQ / často kladené dotazy.', 'Z veřejného webu nelze ověřit, zda hosté dostávají neveřejný guest guide po rezervaci.'],
+        likelyManualProcessSignals: ['Malý lokální provoz / penzion / apartmány', 'Rezervace nebo dotazy pravděpodobně přes telefon/e-mail'],
+        strengths: ['Na webu je dohledatelný e-mail.', 'Na webu je dohledatelný telefon.', 'Vlastní web mimo OTA agregátor'],
+        risks: ['Demo extraction: nejde o reálně přečtený web.'],
+        setupOpportunitySignals: ['Malý provoz s kontaktem a bez jasně veřejně strukturovaných FAQ může být setup opportunity.'],
+        fixOpportunitySignals: [],
+        evidenceLimits: ['Demo Website Extractor výsledek pro test UI.', 'OTA profily nebyly čtené.', 'Z veřejného webu nelze ověřit, zda hosté dostávají neveřejný guest guide po rezervaci.'],
+        summary: `${candidate.name}: demo Website Extractor přečetl 3 stránky vlastního webu. Kontakt nalezen.`,
+        debug: {
+            debugId: `demo-website-${Date.now().toString(36)}`,
+            elapsedMs: 0,
+            partial: false,
+            reason: 'manual_demo_mode',
+        },
+    };
+};
+
 export async function discoverLeads(request: LeadAgentSearchRequest): Promise<LeadAgentDiscoverResponse> {
     try {
         const response = await postJson<LeadAgentDiscoverResponse>('/.netlify/functions/discover-leads', request);
@@ -492,6 +581,37 @@ export async function analyzeLead(candidate: LeadAgentCandidate, userNotes = '')
             },
             analysis: mockAnalysis(candidate),
         };
+    }
+}
+
+export interface ExtractWebsiteRequest {
+    candidateId: string;
+    candidateName: string;
+    location: string;
+    websiteUrl: string;
+    sourceUrls: string[];
+    notes: string;
+}
+
+export async function extractWebsite(candidate: LeadAgentCandidate, notes = ''): Promise<WebsiteExtractionResult> {
+    if (candidate.isMock) return mockWebsiteExtraction(candidate);
+
+    try {
+        return await postJson<WebsiteExtractionResult>('/.netlify/functions/extract-website', {
+            candidateId: candidate.id,
+            candidateName: candidate.name,
+            location: candidate.location,
+            websiteUrl: candidate.websiteUrl,
+            sourceUrls: candidate.sourceUrls,
+            notes,
+        } satisfies ExtractWebsiteRequest);
+    } catch (error) {
+        if (error instanceof ApiError && error.data) {
+            return error.data as WebsiteExtractionResult;
+        }
+
+        const httpStatus = error instanceof ApiError ? error.status : undefined;
+        return websiteExtractionFallback(candidate, clientFallbackReason(httpStatus));
     }
 }
 

@@ -1,4 +1,4 @@
-import type { AccommodationType, OfferAngle, QuickWin } from './types';
+import type { AccommodationType, OfferAngle, QuickWin, WebsiteExtractionResult } from './types';
 
 export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 'completed' | 'error' | 'needs-config';
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
@@ -7,8 +7,8 @@ export type LeadAgentResultSource = 'real API' | 'demo fallback' | 'error';
 export type LeadAgentFitVerdict = 'strong-opportunity' | 'moderate-opportunity' | 'weak-opportunity' | 'not-enough-evidence' | 'skip';
 export type LeadAgentTargetOffer = 'guest-communication-fix' | 'guest-guide' | 'ota-profile-audit' | 'review-response-improvement' | 'self-checkin-setup' | 'skip';
 export type LeadAgentOpportunityType = 'fix-existing-process' | 'setup-automation' | 'ota-profile-audit' | 'benchmark' | 'skip';
-export type LeadAgentCandidateFilter = 'all' | 'fix-leads' | 'setup-leads' | 'with-contact' | 'without-contact' | 'benchmark-or-skip' | 'hidden' | 'good-leads' | 'pain-signals' | 'no-pain-or-skip' | 'benchmark-solved' | 'weak-or-skip';
-export type LeadAgentCandidateSort = 'opportunityScore' | 'automationNeedScore' | 'reviewFrictionScore' | 'leadScore' | 'newest';
+export type LeadAgentCandidateFilter = 'all' | 'fix-leads' | 'setup-leads' | 'with-contact' | 'without-contact' | 'benchmark-or-skip' | 'hidden' | 'good-leads' | 'pain-signals' | 'no-pain-or-skip' | 'benchmark-solved' | 'weak-or-skip' | 'website-extracted' | 'setup-opportunity' | 'fix-opportunity' | 'without-own-website';
+export type LeadAgentCandidateSort = 'opportunityScore' | 'automationNeedScore' | 'reviewFrictionScore' | 'leadScore' | 'newest' | 'websiteExtracted' | 'contactFirst' | 'setupOpportunity' | 'fixOpportunity';
 
 export interface LeadAgentDiagnostic {
     mode: LeadAgentDiagnosticMode;
@@ -93,6 +93,7 @@ export interface LeadAgentCandidate {
     contradictionWarnings: string[];
     recommendedAngle: OfferAngle;
     evidenceSummary: string;
+    websiteExtraction?: WebsiteExtractionResult;
     isMock: boolean;
     isLegacy?: boolean;
     addedLeadId?: string;

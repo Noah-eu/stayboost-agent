@@ -25,6 +25,26 @@ type CandidateInput = {
     contradictionWarnings?: string[];
     sourceSnippets?: string[];
     evidenceSummary?: string;
+    websiteExtraction?: {
+        status?: string;
+        websiteUrl?: string;
+        pagesExtracted?: Array<{ url?: string; title?: string; textPreview?: string; contentLength?: number }>;
+        contact?: { emails?: string[]; phones?: string[]; contactPageUrl?: string | null };
+        websiteSignals?: string[];
+        arrivalSignals?: string[];
+        parkingSignals?: string[];
+        faqSignals?: string[];
+        guestGuideSignals?: string[];
+        automationSignals?: string[];
+        missingPublicInfoSignals?: string[];
+        likelyManualProcessSignals?: string[];
+        strengths?: string[];
+        risks?: string[];
+        setupOpportunitySignals?: string[];
+        fixOpportunitySignals?: string[];
+        evidenceLimits?: string[];
+        summary?: string;
+    };
     isMock?: boolean;
 };
 
@@ -197,6 +217,35 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
     missingEvidence: trimList(candidate.missingEvidence, 6, 160),
     contradictionWarnings: trimList(candidate.contradictionWarnings, 4, 180),
     sourceSnippets: trimList(sourceSnippets.length > 0 ? sourceSnippets : candidate.sourceSnippets, MAX_SNIPPETS, MAX_SNIPPET_LENGTH),
+    websiteExtraction: candidate.websiteExtraction ? {
+        status: trimText(candidate.websiteExtraction.status, 60),
+        websiteUrl: trimText(candidate.websiteExtraction.websiteUrl, 220),
+        summary: trimText(candidate.websiteExtraction.summary, 700),
+        pagesExtracted: (candidate.websiteExtraction.pagesExtracted || []).slice(0, 6).map((page) => ({
+            url: trimText(page.url, 220),
+            title: trimText(page.title, 120),
+            textPreview: trimText(page.textPreview, 900),
+            contentLength: page.contentLength || 0,
+        })),
+        contact: {
+            emails: trimList(candidate.websiteExtraction.contact?.emails, 6, 120),
+            phones: trimList(candidate.websiteExtraction.contact?.phones, 6, 80),
+            contactPageUrl: trimText(candidate.websiteExtraction.contact?.contactPageUrl || '', 220),
+        },
+        websiteSignals: trimList(candidate.websiteExtraction.websiteSignals, 8, 160),
+        arrivalSignals: trimList(candidate.websiteExtraction.arrivalSignals, 8, 160),
+        parkingSignals: trimList(candidate.websiteExtraction.parkingSignals, 6, 160),
+        faqSignals: trimList(candidate.websiteExtraction.faqSignals, 6, 160),
+        guestGuideSignals: trimList(candidate.websiteExtraction.guestGuideSignals, 6, 160),
+        automationSignals: trimList(candidate.websiteExtraction.automationSignals, 6, 160),
+        missingPublicInfoSignals: trimList(candidate.websiteExtraction.missingPublicInfoSignals, 8, 180),
+        likelyManualProcessSignals: trimList(candidate.websiteExtraction.likelyManualProcessSignals, 8, 160),
+        strengths: trimList(candidate.websiteExtraction.strengths, 8, 160),
+        risks: trimList(candidate.websiteExtraction.risks, 8, 180),
+        setupOpportunitySignals: trimList(candidate.websiteExtraction.setupOpportunitySignals, 8, 180),
+        fixOpportunitySignals: trimList(candidate.websiteExtraction.fixOpportunitySignals, 8, 180),
+        evidenceLimits: trimList(candidate.websiteExtraction.evidenceLimits, 8, 180),
+    } : null,
 });
 
 const fallbackAnalysis = (candidate: CandidateInput) => {
@@ -515,9 +564,11 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         }
 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
-        const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych search snippetu.
+        const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych podkladu. Pokud je prilozeno websiteExtraction, preferuj ji pred search snippety: je to kvalitnejsi evidence z verejneho vlastniho webu provozu.
     Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Internalni pole jako evidenceLimits, missingEvidence, contradictionWarnings, scoring a quickWins.sourceEvidence mohou obsahovat limity evidence. Klientska pole miniAudit, outreachEmail, followUp a offerRecommendation musi byt napsana pro majitele ubytovani: bez slov OpenAI, Tavily, fallback, evidenceLimits, sourceEvidence, setup automation, public snippet, search snippet, aplikace odkazy necetla, interni analyza, Vychodisko, FIX, SETUP.
-    Guest guide neni casto verejny: pokud neni videt, nesmis psat "nemaji guest guide" ani to davat do painSignals. Pouzij missingEvidence: "Nelze verejne overit, zda maji guest guide." nebo "Guest guide muze existovat neverejne." Jako obchodni prilezitost to formuluj jen opatrne: "Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide." Quick win nesmi byt jiste "Zavest guest guide"; pouzij prirozenou podminenou cestinu: "Pokud hoste nedostavaji pred prijezdem jednoduchy prehled, pripravil bych kratky QR/pruvodce; pokud ho uz maji, zkontroloval bych, jestli je dobre napojeny na zpravy hostum." V outreachEmail guest guide nezminuj, pokud hlavni evidence mluvi hlavne o fotkach, galerii, popisu nebo recenzich.
+    V internich polich evidenceLimits/missingEvidence jasne rozlis: "Vychazime z verejneho vlastniho webu a search snippetu." pokud websiteExtraction existuje, jinak "Vychazime jen ze search snippetu." Klientske oslovení tohle nevysvetluje.
+    Guest guide neni casto verejny: pokud neni videt, nesmis psat "nemaji guest guide" ani to davat do painSignals. Pouzij missingEvidence: "Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci." nebo "Guest guide muze existovat neverejne." Jako obchodni prilezitost to formuluj jen opatrne: "Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide." Quick win nesmi byt jiste "Zavest guest guide"; pouzij prirozenou podminenou cestinu: "Pokud hoste nedostavaji pred prijezdem jednoduchy prehled, pripravil bych kratky QR/pruvodce; pokud ho uz maji, zkontroloval bych, jestli je dobre napojeny na zpravy hostum." V outreachEmail guest guide nezminuj, pokud hlavni evidence mluvi hlavne o fotkach, galerii, popisu nebo recenzich.
+    Pokud websiteExtraction ukazuje jasnou FAQ/prijezd/parkovani/check-in sekci, neprodavej obecne "zlepsit instrukce", pokud neni konkretni mezera. Pokud vlastni web nema zadne prakticke prijezdove informace, muze to byt setup opportunity. Pokud je web moderni a dobre strukturovany, kandidat muze byt benchmark/weak.
     Presne 3 quickWins. miniAudit je klientsky mini-audit max 5-7 kratkych bodu nebo kratkych odstavcu, bez technickych disclaimeru. outreachEmail je skutecny studeny prvni kontakt 120-160 slov: neodpovida na poptavku, zacina prirozene, obsahuje jednu pozitivni konkretni observaci, jeden konkretni navrh, vetu "Nejde o kritiku" nebo podobnou, a konci lehkou otazkou typu "Ma smysl vam to poslat?" followUp ma 60-90 slov a neni natlakovy. offerRecommendation je klientsky citelny dalsi krok. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
     Nejdriv klasifikuj opportunityType: fix-existing-process, setup-automation, ota-profile-audit, benchmark, nebo skip.
     FIX: pouzij jen kdyz existuje painSignals / reviewFrictionScore: spatny check-in, nejasny prijezd, parkovani, komunikace, recenzni problem. Outreach muze pojmenovat konkretni pain signal.
