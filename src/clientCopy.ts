@@ -34,6 +34,7 @@ const normalizeForMatch = (value = '') => value
     .trim();
 
 const trimSentence = (value = '') => value.replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '');
+const sentenceBoundaryPattern = /(?<=[.!?])\s+|\n+/g;
 
 export function cleanLeadDisplayName(name = '') {
     const withoutPrefix = name.replace(prefixPattern, '').split('|')[0].trim();
@@ -56,10 +57,10 @@ export function humanizeSignal(signal = '') {
 
     if (!normalized) return '';
     if (normalized.includes('vlastni verejny web provozu')) return 'mají vlastní web';
-    if (normalized.includes('rezervacni nebo poptavkovy kontakt')) return 'kontakt je snadno dohledatelný';
-    if (normalized.includes('ubytovani popisuje pokoje') || normalized.includes('ubytovani popisuje apartmany')) return 'web popisuje nabídku pokojů';
-    if (normalized.includes('na webu je dohledatelny e mail') || normalized.includes('e mail nalezen na vlastnim webu')) return 'e-mail je na webu dobře dostupný';
-    if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefonický kontakt je vidět';
+    if (normalized.includes('rezervacni nebo poptavkovy kontakt')) return 'kontakt je na webu snadno dohledatelný';
+    if (normalized.includes('ubytovani popisuje pokoje') || normalized.includes('ubytovani popisuje apartmany')) return 'web přehledně popisuje pokoje';
+    if (normalized.includes('na webu je dohledatelny e mail') || normalized.includes('e mail nalezen na vlastnim webu')) return 'e-mail je na webu viditelný';
+    if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefon je na webu viditelný';
     if (normalized.includes('neni jasne strukturovana sekce prijezd check in') || normalized.includes('neni jasne videt kompletni predprijezdova orientace')) return 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě';
     if (normalized.includes('neni jasne videt parkovani')) return 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené';
     if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce by mohla hostům ušetřit dotazy';
@@ -78,16 +79,18 @@ export function sanitizeClientText(text = '') {
     let cleaned = text;
 
     const replacements = [
+        ['Zaujalo mě hlavně: Vlastni verejny web provozu.', 'Zaujalo mě, že máte vlastní web s jasně dohledatelným kontaktem.'],
+        ['Zaujalo mě hlavně: Vlastní veřejný web provozu.', 'Zaujalo mě, že máte vlastní web s jasně dohledatelným kontaktem.'],
         ['Vlastni verejny web provozu', 'mají vlastní web'],
         ['Vlastní veřejný web provozu', 'mají vlastní web'],
-        ['Rezervacni nebo poptavkovy kontakt je videt', 'kontakt je snadno dohledatelný'],
-        ['Rezervační nebo poptávkový kontakt je vidět', 'kontakt je snadno dohledatelný'],
-        ['Ubytovani popisuje pokoje nebo apartmany', 'web popisuje nabídku pokojů'],
-        ['Ubytování popisuje pokoje nebo apartmány', 'web popisuje nabídku pokojů'],
-        ['Na webu je dohledatelny e-mail.', 'e-mail je na webu dobře dostupný.'],
-        ['Na webu je dohledatelný e-mail.', 'e-mail je na webu dobře dostupný.'],
-        ['Na webu je dohledatelny telefon.', 'telefonický kontakt je vidět.'],
-        ['Na webu je dohledatelný telefon.', 'telefonický kontakt je vidět.'],
+        ['Rezervacni nebo poptavkovy kontakt je videt', 'kontakt je na webu snadno dohledatelný'],
+        ['Rezervační nebo poptávkový kontakt je vidět', 'kontakt je na webu snadno dohledatelný'],
+        ['Ubytovani popisuje pokoje nebo apartmany', 'web přehledně popisuje pokoje'],
+        ['Ubytování popisuje pokoje nebo apartmány', 'web přehledně popisuje pokoje'],
+        ['Na webu je dohledatelny e-mail.', 'e-mail je na webu viditelný.'],
+        ['Na webu je dohledatelný e-mail.', 'e-mail je na webu viditelný.'],
+        ['Na webu je dohledatelny telefon.', 'telefon je na webu viditelný.'],
+        ['Na webu je dohledatelný telefon.', 'telefon je na webu viditelný.'],
         ['Na prectenem verejnem webu neni jasne strukturovana sekce prijezd / check-in.', 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.'],
         ['Na přečteném veřejném webu není jasně strukturovaná sekce příjezd / check-in.', 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.'],
         ['Na prectenem verejnem webu neni jasne videt parkovani.', 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené.'],
@@ -105,6 +108,13 @@ export function sanitizeClientText(text = '') {
         cleaned = cleaned.replace(new RegExp(escaped, 'gi'), '');
     });
 
+    if (forbiddenTermsFoundInClientOutputs([cleaned]).length > 0) {
+        cleaned = cleaned
+            .split(sentenceBoundaryPattern)
+            .filter((sentence) => forbiddenTermsFoundInClientOutputs([sentence]).length === 0)
+            .join(' ');
+    }
+
     return cleaned
         .replace(/\s+([,.!?;:])/g, '$1')
         .replace(/[ \t]+\n/g, '\n')
@@ -120,11 +130,20 @@ export function forbiddenTermsFoundInClientOutputs(outputs: string[]) {
 }
 
 export function clientTextSanitizerDiagnostics(outputs: string[]) {
+    const sanitizedOutputs = outputs.map(sanitizeClientText);
+    const forbiddenTermsBeforeSanitization = forbiddenTermsFoundInClientOutputs(outputs);
+    const forbiddenTermsAfterSanitization = forbiddenTermsFoundInClientOutputs(sanitizedOutputs);
+
     return {
         clientTextSanitizerApplied: true,
-        forbiddenTermsFoundInClientOutputs: forbiddenTermsFoundInClientOutputs(outputs),
+        forbiddenTermsBeforeSanitization,
+        forbiddenTermsAfterSanitization,
+        forbiddenTermsFoundInClientOutputs: forbiddenTermsAfterSanitization,
+        clientTextReady: forbiddenTermsAfterSanitization.length === 0,
     };
 }
+
+export const hasClientCopyIssue = (outputs: string[]) => !clientTextSanitizerDiagnostics(outputs).clientTextReady;
 
 const bestHumanSignals = (signals: string[], maxItems = 3) => {
     const humanized = signals.map(humanizeSignal).filter(Boolean);
@@ -169,6 +188,23 @@ export function buildFallbackOutreach(input: { leadName: string; websiteExtracti
     return sanitizeClientText(`Dobrý den,
 
 narazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.
+
+Všiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.
+
+Nejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?
+
+David`);
+}
+
+export function buildWebsiteOnlyOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
+    const displayName = cleanLeadDisplayName(input.leadName);
+    const hasEmail = (input.websiteExtraction?.contact.emails.length ?? 0) > 0;
+    const hasPhone = (input.websiteExtraction?.contact.phones.length ?? 0) > 0;
+    const contactText = hasEmail || hasPhone ? 'kontakt, pokoje i základní informace jsou dohledatelné' : 'pokoje a základní informace jsou dohledatelné';
+
+    return sanitizeClientText(`Dobrý den,
+
+narazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.
 
 Všiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.
 

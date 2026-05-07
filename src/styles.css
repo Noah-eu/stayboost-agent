@@ -538,6 +538,18 @@ tbody tr:hover,
     width: fit-content;
 }
 
+.copy-review-badge {
+    align-self: flex-start;
+    border: 1px solid rgba(185, 28, 28, 0.32);
+    border-radius: 999px;
+    background: #fef2f2;
+    color: #991b1b;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 0.22rem 0.55rem;
+    width: fit-content;
+}
+
 .diagnostic-box {
     background: #f7fbfb;
     border: 1px solid #dce5e6;

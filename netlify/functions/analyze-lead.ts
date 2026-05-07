@@ -181,10 +181,10 @@ const humanizeSignal = (signal = '') => {
     const normalized = normalizeForMatch(signal);
 
     if (normalized.includes('vlastni verejny web provozu')) return 'mají vlastní web';
-    if (normalized.includes('rezervacni nebo poptavkovy kontakt')) return 'kontakt je snadno dohledatelný';
-    if (normalized.includes('ubytovani popisuje pokoje') || normalized.includes('ubytovani popisuje apartmany')) return 'web popisuje nabídku pokojů';
-    if (normalized.includes('na webu je dohledatelny e mail') || normalized.includes('e mail nalezen na vlastnim webu')) return 'e-mail je na webu dobře dostupný';
-    if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefonický kontakt je vidět';
+    if (normalized.includes('rezervacni nebo poptavkovy kontakt')) return 'kontakt je na webu snadno dohledatelný';
+    if (normalized.includes('ubytovani popisuje pokoje') || normalized.includes('ubytovani popisuje apartmany')) return 'web přehledně popisuje pokoje';
+    if (normalized.includes('na webu je dohledatelny e mail') || normalized.includes('e mail nalezen na vlastnim webu')) return 'e-mail je na webu viditelný';
+    if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefon je na webu viditelný';
     if (normalized.includes('neni jasne strukturovana sekce prijezd check in') || normalized.includes('neni jasne videt kompletni predprijezdova orientace')) return 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě';
     if (normalized.includes('neni jasne videt parkovani')) return 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené';
     if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce by mohla hostům ušetřit dotazy';
@@ -193,19 +193,27 @@ const humanizeSignal = (signal = '') => {
 };
 
 const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict'];
+const forbiddenTermsFoundInClientOutputs = (outputs: string[]) => forbiddenClientTerms.filter((term) => outputs.join('\n').toLowerCase().includes(term.toLowerCase()));
+const sentenceBoundaryPattern = /(?<=[.!?])\s+|\n+/g;
 
 const sanitizeClientText = (value = '') => {
     let cleaned = value
+        .replace(/Zaujalo mě hlavně: Vlastni verejny web provozu\./g, 'Zaujalo mě, že máte vlastní web s jasně dohledatelným kontaktem.')
+        .replace(/Zaujalo mě hlavně: Vlastní veřejný web provozu\./g, 'Zaujalo mě, že máte vlastní web s jasně dohledatelným kontaktem.')
         .replace(/Vlastni verejny web provozu|Vlastní veřejný web provozu/g, 'mají vlastní web')
-        .replace(/Rezervacni nebo poptavkovy kontakt je videt|Rezervační nebo poptávkový kontakt je vidět/g, 'kontakt je snadno dohledatelný')
-        .replace(/Ubytovani popisuje pokoje nebo apartmany|Ubytování popisuje pokoje nebo apartmány/g, 'web popisuje nabídku pokojů')
-        .replace(/Na webu je dohledateln[yý] e-mail\.?/g, 'e-mail je na webu dobře dostupný.')
-        .replace(/Na webu je dohledateln[yý] telefon\.?/g, 'telefonický kontakt je vidět.')
+        .replace(/Rezervacni nebo poptavkovy kontakt je videt|Rezervační nebo poptávkový kontakt je vidět/g, 'kontakt je na webu snadno dohledatelný')
+        .replace(/Ubytovani popisuje pokoje nebo apartmany|Ubytování popisuje pokoje nebo apartmány/g, 'web přehledně popisuje pokoje')
+        .replace(/Na webu je dohledateln[yý] e-mail\.?/g, 'e-mail je na webu viditelný.')
+        .replace(/Na webu je dohledateln[yý] telefon\.?/g, 'telefon je na webu viditelný.')
         .replace(/Na p[řr]e[čc]ten[eé]m ve[řr]ejn[eé]m webu nen[ií] jasn[eě] strukturovan[aá] sekce p[řr][ií]jezd \/ check-in\.?/g, 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.');
 
     forbiddenClientTerms.forEach((term) => {
         cleaned = cleaned.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
     });
+
+    if (forbiddenTermsFoundInClientOutputs([cleaned]).length > 0) {
+        cleaned = cleaned.split(sentenceBoundaryPattern).filter((sentence) => forbiddenTermsFoundInClientOutputs([sentence]).length === 0).join(' ');
+    }
 
     return cleaned.replace(/\s+([,.!?;:])/g, '$1').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
 };
@@ -227,6 +235,14 @@ const fallbackOutreach = (name: string, candidate: CandidateInput) => {
     const positiveLine = positives.length ? positives.join(' a ') : 'web má jasně viditelný kontakt a základní informace o pokojích';
 
     return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
+};
+
+const websiteOnlyOutreach = (name: string, candidate: CandidateInput) => {
+    const displayName = cleanLeadDisplayName(name);
+    const hasContact = Boolean((candidate.websiteExtraction?.contact?.emails?.length || 0) + (candidate.websiteExtraction?.contact?.phones?.length || 0));
+    const contactText = hasContact ? 'kontakt, pokoje i základní informace jsou dohledatelné' : 'pokoje a základní informace jsou dohledatelné';
+
+    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
 };
 
 const fallbackFollowUp = (name: string) => sanitizeClientText(`Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${cleanLeadDisplayName(name)}, hlavně k příjezdu, parkování a častým otázkám hostů.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.\n\nDavid`);
@@ -566,6 +582,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
 
     const website = candidate.websiteExtraction;
     const hasWebsiteContact = Boolean((website?.contact?.emails?.length || 0) + (website?.contact?.phones?.length || 0));
+    const hasWebsiteOnlyEvidence = Boolean(website && ['completed', 'partial'].includes(String(website.status || '')));
     const opportunityType: OpportunityType = candidate.opportunityType && isOpportunityType(candidate.opportunityType) ? candidate.opportunityType : website ? 'setup-automation' : 'skip';
     const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string });
 
@@ -582,7 +599,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
             sourceEvidence: trimText(quickWin.sourceEvidence, 180),
         })),
         miniAudit: sanitizeClientText(String(analysis.clientMiniAudit)),
-        outreachEmail: sanitizeClientText(String(analysis.outreachEmail)),
+        outreachEmail: hasWebsiteOnlyEvidence ? websiteOnlyOutreach(String(analysis.leadDisplayName), candidate) : sanitizeClientText(String(analysis.outreachEmail)),
         followUp: sanitizeClientText(String(analysis.followUp)),
         offerRecommendation: sanitizeClientText(String(analysis.offerRecommendation)),
         confidence: analysis.confidence,
@@ -702,6 +719,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     Ukol: kratka obchodni analyza StayBoost z verejneho vlastniho webu. Metadata a scoring dopocita aplikace, proto nevracej zadna dalsi pole.
     Klientske texty musi byt lidske pro majitele ubytovani. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict.
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
+    Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
     leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
     JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.

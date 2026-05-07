@@ -19,6 +19,12 @@ interface ExtractedPage {
     contentLength: number;
 }
 
+interface SkippedPage {
+    url: string;
+    title: string;
+    reason: 'not_found_page' | 'empty_content' | 'invalid_content';
+}
+
 interface TavilyExtractResult {
     url?: string;
     raw_content?: string;
@@ -134,11 +140,14 @@ const buildExtractionUrls = (websiteUrl: string, sourceUrls: string[]) => {
     return unique(urls).slice(0, MAX_URLS);
 };
 
-const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = []) => ({
+const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = [], skippedPages: SkippedPage[] = []) => ({
     provider,
     status,
     websiteUrl: candidateWebsiteUrl(request),
     pagesExtracted: pages,
+    skippedPages,
+    validPagesCount: pages.length,
+    invalidPagesCount: skippedPages.length,
     contact: { emails: [], phones: [], contactPageUrl: null },
     websiteSignals: [],
     arrivalSignals: [],
@@ -163,11 +172,45 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
 });
 
 const extractEmails = (text: string) => unique((text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map((email) => email.toLowerCase())).slice(0, 8);
-const extractPhones = (text: string) => unique((text.match(/(?:\+\d{1,3}\s?)?(?:\d[\s.-]?){8,14}\d/g) || []).map((phone) => phone.replace(/\s+/g, ' ').trim())).slice(0, 8);
+
+export const isLikelyPhoneNumber = (value: string) => {
+    const trimmed = value.trim();
+    const digits = trimmed.replace(/\D/g, '');
+    const normalized = trimmed.toLowerCase();
+
+    if (!trimmed || digits.length < 7) return false;
+    if (/\d+\.\d+/.test(trimmed)) return false;
+    if (/\b(cz)?\d{8}\b/i.test(trimmed) && !/[+\s()-]/.test(trimmed)) return false;
+    if (normalized.includes('ičo') || normalized.includes('ico') || normalized.includes('dič') || normalized.includes('dic') || normalized.includes('vat')) return false;
+    if (normalized.includes('latitude') || normalized.includes('longitude') || normalized.includes('gps') || normalized.includes('maps.google.com')) return false;
+    if (trimmed.startsWith('+420')) return digits.length === 12;
+    if (trimmed.startsWith('+')) return digits.length >= 10 && digits.length <= 15;
+    if (!/[\s()-]/.test(trimmed) && digits.length !== 9) return false;
+
+    return digits.length >= 7 && digits.length <= 15;
+};
+
+export const phoneExtractionDeterministicChecks = {
+    valid: ['+420 311 600 900', '+420311600900', '224920604'].map((value) => ({ value, accepted: isLikelyPhoneNumber(value) })),
+    invalid: ['49.937910833333', '14.188455555556', '27156460', 'CZ27156460'].map((value) => ({ value, accepted: isLikelyPhoneNumber(value) })),
+};
+
+const contextHasNonPhoneLabel = (context: string) => /latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b/i.test(context);
+
+const extractPhones = (text: string) => unique((text.match(/(?:\+\d{1,3}[\s()-]?)?(?:\d[\s()-]?){6,14}\d/g) || [])
+    .map((phone) => phone.replace(/\s+/g, ' ').trim())
+    .filter((phone) => {
+        const index = text.indexOf(phone);
+        const context = index >= 0 ? text.slice(Math.max(0, index - 45), Math.min(text.length, index + phone.length + 45)) : phone;
+        return isLikelyPhoneNumber(phone) && !contextHasNonPhoneLabel(context);
+    })).slice(0, 8);
+
+const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;
+const isNotFoundPage = (page: ExtractedPage) => notFoundPagePattern.test(`${page.title}\n${page.textPreview}`);
 
 const signalMatches = (content: string, matchers: Array<{ label: string; keywords: string[] }>) => matchers.filter((matcher) => includesAny(content, matcher.keywords)).map((matcher) => matcher.label);
 
-const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number) => {
+const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[]) => {
     const content = pages.map((page) => `${page.url}\n${page.title}\n${page.textPreview}`).join('\n').toLowerCase();
     const rawText = pages.map((page) => page.textPreview).join('\n');
     const emails = extractEmails(rawText);
@@ -234,6 +277,9 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         status,
         websiteUrl: candidateWebsiteUrl(request),
         pagesExtracted: pages,
+        skippedPages,
+        validPagesCount: pages.length,
+        invalidPagesCount: skippedPages.length,
         contact: { emails, phones, contactPageUrl: contactPage },
         websiteSignals,
         arrivalSignals,
@@ -251,7 +297,8 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
             'Website Extractor cetl pouze vlastni verejny web provozu.',
             'OTA profily jako Booking/Airbnb/Google Maps nebyly cteny.',
             'Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci.',
-            status === 'partial' ? 'Extrakce je castecna kvuli timeoutu nebo nedostupnym strankam.' : '',
+            skippedPages.length > 0 ? `Preskocene nevalidni stranky: ${skippedPages.length}.` : '',
+            status === 'partial' ? 'Extrakce je castecna kvuli timeoutu, nedostupnym nebo nevalidnim strankam.' : '',
         ]),
         summary: `${request.candidateName || 'Kandidat'}: precteno ${pages.length} stranek vlastniho webu. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signaly: ${setupOpportunitySignals.length}. Fix signaly: ${fixOpportunitySignals.length}.`,
         debug: {
@@ -323,7 +370,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         }
 
         const outcome = await tavilyExtract(apiKey, urls);
-        const pages = outcome.results
+        const extractedPages = outcome.results
             .map((result) => {
                 const text = result.raw_content || result.content || '';
                 return {
@@ -333,14 +380,23 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
                     contentLength: text.length,
                 };
             })
-            .filter((page) => page.url && page.textPreview)
+            .slice(0, MAX_URLS);
+        const skippedPages: SkippedPage[] = extractedPages
+            .filter((page) => !page.url || !page.textPreview || isNotFoundPage(page))
+            .map((page) => ({
+                url: page.url,
+                title: page.title,
+                reason: isNotFoundPage(page) ? 'not_found_page' : 'empty_content',
+            }));
+        const pages = extractedPages
+            .filter((page) => page.url && page.textPreview && !isNotFoundPage(page))
             .slice(0, MAX_URLS);
 
         if (pages.length === 0) {
-            return json(200, fallbackResult(request, debugId, startedAt, 'error', outcome.reason || 'no_extractable_content', outcome.ok ? 'tavily-extract' : 'error'));
+            return json(200, fallbackResult(request, debugId, startedAt, 'error', outcome.reason || 'no_valid_extractable_content', outcome.ok ? 'tavily-extract' : 'error', [], skippedPages));
         }
 
-        return json(200, analyzePages(request, debugId, startedAt, pages, outcome.failedCount));
+        return json(200, analyzePages(request, debugId, startedAt, pages, outcome.failedCount + skippedPages.length, skippedPages));
     } catch (error) {
         return json(500, fallbackResult({}, debugId, startedAt, 'error', error instanceof Error ? error.message : 'function_runtime_error', 'error'));
     }

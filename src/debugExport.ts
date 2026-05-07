@@ -74,13 +74,16 @@ const leadWorkflowState = (lead: Lead) => {
     const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
     const hasAgentAnalysis = Boolean(lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
     const hasQuickWins = (lead.structuredQuickWins ?? []).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).length === 3;
-    const hasClientOutputs = Boolean((lead.clientMiniAudit || lead.generatedMiniAudit).trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
+    const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
+    const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
+    const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
 
     return {
         hasWebsiteExtraction,
         hasAgentAnalysis,
         hasQuickWins,
         hasClientOutputs,
+        clientTextReady: clientDiagnostics.clientTextReady,
         nextRecommendedAction: hasWebsiteExtraction && !hasAgentAnalysis
             ? 'analyze-from-extracted-website'
             : !hasWebsiteExtraction
@@ -89,6 +92,8 @@ const leadWorkflowState = (lead: Lead) => {
                     ? 'complete-agent-analysis'
                     : !hasClientOutputs
                         ? 'generate-client-outputs'
+                        : !clientDiagnostics.clientTextReady
+                            ? 'needs-copy-review'
                         : 'ready-to-review',
     };
 };

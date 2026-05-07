@@ -104,6 +104,12 @@ export interface WebsiteExtractedPage {
     contentLength: number;
 }
 
+export interface WebsiteSkippedPage {
+    url: string;
+    title: string;
+    reason: 'not_found_page' | 'empty_content' | 'invalid_content';
+}
+
 export interface WebsiteExtractionContact {
     emails: string[];
     phones: string[];
@@ -115,6 +121,9 @@ export interface WebsiteExtractionResult {
     status: 'completed' | 'partial' | 'unsupported' | 'error';
     websiteUrl: string;
     pagesExtracted: WebsiteExtractedPage[];
+    skippedPages: WebsiteSkippedPage[];
+    validPagesCount: number;
+    invalidPagesCount: number;
     contact: WebsiteExtractionContact;
     websiteSignals: string[];
     arrivalSignals: string[];

@@ -515,6 +515,9 @@ const websiteExtractionFallback = (candidate: LeadAgentCandidate, fallbackReason
     status: isBlockedAggregatorUrl(candidate.websiteUrl) ? 'unsupported' : fallbackReason === 'function_404' ? 'partial' : 'error',
     websiteUrl: candidate.websiteUrl,
     pagesExtracted: [],
+    skippedPages: [],
+    validPagesCount: 0,
+    invalidPagesCount: 0,
     contact: { emails: [], phones: [], contactPageUrl: null },
     websiteSignals: [],
     arrivalSignals: [],
@@ -550,15 +553,20 @@ const mockWebsiteExtraction = (candidate: LeadAgentCandidate): WebsiteExtraction
     const url = candidate.websiteUrl || candidate.sourceUrls[0] || 'https://example.com/demo-website';
     const email = candidate.possibleEmail || `info@${new URL(url).hostname.replace(/^www\./, '')}`;
 
+    const pagesExtracted = [
+        { url, title: `${candidate.name} - homepage`, textPreview: `${candidate.name} predstavuje ubytovani, pokoje, lokalitu a kontakt. Demo extrakce slouzi pouze pro test UI.`, contentLength: 4200 },
+        { url: `${url.replace(/\/$/, '')}/kontakt`, title: 'Kontakt', textPreview: `Kontaktni stranka obsahuje e-mail ${email} a telefon pro rezervace.`, contentLength: 1100 },
+        { url: `${url.replace(/\/$/, '')}/prijezd`, title: 'Příjezd', textPreview: 'Demo text: veřejný web má jen stručné informace k příjezdu; FAQ a detailní check-in nejsou jasně strukturované.', contentLength: 900 },
+    ];
+
     return {
         provider: 'fallback',
         status: 'completed',
         websiteUrl: url,
-        pagesExtracted: [
-            { url, title: `${candidate.name} - homepage`, textPreview: `${candidate.name} predstavuje ubytovani, pokoje, lokalitu a kontakt. Demo extrakce slouzi pouze pro test UI.`, contentLength: 4200 },
-            { url: `${url.replace(/\/$/, '')}/kontakt`, title: 'Kontakt', textPreview: `Kontaktni stranka obsahuje e-mail ${email} a telefon pro rezervace.`, contentLength: 1100 },
-            { url: `${url.replace(/\/$/, '')}/prijezd`, title: 'Příjezd', textPreview: 'Demo text: veřejný web má jen stručné informace k příjezdu; FAQ a detailní check-in nejsou jasně strukturované.', contentLength: 900 },
-        ],
+        pagesExtracted,
+        skippedPages: [],
+        validPagesCount: pagesExtracted.length,
+        invalidPagesCount: 0,
         contact: { emails: [email], phones: ['+420 777 000 000'], contactPageUrl: `${url.replace(/\/$/, '')}/kontakt` },
         websiteSignals: ['Vlastní veřejný web provozu', 'Ubytování popisuje pokoje nebo apartmány'],
         arrivalSignals: ['Web obsahuje základní informace k příjezdu'],

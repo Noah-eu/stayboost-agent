@@ -2,7 +2,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
-import { cleanLeadDisplayName, sanitizeClientText } from './clientCopy';
+import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
@@ -160,6 +160,24 @@ const hasCompletedWebsiteExtraction = (lead: Pick<Lead, 'websiteExtraction'>) =>
 const hasLeadClientOutputs = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => Boolean((lead.clientMiniAudit || lead.generatedMiniAudit).trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
 const hasLeadQuickWins = (lead: Pick<Lead, 'structuredQuickWins'>) => (lead.structuredQuickWins ?? []).filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).length === 3;
 const needsWebsiteAnalysis = (lead: Lead) => hasCompletedWebsiteExtraction(lead) && lead.needsAgentAnalysis && !lead.createdFromAgentAnalysis;
+const clientOutputValues = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
+const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;
+const isInvalidExtractedPage = (page: { title?: string; textPreview?: string }) => notFoundPagePattern.test(`${page.title ?? ''}\n${page.textPreview ?? ''}`);
+const websiteOnlyOutreachMismatchPattern = /fotk|hlavn[ií] fot|recenz|redesign|galeri/i;
+const isLikelyPhoneNumber = (value: string) => {
+    const trimmed = value.trim();
+    const digits = trimmed.replace(/\D/g, '');
+
+    if (!trimmed || digits.length < 7) return false;
+    if (/\d+\.\d+/.test(trimmed)) return false;
+    if (/\b(cz)?\d{8}\b/i.test(trimmed) && !/[+\s()-]/.test(trimmed)) return false;
+    if (/latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b/i.test(trimmed)) return false;
+    if (trimmed.startsWith('+420')) return digits.length === 12;
+    if (trimmed.startsWith('+')) return digits.length >= 10 && digits.length <= 15;
+    if (!/[\s()-]/.test(trimmed) && digits.length !== 9) return false;
+
+    return digits.length >= 7 && digits.length <= 15;
+};
 
 const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'confidence' | 'structuredQuickWins' | 'fitVerdict'>) => {
     const hasNoQuickWins = (lead.structuredQuickWins ?? []).length === 0;
@@ -176,6 +194,7 @@ const workflowNextAction = (lead: Lead) => {
     if (!hasCompletedWebsiteExtraction(lead)) return 'extract-website-or-add-evidence';
     if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
     if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
+    if (hasClientCopyIssue(clientOutputValues(lead))) return 'needs-copy-review';
     return 'ready-to-review';
 };
 
@@ -372,14 +391,23 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const guardedTargetOffer = hasUnanalyzedWebsiteExtraction && lead.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in') ? 'guest-guide' : lead.targetOffer ?? '';
     const normalizedName = (lead.createdFromAgentAnalysis || lead.websiteExtraction) && lead.name ? cleanLeadDisplayName(lead.name) : lead.name ?? '';
     const normalizedMiniAudit = sanitizeClientText(lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '');
+    const rawPagesExtracted = lead.websiteExtraction?.pagesExtracted ?? [];
+    const invalidPagesFromExtraction = rawPagesExtracted
+        .filter(isInvalidExtractedPage)
+        .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const }));
+    const validPagesExtracted = rawPagesExtracted.filter((page) => !isInvalidExtractedPage(page));
+    const normalizedSkippedPages = [...(lead.websiteExtraction?.skippedPages ?? []), ...invalidPagesFromExtraction];
     const normalizedWebsiteExtraction = lead.websiteExtraction ? {
         provider: lead.websiteExtraction.provider ?? 'fallback',
         status: lead.websiteExtraction.status ?? 'partial',
         websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
-        pagesExtracted: lead.websiteExtraction.pagesExtracted ?? [],
+        pagesExtracted: validPagesExtracted,
+        skippedPages: normalizedSkippedPages,
+        validPagesCount: validPagesExtracted.length,
+        invalidPagesCount: normalizedSkippedPages.length,
         contact: {
             emails: lead.websiteExtraction.contact?.emails ?? [],
-            phones: lead.websiteExtraction.contact?.phones ?? [],
+            phones: (lead.websiteExtraction.contact?.phones ?? []).filter(isLikelyPhoneNumber),
             contactPageUrl: lead.websiteExtraction.contact?.contactPageUrl ?? null,
         },
         websiteSignals: lead.websiteExtraction.websiteSignals ?? [],
@@ -398,6 +426,10 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         summary: lead.websiteExtraction.summary ?? '',
         debug: lead.websiteExtraction.debug ?? { debugId: '', elapsedMs: 0, partial: false, reason: null },
     } : undefined;
+    const sanitizedGeneratedOutreach = sanitizeClientText(lead.generatedOutreach ?? '');
+    const normalizedGeneratedOutreach = normalizedWebsiteExtraction && (lead.screenshots ?? []).length === 0 && websiteOnlyOutreachMismatchPattern.test(sanitizedGeneratedOutreach)
+        ? buildWebsiteOnlyOutreach({ leadName: normalizedName, websiteExtraction: normalizedWebsiteExtraction, signals: lead.publicSignals ?? [] })
+        : sanitizedGeneratedOutreach;
 
     return {
         ...emptyLead(),
@@ -417,7 +449,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         internalAgentBrief: lead.internalAgentBrief ?? '',
         clientMiniAudit: normalizedMiniAudit,
         generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit ?? normalizedMiniAudit),
-        generatedOutreach: sanitizeClientText(lead.generatedOutreach ?? ''),
+        generatedOutreach: normalizedGeneratedOutreach,
         generatedFollowUp: sanitizeClientText(lead.generatedFollowUp ?? ''),
         generatedOffer: sanitizeClientText(lead.generatedOffer ?? ''),
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
@@ -686,11 +718,14 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
     };
     const clientMiniAudit = sanitizeClientText(analysis.miniAudit.trim() || generateMiniAudit(analyzedLead));
     const leadWithClientAudit = { ...analyzedLead, clientMiniAudit, generatedMiniAudit: clientMiniAudit };
+    const hasWebsiteOnlyEvidence = Boolean(leadWithClientAudit.websiteExtraction && leadWithClientAudit.screenshots.length === 0);
+    const websiteOnlyOutreach = hasWebsiteOnlyEvidence ? buildWebsiteOnlyOutreach({ leadName: cleanedDisplayName, websiteExtraction: leadWithClientAudit.websiteExtraction, signals: leadWithClientAudit.publicSignals }) : '';
+    const analyzedOutreach = sanitizeClientText(analysis.outreachEmail.trim());
 
     return {
         ...leadWithClientAudit,
         internalAgentBrief: generateInternalAgentBrief(leadWithClientAudit),
-        generatedOutreach: sanitizeClientText(analysis.outreachEmail.trim() || generateFirstOutreach(leadWithClientAudit)),
+        generatedOutreach: hasWebsiteOnlyEvidence ? websiteOnlyOutreach : analyzedOutreach || generateFirstOutreach(leadWithClientAudit),
         generatedFollowUp: sanitizeClientText(analysis.followUp.trim() || generateFollowUp(leadWithClientAudit)),
         generatedOffer: sanitizeClientText(analysis.offerRecommendation.trim() || generateOffer(leadWithClientAudit)),
     };
@@ -2277,7 +2312,8 @@ function WebsiteExtractionPanel({ extraction, onExport }: { extraction: WebsiteE
             <div className="metadata-row">
                 <span>{extraction.provider}</span>
                 <span>kontakt nalezen: {hasContact ? 'ano' : 'ne'}</span>
-                <span>stránky přečtené: {extraction.pagesExtracted.length}</span>
+                <span>valid pages: {extraction.validPagesCount ?? extraction.pagesExtracted.length}</span>
+                <span>skipped pages: {extraction.invalidPagesCount ?? extraction.skippedPages?.length ?? 0}</span>
                 <span>partial: {extraction.debug.partial ? 'ano' : 'ne'}</span>
             </div>
             <div className="analysis-grid">
@@ -2290,6 +2326,10 @@ function WebsiteExtractionPanel({ extraction, onExport }: { extraction: WebsiteE
                 <div>
                     <p className="eyebrow">Stránky</p>
                     {extraction.pagesExtracted.length > 0 ? extraction.pagesExtracted.map((page) => <a href={page.url} key={page.url} rel="noreferrer" target="_blank">{page.title || page.url} ({page.contentLength})</a>) : <span>Žádná stránka nebyla přečtena.</span>}
+                </div>
+                <div>
+                    <p className="eyebrow">Skipped pages</p>
+                    {(extraction.skippedPages ?? []).length > 0 ? (extraction.skippedPages ?? []).map((page) => <span key={page.url}>{page.title || page.url}: {page.reason}</span>) : <span>Žádná stránka nebyla přeskočena.</span>}
                 </div>
                 <div>
                     <p className="eyebrow">Hlavní signály</p>
@@ -2512,6 +2552,8 @@ interface LeadEditorProps {
 function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
     const showWebsiteAnalysisPanel = needsWebsiteAnalysis(draftLead);
     const latestAnalysisDiagnostic = draftLead.latestAnalysisDiagnostic as { userMessage?: string; fallbackReason?: string; analyzeProvider?: string; debugId?: string; model?: string | null } | undefined;
+    const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputValues(draftLead));
+    const hasCopyWarning = hasLeadClientOutputs(draftLead) && !clientDiagnostics.clientTextReady;
     const agentBadges = [
         draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
         draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
@@ -2579,7 +2621,9 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <div className="scope-note agent-origin-note">
                         <strong>Vytvořeno z Lead Finder Agent analýzy</strong>
                         {draftLead.agentAnalysisProvider === 'demo-fallback' || draftLead.agentAnalysisProvider === 'fallback' ? <span className="fallback-badge">Fallback analýza — zkontrolovat před odesláním</span> : null}
+                        {hasCopyWarning ? <span className="copy-review-badge">Text vyžaduje kontrolu</span> : null}
                         {latestAnalysisDiagnostic?.userMessage && (draftLead.agentAnalysisProvider === 'demo-fallback' || draftLead.agentAnalysisProvider === 'fallback') ? <span>{latestAnalysisDiagnostic.userMessage}</span> : null}
+                        {hasCopyWarning ? <span>Klientský text obsahuje interní formulace a je potřeba ho upravit.</span> : null}
                         <div className="metadata-row">
                             {agentBadges.map((badge) => <span key={badge}>{badge}</span>)}
                         </div>
@@ -2615,7 +2659,10 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                         <strong>Web přečten</strong>
                         <span>{draftLead.websiteExtraction.summary}</span>
                         <span>Kontakt: {[...draftLead.websiteExtraction.contact.emails, ...draftLead.websiteExtraction.contact.phones].join(', ') || 'nenalezen'}</span>
+                        <span>Valid pages: {draftLead.websiteExtraction.validPagesCount ?? draftLead.websiteExtraction.pagesExtracted.length}</span>
+                        <span>Skipped pages: {draftLead.websiteExtraction.invalidPagesCount ?? draftLead.websiteExtraction.skippedPages?.length ?? 0}</span>
                         <span>Stránky: {draftLead.websiteExtraction.pagesExtracted.map((page) => page.url).join(', ') || 'žádná stránka nebyla přečtena'}</span>
+                        {(draftLead.websiteExtraction.skippedPages ?? []).length > 0 ? <span>Skipped: {(draftLead.websiteExtraction.skippedPages ?? []).map((page) => `${page.url} (${page.reason})`).join(', ')}</span> : null}
                         <span>Website Extractor čte pouze vlastní veřejný web provozu. OTA stránky nebyly automaticky čtené.</span>
                         <button className="secondary-button compact-button" onClick={() => onExportWebsiteExtraction?.(draftLead.websiteExtraction as WebsiteExtractionResult, undefined, draftLead)} type="button">
                             <Clipboard size={16} aria-hidden="true" />
