@@ -1,65 +1,145 @@
-import { Lead, offerAngleLabels } from './types';
+import { Lead, QuickWin, offerAngleLabels } from './types';
 
-const fallback = (value: string, emptyText: string) => value.trim() || emptyText;
+const hasText = (value: string) => value.trim().length > 0;
 
-const firstThreeQuickWins = (lead: Lead) => {
-    const wins = lead.proposedQuickWins.length > 0 ? lead.proposedQuickWins : lead.quickWins;
-    const paddedWins = [...wins];
+const cleanSentence = (value: string) => value.trim().replace(/[.!?]+$/, '');
 
-    while (paddedWins.length < 3) {
-        paddedWins.push('Doplnit jeden konkretni detail, ktery hosti casto hledaji pred rezervaci.');
+const completedQuickWins = (lead: Lead) =>
+    lead.structuredQuickWins.filter((win) => hasText(win.title) && hasText(win.action) && hasText(win.why));
+
+const concreteObservations = (lead: Lead) =>
+    [
+        lead.firstImpression,
+        lead.mainPhotoObservation,
+        lead.photoOrderObservation,
+        lead.descriptionObservation,
+        lead.checkInParkingInfo,
+        lead.reviewSignals,
+        lead.guestConfusion,
+        lead.businessOpportunity,
+    ].filter(hasText);
+
+const qualityGate = (lead: Lead) => {
+    const missing: string[] = [];
+    const completeWins = completedQuickWins(lead);
+
+    if (lead.publicLinks.filter((link) => hasText(link.url)).length < 1) {
+        missing.push('alespon 1 verejny link');
     }
 
-    return paddedWins.slice(0, 3);
+    if (!hasText(lead.strengths)) {
+        missing.push('alespon 1 silna stranka');
+    }
+
+    if (concreteObservations(lead).length < 2) {
+        missing.push('alespon 2 konkretni pozorovani');
+    }
+
+    if (completeWins.length !== 3) {
+        missing.push('presne 3 quick wins s title/action/why');
+    }
+
+    return { isReady: missing.length === 0, missing, completeWins };
 };
 
-const list = (items: string[]) => items.map((item, index) => `${index + 1}. ${item}`).join('\n');
+const missingQuickWins = (lead: Lead) =>
+    [0, 1, 2]
+        .map((index) => lead.structuredQuickWins[index])
+        .map((win, index) => (win && hasText(win.title) && hasText(win.action) && hasText(win.why) ? undefined : `Dopln quick win #${index + 1}`))
+        .filter((value): value is string => Boolean(value));
+
+const listQuickWins = (wins: QuickWin[]) =>
+    wins
+        .slice(0, 3)
+        .map((win, index) => `${index + 1}. ${win.title}\n   Proc: ${win.why}\n   Akce: ${win.action}${hasText(win.sourceEvidence) ? `\n   Evidence: ${win.sourceEvidence}` : ''}`)
+        .join('\n');
 
 const leadTitle = (lead: Lead) => lead.name.trim() || 'toto ubytovani';
 
 export function generateMiniAudit(lead: Lead) {
-    const wins = firstThreeQuickWins(lead);
+    const gate = qualityGate(lead);
+
+    if (!gate.isReady) {
+        return `Audit zatim neni dost konkretni. Dopln alespon 2 konkretni pozorovani a 3 quick wins.
+
+Chybi:
+${gate.missing.map((item) => `- ${item}`).join('\n')}
+${missingQuickWins(lead).length > 0 ? `\nQuick wins k doplneni:\n${missingQuickWins(lead).map((item) => `- ${item}`).join('\n')}` : ''}
+
+Poznamka: V teto verzi aplikace odkazy necte automaticky. Audit muze vychazet pouze z pozorovani, ktera rucne vyplnis.`;
+    }
+
+    const photoLine = {
+        strong: `Hlavni fotka pusobi jako silna cast prezentace: ${cleanSentence(lead.mainPhotoObservation)}. Doporuceni proto smeruji spis na dalsi casti nabidky nez na vymenu hlavni fotky.`,
+        average: `Hlavni fotka je hodnocena jako prumerna: ${cleanSentence(lead.mainPhotoObservation)}.`,
+        weak: `Hlavni fotka je slaba: ${cleanSentence(lead.mainPhotoObservation)}. Pokud by se menila, vhodny smer je: ${cleanSentence(lead.betterPhotoSuggestion)}.`,
+        unknown: 'Hlavni fotka nebyla samostatne hodnocena, audit se proto opira hlavne o ostatni verejna pozorovani.',
+    }[lead.mainPhotoVerdict];
+    const nextStep =
+        lead.mainPhotoVerdict === 'strong' && lead.selectedOfferAngle === 'main-photo'
+            ? 'Zacit prvnim quick winem a nechat silnou hlavni fotku jako oporu prvniho dojmu.'
+            : `Zacit podle uhlu: ${offerAngleLabels[lead.selectedOfferAngle]}.`;
 
     return `Mini-audit verejne nabidky: ${leadTitle(lead)}
 
+Vychodisko
+Tento audit vychazi pouze z rucne zapsanych verejnych pozorovani a ulozenych odkazu. Aplikace odkazy automaticky necetla ani neprochazela.
+
 Shrnuti prvniho dojmu
-Z verejne nabidky pusobi jako hlavni tema ${offerAngleLabels[lead.selectedOfferAngle].toLowerCase()}. ${fallback(
-        lead.risks,
-        'Nejvetsi prostor vidim v tom, aby se dulezite informace ukazaly hostovi rychleji a jasneji.',
-    )}
+${lead.firstImpression}
 
 Co funguje dobre
-${fallback(lead.strengths, 'Nabidka uz ma zaklad, na kterem se da stavet: lokalita, typ ubytovani a zakladni prezentace jsou pro hosta srozumitelne.')}
+${lead.strengths}
+
+Hlavni fotka
+${photoLine}
 
 Co bych zlepsil jako prvni
-${fallback(
-        lead.mainPhotoObservation || lead.photoOrderObservation || lead.descriptionObservation,
-        'Jako prvni bych zpresnil prvni dojem z verejne prezentace, hlavne fotky, poradi informaci a jasnost dalsiho kroku pro hosta.',
-    )}
+${[lead.photoOrderObservation, lead.descriptionObservation, lead.checkInParkingInfo, lead.reviewSignals, lead.guestConfusion, lead.businessOpportunity]
+        .filter(hasText)
+        .slice(0, 4)
+        .map((item) => `- ${item}`)
+        .join('\n')}
 
 3 quick wins
-${list(wins)}
+${listQuickWins(gate.completeWins)}
 
 Proc to muze mit vliv na hosta
-Host se obvykle rozhoduje rychle podle prvnich fotek, popisu a signalu duvery. Kdyz jsou silne stranky videt hned a pripadne nejasnosti jsou vysvetlene, muze to snizit nejistotu pred rezervaci.
+${lead.guestConfusion || lead.guestFrictionSignals || lead.businessOpportunity}
 
 Doporuceny dalsi krok
-Projit verejnou nabidku jako novy host a upravit prvni obrazovku, prvnich 5 fotek a kratky popis tak, aby odpovidaly tomu, co je na ubytovani nejsilnejsi.`;
+${nextStep} Nejrychlejsi dalsi krok je vzit prvni quick win, upravit podle nej verejnou prezentaci a potom zkontrolovat, jestli host pred rezervaci rychleji pochopi hlavni hodnotu pobytu.`;
 }
 
 export function generateFirstOutreach(lead: Lead) {
-    const wins = firstThreeQuickWins(lead);
+    const gate = qualityGate(lead);
+
+    if (!gate.isReady) {
+        return `Osloveni zatim neni dost konkretni.
+
+Chybi:
+${gate.missing.map((item) => `- ${item}`).join('\n')}
+
+Nez bude text pouzitelny, dopln konkretni pozitivni pozorovani a alespon jeden kompletni quick win s akci.`;
+    }
+
+    const firstWin = gate.completeWins[0];
+    const photoIntro =
+        lead.mainPhotoVerdict === 'strong'
+            ? `Prvni dojem z hlavni fotky mi prijde dobry: ${cleanSentence(lead.mainPhotoObservation)}.`
+            : `Jako konkretni prostor vidim: ${cleanSentence(lead.mainPhotoObservation || lead.photoOrderObservation || lead.descriptionObservation)}.`;
 
     return `Dobry den,
 
-díval jsem se pouze na veřejnou nabídku vašeho ubytování ${leadTitle(lead)}, takže samozřejmě nehodnotím interní instrukce ani zprávy hostům. Všiml jsem si ale pár věcí v prvním dojmu nabídky, které by podle mě šly rychle zlepšit.
+díval jsem se jen na veřejnou prezentaci ${leadTitle(lead)}, takže samozřejmě nehodnotím interní instrukce ani zprávy hostům. ${photoIntro}
 
-Konkrétně bych vám zdarma poslal 3 návrhy:
-${list(wins)}
+Pozitivne na me pusobi hlavne: ${lead.strengths}
 
-Beru to jako rychlý pohled zvenku, ne jako kritiku. Kromě veřejné prezentace se dá později řešit i to, jak host dostane check-in instrukce, guest guide nebo zprávy před příjezdem, ale teď bych zůstal jen u veřejné nabídky.
+Spis bych videl prostor v tomhle konkretnim kroku: ${firstWin.title}. Prakticky by to znamenalo: ${firstWin.action}
 
-Pokud chcete, pošlu vám krátký mini-audit ve 3 bodech a sami uvidíte, jestli to dává smysl řešit dál.
+Muzu vam zdarma poslat 3 konkretni navrhy, ktere vychazeji jen z verejne prezentace a rucne zapsanych pozorovani. Kromě veřejné prezentace se dá později řešit i to, jak host dostane check-in instrukce, guest guide nebo zprávy před příjezdem, ale teď bych zůstal jen u veřejné nabídky.
+
+Pokud chcete, poslu vam kratky mini-audit ve 3 bodech a sami uvidite, jestli to dava smysl resit dal.
 
 David`;
 }

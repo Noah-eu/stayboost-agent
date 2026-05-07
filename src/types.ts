@@ -17,6 +17,26 @@ export type OfferAngle =
     | 'guest-communication'
     | 'guest-guide';
 
+export type PublicProfileSourceType = 'booking' | 'airbnb' | 'google' | 'website' | 'other';
+
+export type MainPhotoVerdict = 'strong' | 'average' | 'weak' | 'unknown';
+
+export interface PublicProfileLink {
+    id: string;
+    sourceType: PublicProfileSourceType;
+    url: string;
+    label: string;
+    notes: string;
+}
+
+export interface QuickWin {
+    id: string;
+    title: string;
+    why: string;
+    action: string;
+    sourceEvidence: string;
+}
+
 export interface LeadCandidate {
     id: string;
     name: string;
@@ -53,15 +73,22 @@ export interface Lead {
     publicSignals: string[];
     quickWins: string[];
     publicProfileUrl: string;
+    publicLinks: PublicProfileLink[];
+    firstImpression: string;
+    mainPhotoVerdict: MainPhotoVerdict;
     mainPhotoObservation: string;
     betterPhotoSuggestion: string;
     photoOrderObservation: string;
     descriptionObservation: string;
+    checkInParkingInfo: string;
     reviewSignals: string;
     guestFrictionSignals: string;
+    guestConfusion: string;
     strengths: string;
     risks: string;
+    businessOpportunity: string;
     proposedQuickWins: string[];
+    structuredQuickWins: QuickWin[];
     selectedOfferAngle: OfferAngle;
     generatedMiniAudit: string;
     generatedOutreach: string;
@@ -96,4 +123,19 @@ export const offerAngleLabels: Record<OfferAngle, string> = {
     reviews: 'Recenze',
     'guest-communication': 'Komunikace s hostem',
     'guest-guide': 'Guest guide',
+};
+
+export const publicProfileSourceLabels: Record<PublicProfileSourceType, string> = {
+    booking: 'Booking',
+    airbnb: 'Airbnb',
+    google: 'Google',
+    website: 'Vlastni web',
+    other: 'Jine',
+};
+
+export const mainPhotoVerdictLabels: Record<MainPhotoVerdict, string> = {
+    strong: 'silna',
+    average: 'prumerna',
+    weak: 'slaba',
+    unknown: 'nevim / nehodnoceno',
 };

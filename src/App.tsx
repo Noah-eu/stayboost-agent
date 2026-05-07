@@ -1,4 +1,4 @@
-import { Clipboard, ClipboardCheck, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Users } from 'lucide-react';
+import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
 import { leadFinderMockText, parseLeadCandidates, recommendedSearchQueries } from './leadScoring';
@@ -10,8 +10,13 @@ import {
     LeadSearchSession,
     leadStatuses,
     LeadStatus,
+    mainPhotoVerdictLabels,
     offerAngleLabels,
     OfferAngle,
+    publicProfileSourceLabels,
+    PublicProfileLink,
+    PublicProfileSourceType,
+    QuickWin,
 } from './types';
 
 type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
@@ -31,15 +36,22 @@ const emptyLead = (): Lead => ({
     publicSignals: [],
     quickWins: [],
     publicProfileUrl: '',
+    publicLinks: [],
+    firstImpression: '',
+    mainPhotoVerdict: 'unknown',
     mainPhotoObservation: '',
     betterPhotoSuggestion: '',
     photoOrderObservation: '',
     descriptionObservation: '',
+    checkInParkingInfo: '',
     reviewSignals: '',
     guestFrictionSignals: '',
+    guestConfusion: '',
     strengths: '',
     risks: '',
+    businessOpportunity: '',
     proposedQuickWins: [],
+    structuredQuickWins: [],
     selectedOfferAngle: 'main-photo',
     generatedMiniAudit: '',
     generatedOutreach: '',
@@ -77,12 +89,85 @@ const splitLines = (value: string) =>
 
 const joinLines = (value: string[]) => value.join('\n');
 
+const detectSourceType = (url: string): PublicProfileSourceType => {
+    const normalizedUrl = url.toLowerCase();
+
+    if (normalizedUrl.includes('booking.')) {
+        return 'booking';
+    }
+
+    if (normalizedUrl.includes('airbnb.')) {
+        return 'airbnb';
+    }
+
+    if (normalizedUrl.includes('google.')) {
+        return 'google';
+    }
+
+    return normalizedUrl ? 'other' : 'website';
+};
+
+const emptyPublicLink = (): PublicProfileLink => ({
+    id: `link-${crypto.randomUUID()}`,
+    sourceType: 'other',
+    url: '',
+    label: '',
+    notes: '',
+});
+
+const emptyQuickWin = (): QuickWin => ({
+    id: `quick-win-${crypto.randomUUID()}`,
+    title: '',
+    why: '',
+    action: '',
+    sourceEvidence: '',
+});
+
+const migratePublicLinks = (lead: Partial<Lead>): PublicProfileLink[] => {
+    if (lead.publicLinks && lead.publicLinks.length > 0) {
+        return lead.publicLinks;
+    }
+
+    const url = lead.publicProfileUrl || lead.websiteOrOtaUrl || '';
+
+    if (!url) {
+        return [];
+    }
+
+    const sourceType = detectSourceType(url);
+    return [
+        {
+            id: `link-${crypto.randomUUID()}`,
+            sourceType,
+            url,
+            label: publicProfileSourceLabels[sourceType],
+            notes: 'Migrovano ze starsiho pole publicProfileUrl / web odkaz.',
+        },
+    ];
+};
+
+const migrateQuickWins = (lead: Partial<Lead>): QuickWin[] => {
+    if (lead.structuredQuickWins && lead.structuredQuickWins.length > 0) {
+        return lead.structuredQuickWins;
+    }
+
+    return (lead.proposedQuickWins ?? []).map((win) => ({
+        id: `quick-win-${crypto.randomUUID()}`,
+        title: win,
+        why: '',
+        action: win,
+        sourceEvidence: '',
+    }));
+};
+
 const normalizeLead = (lead: Partial<Lead>): Lead => ({
     ...emptyLead(),
     ...lead,
+    publicLinks: migratePublicLinks(lead),
     publicSignals: lead.publicSignals ?? [],
     quickWins: lead.quickWins ?? [],
     proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
+    structuredQuickWins: migrateQuickWins(lead),
     selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
 });
 
@@ -234,6 +319,17 @@ function App() {
             city: candidate.city,
             websiteOrOtaUrl: candidate.url,
             publicProfileUrl: candidate.url,
+            publicLinks: candidate.url
+                ? [
+                      {
+                          id: `link-${crypto.randomUUID()}`,
+                          sourceType: detectSourceType(candidate.url),
+                          url: candidate.url,
+                          label: publicProfileSourceLabels[detectSourceType(candidate.url)],
+                          notes: 'Vytvoreno z Lead Finder kandidata. Link je pouze zdroj pro rucni kontrolu.',
+                      },
+                  ]
+                : [],
             email: candidate.email,
             status: 'Novy',
             notes: `Lead Finder kandidat. Segment: ${leadSearchSession.targetSegment || 'neuvedeno'}. ${candidate.sourceNotes}`,
@@ -248,9 +344,21 @@ function App() {
                 'Projit prvnich pet fotografii a hlavni popis.',
                 'Overit, jestli jsou jasne instrukce k prijezdu, parkovani a check-inu.',
             ],
+            firstImpression: candidate.sourceNotes,
+            mainPhotoVerdict: 'unknown',
             reviewSignals: candidate.reviewSnippets,
             guestFrictionSignals: candidate.signals.join('\n'),
+            guestConfusion: candidate.signals.join('\n'),
             risks: candidate.sourceNotes,
+            structuredQuickWins: [
+                {
+                    id: `quick-win-${crypto.randomUUID()}`,
+                    title: 'Zkontrolovat prvni dojem verejne nabidky',
+                    why: 'Audit musi vychazet z konkretniho verejneho dojmu, ne z domnenek.',
+                    action: 'Otevrit ulozeny verejny link a rucne zapsat prvni dojem, silne stranky a slabsi mista.',
+                    sourceEvidence: candidate.sourceNotes,
+                },
+            ],
             selectedOfferAngle: candidate.recommendedOfferAngle,
         };
 
@@ -921,6 +1029,60 @@ function OfferPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
 }
 
 function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyText, onGenerateText }: LeadEditorProps) {
+    const concreteObservationCount = [
+        draftLead.firstImpression,
+        draftLead.mainPhotoObservation,
+        draftLead.photoOrderObservation,
+        draftLead.descriptionObservation,
+        draftLead.checkInParkingInfo,
+        draftLead.reviewSignals,
+        draftLead.guestConfusion,
+        draftLead.businessOpportunity,
+    ].filter((value) => value.trim()).length;
+    const completeQuickWins = draftLead.structuredQuickWins.filter((win) => win.title.trim() && win.action.trim() && win.why.trim());
+    const checklist = [
+        { label: 'alespon 1 verejny link', done: draftLead.publicLinks.some((link) => link.url.trim()) },
+        { label: 'alespon 1 silna stranka', done: Boolean(draftLead.strengths.trim()) },
+        { label: 'alespon 2 konkretni pozorovani', done: concreteObservationCount >= 2 },
+        { label: 'presne 3 quick wins s title/action/why', done: completeQuickWins.length === 3 },
+    ];
+
+    const updatePublicLink = <Field extends keyof PublicProfileLink>(linkId: string, field: Field, value: PublicProfileLink[Field]) => {
+        onChange(
+            'publicLinks',
+            draftLead.publicLinks.map((link) => (link.id === linkId ? { ...link, [field]: value } : link)),
+        );
+    };
+
+    const addPublicLink = () => {
+        onChange('publicLinks', [...draftLead.publicLinks, emptyPublicLink()]);
+    };
+
+    const removePublicLink = (linkId: string) => {
+        onChange(
+            'publicLinks',
+            draftLead.publicLinks.filter((link) => link.id !== linkId),
+        );
+    };
+
+    const updateQuickWin = <Field extends keyof QuickWin>(quickWinId: string, field: Field, value: QuickWin[Field]) => {
+        onChange(
+            'structuredQuickWins',
+            draftLead.structuredQuickWins.map((quickWin) => (quickWin.id === quickWinId ? { ...quickWin, [field]: value } : quickWin)),
+        );
+    };
+
+    const addQuickWin = () => {
+        onChange('structuredQuickWins', [...draftLead.structuredQuickWins, emptyQuickWin()]);
+    };
+
+    const removeQuickWin = (quickWinId: string) => {
+        onChange(
+            'structuredQuickWins',
+            draftLead.structuredQuickWins.filter((quickWin) => quickWin.id !== quickWinId),
+        );
+    };
+
     return (
         <section className="panel form-panel audit-workspace">
             <div className="panel-header">
@@ -948,17 +1110,103 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                 </div>
             </div>
 
+            <div className="scope-note">
+                V teto verzi aplikace odkazy necte automaticky. Otevri link, dopln konkretni pozorovani a z nich se vygeneruje audit.
+            </div>
+
+            <div className="quality-grid">
+                {checklist.map((item) => (
+                    <div className={item.done ? 'quality-item done' : 'quality-item'} key={item.label}>
+                        <span>{item.done ? 'OK' : 'Chybi'}</span>
+                        {item.label}
+                    </div>
+                ))}
+            </div>
+
+            <section className="nested-section">
+                <div className="panel-header compact-header">
+                    <div>
+                        <p className="eyebrow">Zdroj k rucni kontrole</p>
+                        <h2>Verejne odkazy</h2>
+                    </div>
+                    <button className="secondary-button" onClick={addPublicLink} type="button">
+                        <Plus size={18} aria-hidden="true" />
+                        Pridat link
+                    </button>
+                </div>
+
+                <div className="link-list">
+                    {draftLead.publicLinks.length === 0 ? (
+                        <div className="scope-note">Zatim neni ulozeny zadny verejny link. Link slouzi jen jako zdroj pro rucni kontrolu.</div>
+                    ) : (
+                        draftLead.publicLinks.map((link) => (
+                            <div className="link-card" key={link.id}>
+                                <label>
+                                    Typ zdroje
+                                    <select
+                                        value={link.sourceType}
+                                        onChange={(event) => updatePublicLink(link.id, 'sourceType', event.target.value as PublicProfileSourceType)}
+                                    >
+                                        {(Object.keys(publicProfileSourceLabels) as PublicProfileSourceType[]).map((sourceType) => (
+                                            <option key={sourceType} value={sourceType}>
+                                                {publicProfileSourceLabels[sourceType]}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label>
+                                    URL
+                                    <input value={link.url} onChange={(event) => updatePublicLink(link.id, 'url', event.target.value)} />
+                                </label>
+                                <label>
+                                    Label
+                                    <input value={link.label} onChange={(event) => updatePublicLink(link.id, 'label', event.target.value)} />
+                                </label>
+                                <label>
+                                    Interni poznamka
+                                    <input value={link.notes} onChange={(event) => updatePublicLink(link.id, 'notes', event.target.value)} />
+                                </label>
+                                <div className="card-actions">
+                                    <button className="secondary-button compact-button" disabled={!link.url.trim()} onClick={() => window.open(link.url, '_blank', 'noopener,noreferrer')} type="button">
+                                        <ExternalLink size={16} aria-hidden="true" />
+                                        Otevrit
+                                    </button>
+                                    <button className="secondary-button compact-button danger-button" onClick={() => removePublicLink(link.id)} type="button">
+                                        <Trash2 size={16} aria-hidden="true" />
+                                        Odebrat
+                                    </button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </section>
+
             <div className="form-grid two-column">
                 <label className="full-width">
-                    Verejny profil / OTA odkaz
+                    Legacy verejny profil / OTA odkaz
                     <input value={draftLead.publicProfileUrl} onChange={(event) => onChange('publicProfileUrl', event.target.value)} />
                 </label>
                 <label>
-                    Co je na nabidce dobre
+                    Prvni dojem z nabidky
+                    <textarea value={draftLead.firstImpression} onChange={(event) => onChange('firstImpression', event.target.value)} rows={5} />
+                </label>
+                <label>
+                    Co je na nabidce silne
                     <textarea value={draftLead.strengths} onChange={(event) => onChange('strengths', event.target.value)} rows={6} />
                 </label>
                 <label>
-                    Hlavni fotka - pozorovani
+                    Hlavni fotka - verdikt
+                    <select value={draftLead.mainPhotoVerdict} onChange={(event) => onChange('mainPhotoVerdict', event.target.value as Lead['mainPhotoVerdict'])}>
+                        {(Object.keys(mainPhotoVerdictLabels) as Lead['mainPhotoVerdict'][]).map((verdict) => (
+                            <option key={verdict} value={verdict}>
+                                {mainPhotoVerdictLabels[verdict]}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                <label>
+                    Hlavni fotka - konkretni poznamka
                     <textarea
                         value={draftLead.mainPhotoObservation}
                         onChange={(event) => onChange('mainPhotoObservation', event.target.value)}
@@ -966,7 +1214,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     />
                 </label>
                 <label>
-                    Navrh lepsi hlavni fotky
+                    Pokud by se hlavni fotka menila: jaka a proc
                     <textarea
                         value={draftLead.betterPhotoSuggestion}
                         onChange={(event) => onChange('betterPhotoSuggestion', event.target.value)}
@@ -974,7 +1222,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     />
                 </label>
                 <label>
-                    Poradi fotek - pozorovani
+                    Poradi prvnich fotek - konkretni poznamka
                     <textarea
                         value={draftLead.photoOrderObservation}
                         onChange={(event) => onChange('photoOrderObservation', event.target.value)}
@@ -982,7 +1230,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     />
                 </label>
                 <label>
-                    Popis nabidky - pozorovani
+                    Popis nabidky - konkretni poznamka
                     <textarea
                         value={draftLead.descriptionObservation}
                         onChange={(event) => onChange('descriptionObservation', event.target.value)}
@@ -990,28 +1238,20 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     />
                 </label>
                 <label>
-                    Signaly z recenzi
+                    Check-in / prijezd / parkovani viditelne verejne
+                    <textarea value={draftLead.checkInParkingInfo} onChange={(event) => onChange('checkInParkingInfo', event.target.value)} rows={6} />
+                </label>
+                <label>
+                    Signaly z recenzi - citace nebo shrnuti
                     <textarea value={draftLead.reviewSignals} onChange={(event) => onChange('reviewSignals', event.target.value)} rows={6} />
                 </label>
                 <label>
-                    Mozne treni hosta / nejasnosti
-                    <textarea
-                        value={draftLead.guestFrictionSignals}
-                        onChange={(event) => onChange('guestFrictionSignals', event.target.value)}
-                        rows={6}
-                    />
+                    Co muze host nepochopit
+                    <textarea value={draftLead.guestConfusion} onChange={(event) => onChange('guestConfusion', event.target.value)} rows={6} />
                 </label>
                 <label>
-                    Rizika prvniho dojmu
-                    <textarea value={draftLead.risks} onChange={(event) => onChange('risks', event.target.value)} rows={6} />
-                </label>
-                <label>
-                    3 quick wins
-                    <textarea
-                        value={joinLines(draftLead.proposedQuickWins)}
-                        onChange={(event) => onChange('proposedQuickWins', splitLines(event.target.value))}
-                        rows={6}
-                    />
+                    Nejvetsi obchodni prilezitost
+                    <textarea value={draftLead.businessOpportunity} onChange={(event) => onChange('businessOpportunity', event.target.value)} rows={6} />
                 </label>
                 <label>
                     Uhel osloveni
@@ -1032,6 +1272,51 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onChange, onCopyTe
                     />
                 </label>
             </div>
+
+            <section className="nested-section">
+                <div className="panel-header compact-header">
+                    <div>
+                        <p className="eyebrow">Doporuceni z evidence</p>
+                        <h2>Quick wins</h2>
+                    </div>
+                    <button className="secondary-button" onClick={addQuickWin} type="button">
+                        <Plus size={18} aria-hidden="true" />
+                        Pridat quick win
+                    </button>
+                </div>
+                <div className="quick-win-list">
+                    {draftLead.structuredQuickWins.length === 0 ? <div className="scope-note">Dopln 3 hlavni quick wins. Bez nich generator nevytvori obecne rady.</div> : null}
+                    {draftLead.structuredQuickWins.map((quickWin, index) => (
+                        <div className="quick-win-card" key={quickWin.id}>
+                            <div className="label-row">
+                                <strong>Quick win #{index + 1}</strong>
+                                <button className="secondary-button compact-button danger-button" onClick={() => removeQuickWin(quickWin.id)} type="button">
+                                    <Trash2 size={16} aria-hidden="true" />
+                                    Odebrat
+                                </button>
+                            </div>
+                            <div className="form-grid">
+                                <label>
+                                    Title
+                                    <input value={quickWin.title} onChange={(event) => updateQuickWin(quickWin.id, 'title', event.target.value)} />
+                                </label>
+                                <label>
+                                    Why
+                                    <input value={quickWin.why} onChange={(event) => updateQuickWin(quickWin.id, 'why', event.target.value)} />
+                                </label>
+                                <label className="full-width">
+                                    Action
+                                    <textarea value={quickWin.action} onChange={(event) => updateQuickWin(quickWin.id, 'action', event.target.value)} rows={3} />
+                                </label>
+                                <label className="full-width">
+                                    Source evidence
+                                    <textarea value={quickWin.sourceEvidence} onChange={(event) => updateQuickWin(quickWin.id, 'sourceEvidence', event.target.value)} rows={3} />
+                                </label>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </section>
 
             <div className="generated-grid">
                 <GeneratedTextArea

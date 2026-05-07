@@ -444,6 +444,94 @@ textarea:focus {
     padding: 12px 14px;
 }
 
+.quality-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.quality-item {
+    align-items: center;
+    background: #fff8ef;
+    border: 1px solid #ead6bd;
+    border-radius: 8px;
+    color: #5a4631;
+    display: flex;
+    gap: 10px;
+    font-weight: 800;
+    min-height: 48px;
+    padding: 10px 12px;
+}
+
+.quality-item span {
+    background: #f3d3a7;
+    border-radius: 999px;
+    color: #5a3812;
+    font-size: 0.72rem;
+    min-width: 48px;
+    padding: 5px 8px;
+    text-align: center;
+}
+
+.quality-item.done {
+    background: #eff8f4;
+    border-color: #cce6dc;
+    color: #173a31;
+}
+
+.quality-item.done span {
+    background: #bce6d4;
+    color: #145442;
+}
+
+.nested-section {
+    border: 1px solid #e4ebec;
+    border-radius: 8px;
+    display: grid;
+    gap: 16px;
+    padding: 16px;
+}
+
+.compact-header {
+    margin-bottom: 0;
+}
+
+.link-list,
+.quick-win-list {
+    display: grid;
+    gap: 12px;
+}
+
+.link-card,
+.quick-win-card {
+    background: #f8fbfb;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    display: grid;
+    gap: 14px;
+    padding: 14px;
+}
+
+.link-card {
+    grid-template-columns: 160px minmax(220px, 1fr) minmax(160px, 0.7fr) minmax(180px, 0.9fr) auto;
+}
+
+.card-actions {
+    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.danger-button {
+    background: #f5e8e5;
+    color: #733325;
+}
+
+.danger-button:hover {
+    background: #edd7d1;
+}
+
 .query-box {
     align-self: start;
     min-width: 0;
@@ -517,6 +605,11 @@ textarea:focus {
 
     .sidebar {
         padding: 16px;
+    }
+
+    .quality-grid,
+    .link-card {
+        grid-template-columns: 1fr;
     }
 
     .nav-list {
