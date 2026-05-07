@@ -513,6 +513,17 @@ tbody tr:hover,
 .analysis-preview textarea {
     min-height: 170px;
 }
+.agent-origin-note {
+    background: #eef7ff;
+    border-color: #cde4f7;
+    color: #22485f;
+    display: grid;
+    gap: 10px;
+}
+
+.agent-origin-note strong {
+    display: block;
+}
 
 .diagnostic-box {
     background: #f7fbfb;

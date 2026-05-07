@@ -47,8 +47,13 @@ type FallbackReason =
     | 'openai_timeout'
     | 'openai_network_error'
     | 'openai_json_parse_error'
+    | 'openai_refusal'
+    | 'openai_incomplete'
+    | 'openai_json_schema_error'
     | 'netlify_function_timeout_risk'
     | 'function_runtime_error';
+
+type RawOutputKind = 'output_text' | 'output_message_content' | 'unknown';
 
 const OPENAI_TIMEOUT_MS = 20000;
 const MAX_SNIPPETS = 4;
@@ -66,10 +71,88 @@ const json = (statusCode: number, body: unknown) => ({ statusCode, headers, body
 
 const makeDebugId = () => `analyze-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-const safeSample = (value: string) => value
+const safeSample = (value: string, maxLength = 500) => value
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
     .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
-    .slice(0, 300);
+    .slice(0, maxLength);
+
+const analysisJsonSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+        'firstImpression',
+        'strengths',
+        'risks',
+        'guestFrictionSignals',
+        'quickWins',
+        'miniAudit',
+        'outreachEmail',
+        'followUp',
+        'offerRecommendation',
+        'confidence',
+        'fitVerdict',
+        'opportunityType',
+        'opportunityScore',
+        'reviewFrictionScore',
+        'automationNeedScore',
+        'publicMaturityScore',
+        'painSignals',
+        'positiveSolvedSignals',
+        'alreadySolvedSignals',
+        'missingEvidence',
+        'missingAutomationSignals',
+        'likelyManualProcessSignals',
+        'contradictionWarnings',
+        'targetOffer',
+        'qualificationReason',
+        'offerHypothesis',
+        'evidenceLimits',
+    ],
+    properties: {
+        firstImpression: { type: 'string' },
+        strengths: { type: 'array', items: { type: 'string' } },
+        risks: { type: 'array', items: { type: 'string' } },
+        guestFrictionSignals: { type: 'array', items: { type: 'string' } },
+        quickWins: {
+            type: 'array',
+            minItems: 3,
+            maxItems: 3,
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['title', 'why', 'action', 'sourceEvidence'],
+                properties: {
+                    title: { type: 'string' },
+                    why: { type: 'string' },
+                    action: { type: 'string' },
+                    sourceEvidence: { type: 'string' },
+                },
+            },
+        },
+        miniAudit: { type: 'string' },
+        outreachEmail: { type: 'string' },
+        followUp: { type: 'string' },
+        offerRecommendation: { type: 'string' },
+        confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+        fitVerdict: { type: 'string', enum: ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'] },
+        opportunityType: { type: 'string', enum: ['fix-existing-process', 'setup-automation', 'ota-profile-audit', 'benchmark', 'skip'] },
+        opportunityScore: { type: 'number' },
+        reviewFrictionScore: { type: 'number' },
+        automationNeedScore: { type: 'number' },
+        publicMaturityScore: { type: 'number' },
+        painSignals: { type: 'array', items: { type: 'string' } },
+        positiveSolvedSignals: { type: 'array', items: { type: 'string' } },
+        alreadySolvedSignals: { type: 'array', items: { type: 'string' } },
+        missingEvidence: { type: 'array', items: { type: 'string' } },
+        missingAutomationSignals: { type: 'array', items: { type: 'string' } },
+        likelyManualProcessSignals: { type: 'array', items: { type: 'string' } },
+        contradictionWarnings: { type: 'array', items: { type: 'string' } },
+        targetOffer: { type: 'string', enum: ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'] },
+        qualificationReason: { type: 'string' },
+        offerHypothesis: { type: 'string' },
+        evidenceLimits: { type: 'array', items: { type: 'string' } },
+    },
+};
 
 const fallbackReasonForStatus = (status: number): FallbackReason => {
     if (status === 401) return 'openai_401_auth';
@@ -256,21 +339,33 @@ const parseJsonObject = (value: string) => {
     return JSON.parse(trimmed.slice(start, end + 1));
 };
 
-const extractTextContent = (payload: unknown): string => {
+const extractTextContent = (payload: unknown): { text: string; rawOutputKind: RawOutputKind; parsedObject?: unknown; refusal?: string; incomplete?: boolean } => {
     const response = payload as {
+        status?: string;
+        incomplete_details?: unknown;
         output_text?: string;
-        output?: Array<{ content?: Array<{ text?: string; value?: string }> }>;
+        output?: Array<{ content?: Array<{ text?: string; value?: string; parsed?: unknown; json?: unknown; refusal?: string; type?: string }> }>;
     };
 
     if (typeof response.output_text === 'string' && response.output_text.trim()) {
-        return response.output_text;
+        return { text: response.output_text, rawOutputKind: 'output_text', incomplete: response.status === 'incomplete' || Boolean(response.incomplete_details) };
     }
 
-    return response.output
-        ?.flatMap((item) => item.content || [])
-        .map((content) => content.text || content.value || '')
+    const content = response.output?.flatMap((item) => item.content || []) || [];
+    const parsedContent = content.find((item) => item.parsed || item.json);
+    const refusal = content.find((item) => item.refusal)?.refusal;
+    const text = content
+        .map((contentItem) => contentItem.text || contentItem.value || '')
         .filter(Boolean)
         .join('\n') || '';
+
+    return {
+        text,
+        rawOutputKind: text ? 'output_message_content' : 'unknown',
+        parsedObject: parsedContent?.parsed || parsedContent?.json,
+        refusal,
+        incomplete: response.status === 'incomplete' || Boolean(response.incomplete_details),
+    };
 };
 
 const isFitVerdict = (value: unknown): value is FitVerdict => ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'].includes(String(value));
@@ -338,10 +433,13 @@ const logFallback = (details: { debugId: string; status: number; fallbackReason:
 const fallbackMessage = (fallbackReason: FallbackReason) => {
     if (fallbackReason === 'openai_timeout') return 'OpenAI analýza vypršela. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
     if (fallbackReason === 'netlify_function_timeout_risk') return 'OpenAI analýza pravděpodobně narazila na limit Netlify Function. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
+    if (fallbackReason === 'openai_refusal') return 'OpenAI structured output vratil refusal misto analyzy.';
+    if (fallbackReason === 'openai_incomplete') return 'OpenAI structured output se nedokoncil v limitu odpovedi.';
+    if (fallbackReason === 'openai_json_schema_error') return 'OpenAI structured output schema nebylo prijato nebo validovano.';
     return `OpenAI analyza nebezela: ${fallbackReason}`;
 };
 
-const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOpenAIKey, httpStatus, message, model, sanitizedSample, statusCode = 200 }: {
+const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOpenAIKey, httpStatus, message, model, rawOutputKind, sanitizedOutputSample, sanitizedSample, statusCode = 200 }: {
     candidate: CandidateInput;
     debugId: string;
     elapsedMs?: number;
@@ -350,6 +448,8 @@ const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOp
     httpStatus?: number;
     message: string;
     model: string;
+    rawOutputKind?: RawOutputKind;
+    sanitizedOutputSample?: string;
     sanitizedSample?: string;
     statusCode?: number;
 }) => {
@@ -372,7 +472,9 @@ const fallbackResponse = ({ candidate, debugId, elapsedMs, fallbackReason, hasOp
             hasOpenAIKey,
             model,
             elapsedMs,
-            sanitizedSample,
+            rawOutputKind,
+            sanitizedOutputSample: sanitizedOutputSample || sanitizedSample,
+            sanitizedSample: sanitizedSample || sanitizedOutputSample,
         },
         analysis: {
             ...fallbackAnalysis(candidate || {}),
@@ -426,28 +528,55 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
         const startedAt = Date.now();
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
-        const requestBody: { model: string; input: string; max_output_tokens: number; reasoning?: { effort: 'low' } } = {
+        const baseRequestBody: { model: string; input: string; max_output_tokens: number; reasoning?: { effort: 'low' } } = {
             model,
             input: prompt,
-            max_output_tokens: 1400,
+            max_output_tokens: 1800,
         };
 
         if (model.startsWith('gpt-5')) {
-            requestBody.reasoning = { effort: 'low' };
+            baseRequestBody.reasoning = { effort: 'low' };
         }
 
-        let response: Response;
+        const structuredRequestBody = {
+            ...baseRequestBody,
+            text: {
+                format: {
+                    type: 'json_schema',
+                    name: 'stayboost_lead_analysis',
+                    strict: true,
+                    schema: analysisJsonSchema,
+                },
+            },
+        };
+
+        const requestBodies = [structuredRequestBody, baseRequestBody];
+
+        let response: Response | undefined;
+        let usedStructuredOutput = true;
+        let schemaErrorSample = '';
 
         try {
-            response = await fetch('https://api.openai.com/v1/responses', {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${openAiKey}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal as AbortSignal,
-            });
+            for (let attemptIndex = 0; attemptIndex < requestBodies.length; attemptIndex += 1) {
+                response = await fetch('https://api.openai.com/v1/responses', {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${openAiKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBodies[attemptIndex]),
+                    signal: controller.signal as AbortSignal,
+                });
+
+                usedStructuredOutput = attemptIndex === 0;
+
+                if (response.status !== 400 || attemptIndex === requestBodies.length - 1) {
+                    break;
+                }
+
+                const errorText = await response.text();
+                schemaErrorSample = safeSample(errorText);
+            }
         } catch (error) {
             const elapsedMs = Date.now() - startedAt;
             clearTimeout(timeoutId);
@@ -469,9 +598,22 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
 
         const elapsedMs = Date.now() - startedAt;
 
+        if (!response) {
+            return fallbackResponse({
+                candidate,
+                debugId,
+                elapsedMs,
+                fallbackReason: 'openai_network_error',
+                hasOpenAIKey,
+                httpStatus: 502,
+                message: fallbackMessage('openai_network_error'),
+                model,
+            });
+        }
+
         if (!response.ok) {
             const errorText = await response.text();
-            const fallbackReason = fallbackReasonForStatus(response.status);
+            const fallbackReason = response.status === 400 && usedStructuredOutput ? 'openai_json_schema_error' : fallbackReasonForStatus(response.status);
 
             return fallbackResponse({
                 candidate,
@@ -482,15 +624,46 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
                 httpStatus: response.status,
                 message: fallbackMessage(fallbackReason),
                 model,
-                sanitizedSample: safeSample(errorText),
+                rawOutputKind: 'unknown',
+                sanitizedOutputSample: safeSample(errorText || schemaErrorSample),
             });
         }
 
         const payload = await response.json();
-        const outputText = extractTextContent(payload);
+        const output = extractTextContent(payload);
+
+        if (output.refusal) {
+            return fallbackResponse({
+                candidate,
+                debugId,
+                elapsedMs,
+                fallbackReason: 'openai_refusal',
+                hasOpenAIKey,
+                httpStatus: 200,
+                message: fallbackMessage('openai_refusal'),
+                model,
+                rawOutputKind: output.rawOutputKind,
+                sanitizedOutputSample: safeSample(output.refusal),
+            });
+        }
+
+        if (output.incomplete) {
+            return fallbackResponse({
+                candidate,
+                debugId,
+                elapsedMs,
+                fallbackReason: 'openai_incomplete',
+                hasOpenAIKey,
+                httpStatus: 200,
+                message: fallbackMessage('openai_incomplete'),
+                model,
+                rawOutputKind: output.rawOutputKind,
+                sanitizedOutputSample: safeSample(output.text || JSON.stringify(payload).slice(0, 500)),
+            });
+        }
 
         try {
-            const parsed = validateAnalysis(parseJsonObject(outputText));
+            const parsed = validateAnalysis(output.parsedObject || (typeof output.text === 'string' ? parseJsonObject(output.text) : output.text));
 
             return json(200, {
                 status: 'completed',
@@ -507,6 +680,7 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
                     hasOpenAIKey,
                     model,
                     elapsedMs,
+                    rawOutputKind: output.rawOutputKind,
                 },
                 analysis: {
                     ...(parsed as Record<string, unknown>),
@@ -527,7 +701,8 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
                 httpStatus: 200,
                 message: fallbackMessage('openai_json_parse_error'),
                 model,
-                sanitizedSample: safeSample(outputText),
+                rawOutputKind: output.rawOutputKind,
+                sanitizedOutputSample: safeSample(output.text || JSON.stringify(output.parsedObject || payload)),
             });
         }
     } catch {

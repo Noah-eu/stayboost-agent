@@ -11,6 +11,7 @@ import {
     LeadAgentCandidateSort,
     LeadAgentDiagnostic,
     LeadAgentHealth,
+    LeadAgentOpportunityType,
     LeadAgentSearchRequest,
     LeadAgentSession,
 } from './leadAgentTypes';
@@ -60,6 +61,20 @@ const emptyLead = (): Lead => ({
     publicSignals: [],
     quickWins: [],
     leadScore: 0,
+    createdFromAgentAnalysis: false,
+    addedWithoutAgentAnalysis: false,
+    leadAgentRunId: '',
+    agentAnalysisProvider: '',
+    opportunityScore: 0,
+    opportunityType: '',
+    fitVerdict: '',
+    confidence: '',
+    targetOffer: '',
+    qualificationReason: '',
+    offerHypothesis: '',
+    automationNeedScore: 0,
+    reviewFrictionScore: 0,
+    publicMaturityScore: 0,
     publicProfileUrl: '',
     publicLinks: [],
     sourceMaterials: [],
@@ -159,6 +174,13 @@ const emptySourceMaterial = (): SourceMaterial => ({
     createdAt: new Date().toISOString(),
 });
 
+const offerAngleForAgentLead = (opportunityType: LeadAgentOpportunityType, targetOffer: string, fallback: OfferAngle): OfferAngle => {
+    if (opportunityType === 'setup-automation' || targetOffer === 'guest-guide' || targetOffer === 'self-checkin-setup') return 'guest-guide';
+    if (opportunityType === 'fix-existing-process') return 'guest-communication';
+    if (opportunityType === 'ota-profile-audit') return targetOffer === 'review-response-improvement' ? 'reviews' : 'description';
+    return fallback === 'main-photo' ? 'guest-guide' : fallback;
+};
+
 const migratePublicLinks = (lead: Partial<Lead>): PublicProfileLink[] => {
     if (lead.publicLinks && lead.publicLinks.length > 0) {
         return lead.publicLinks;
@@ -207,6 +229,20 @@ const normalizeLead = (lead: Partial<Lead>): Lead => ({
     proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
     structuredQuickWins: migrateQuickWins(lead),
     selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
+    createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
+    addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
+    leadAgentRunId: lead.leadAgentRunId ?? '',
+    agentAnalysisProvider: lead.agentAnalysisProvider ?? '',
+    opportunityScore: lead.opportunityScore ?? 0,
+    opportunityType: lead.opportunityType ?? '',
+    fitVerdict: lead.fitVerdict ?? '',
+    confidence: lead.confidence ?? '',
+    targetOffer: lead.targetOffer ?? '',
+    qualificationReason: lead.qualificationReason ?? '',
+    offerHypothesis: lead.offerHypothesis ?? '',
+    automationNeedScore: lead.automationNeedScore ?? 0,
+    reviewFrictionScore: lead.reviewFrictionScore ?? 0,
+    publicMaturityScore: lead.publicMaturityScore ?? 0,
 });
 
 const emptyAgentRequest = (): LeadAgentSearchRequest => ({
@@ -663,10 +699,22 @@ function App() {
     const addAgentCandidateToLeads = (candidate: LeadAgentCandidate) => {
         const analysis = leadAgentSession.analyses[candidate.id];
         const candidateText = candidate.sourceSnippets.join('\n');
-        const quickWins = (analysis?.quickWins ?? []).map((win) => ({
+        const hasAgentAnalysis = Boolean(analysis);
+        const quickWins = (analysis?.quickWins ?? []).slice(0, 3).map((win) => ({
             ...win,
             id: win.id || `quick-win-${crypto.randomUUID()}`,
         }));
+        const agentSourceContent = [
+            `Evidence summary: ${candidate.evidenceSummary}`,
+            `Qualification: ${analysis?.qualificationReason ?? candidate.qualificationReason}`,
+            `Offer hypothesis: ${analysis?.offerHypothesis ?? candidate.offerHypothesis}`,
+            `Opportunity type: ${analysis?.opportunityType ?? candidate.opportunityType}`,
+            `Fit verdict: ${analysis?.fitVerdict ?? candidate.fitVerdict}`,
+            '',
+            'Source snippets:',
+            candidateText,
+        ].filter(Boolean).join('\n');
+        const selectedOfferAngle = offerAngleForAgentLead(analysis?.opportunityType ?? candidate.opportunityType, analysis?.targetOffer ?? candidate.targetOffer, candidate.recommendedAngle);
         const nextLead: Lead = {
             ...emptyLead(),
             id: `lead-${crypto.randomUUID()}`,
@@ -682,36 +730,52 @@ function App() {
                 label: publicProfileSourceLabels[detectSourceType(url)],
                 notes: candidate.isMock ? 'Demo agentni kandidat; URL nebyla automaticky ctena.' : 'Agentni kandidat ze search API; URL nebyla scrapovana.',
             })),
-            sourceMaterials: candidate.sourceSnippets.map((snippet, index) => ({
+            sourceMaterials: [{
                 id: `source-${crypto.randomUUID()}`,
                 type: 'pasted-text',
                 sourceLinkId: '',
-                title: `Agent source snippet #${index + 1}`,
-                content: snippet,
+                title: hasAgentAnalysis ? 'Agent analysis source' : 'Agent candidate source without analysis',
+                content: agentSourceContent,
                 createdAt: new Date().toISOString(),
-            })),
+            }],
             extractionStatus: analysis ? 'completed' : 'ready',
             email: candidate.possibleEmail,
-            status: 'Novy',
-            notes: `Lead Finder Agent kandidat. Skore: ${candidate.leadScore}. ${candidate.isMock ? 'Demo rezim.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
+            status: analysis ? 'Audit pripraven' : 'Novy',
+            notes: `${analysis ? 'Lead vytvoren z Lead Finder Agent analyzy.' : 'Lead byl pridan bez agentni analyzy.'} Skore: ${candidate.leadScore}. Opportunity: ${analysis?.opportunityScore ?? candidate.opportunityScore}. ${candidate.isMock ? 'Demo rezim.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
             leadScore: candidate.leadScore,
-            publicSignals: candidate.signals,
+            createdFromAgentAnalysis: hasAgentAnalysis,
+            addedWithoutAgentAnalysis: !hasAgentAnalysis,
+            leadAgentRunId: candidate.runId,
+            agentAnalysisProvider: analysis?.provider ?? '',
+            opportunityScore: analysis?.opportunityScore ?? candidate.opportunityScore,
+            opportunityType: analysis?.opportunityType ?? candidate.opportunityType,
+            fitVerdict: analysis?.fitVerdict ?? candidate.fitVerdict,
+            confidence: analysis?.confidence ?? candidate.confidence,
+            targetOffer: analysis?.targetOffer ?? candidate.targetOffer,
+            qualificationReason: analysis?.qualificationReason ?? candidate.qualificationReason,
+            offerHypothesis: analysis?.offerHypothesis ?? candidate.offerHypothesis,
+            automationNeedScore: analysis?.automationNeedScore ?? candidate.automationNeedScore,
+            reviewFrictionScore: analysis?.reviewFrictionScore ?? candidate.reviewFrictionScore,
+            publicMaturityScore: analysis?.publicMaturityScore ?? candidate.publicMaturityScore,
+            publicSignals: [...new Set([...candidate.signals, ...(analysis?.websiteSignals ?? candidate.websiteSignals), ...(analysis?.contactSignals ?? candidate.contactSignals), ...(analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals)])],
             quickWins: quickWins.map((win) => win.title),
             proposedQuickWins: quickWins.map((win) => win.title),
             firstImpression: analysis?.firstImpression ?? candidate.evidenceSummary,
             mainPhotoVerdict: 'unknown',
-            reviewSignals: candidateText,
+            descriptionObservation: analysis?.offerHypothesis ?? candidate.offerHypothesis,
+            checkInParkingInfo: (analysis?.missingAutomationSignals ?? candidate.missingAutomationSignals).join('\n'),
+            reviewSignals: [...(analysis?.painSignals ?? candidate.painSignals), ...(analysis?.positiveSolvedSignals ?? candidate.positiveSolvedSignals), candidateText].filter(Boolean).join('\n'),
             guestFrictionSignals: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
             guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
             strengths: analysis?.strengths.join('\n') ?? candidate.signals.join('\n'),
             risks: analysis?.risks.join('\n') ?? candidate.risks.join('\n'),
-            businessOpportunity: analysis?.offerRecommendation ?? 'Pripravit mini-audit verejne prezentace a guest guide / komunikaci pred prijezdem.',
+            businessOpportunity: analysis ? `${analysis.offerHypothesis}\n\n${analysis.offerRecommendation}` : candidate.offerHypothesis || 'Pripravit mini-audit verejne prezentace a guest guide / komunikaci pred prijezdem.',
             structuredQuickWins: quickWins,
             generatedMiniAudit: analysis?.miniAudit ?? '',
             generatedOutreach: analysis?.outreachEmail ?? '',
             generatedFollowUp: analysis?.followUp ?? '',
             generatedOffer: analysis?.offerRecommendation ?? '',
-            selectedOfferAngle: candidate.recommendedAngle,
+            selectedOfferAngle,
         };
 
         setLeads((currentLeads) => [nextLead, ...currentLeads]);
@@ -724,7 +788,7 @@ function App() {
                 currentCandidate.id === candidate.id ? { ...currentCandidate, addedLeadId: nextLead.id } : currentCandidate,
             ),
         }));
-        setActiveScreen('leads');
+        setActiveScreen('detail');
     };
 
     const prepareAuditObservations = () => {
@@ -1371,6 +1435,8 @@ function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }
             {diagnostic.debugId ? <span>Debug ID: {diagnostic.debugId}</span> : null}
             {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>OpenAI key: {diagnostic.hasOpenAIKey ? 'OK' : 'chybi'}</span> : null}
             {diagnostic.model ? <span>Model: {diagnostic.model}</span> : null}
+            {diagnostic.rawOutputKind ? <span>Raw output kind: {diagnostic.rawOutputKind}</span> : null}
+            {diagnostic.sanitizedOutputSample || diagnostic.sanitizedSample ? <span>Sanitized sample: {diagnostic.sanitizedOutputSample || diagnostic.sanitizedSample}</span> : null}
             <span>{diagnostic.userMessage}</span>
         </div>
     );
@@ -1540,6 +1606,16 @@ interface LeadEditorProps {
 }
 
 function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange, onCopyText, onDeleteLead, onGenerateText, onPrepareAudit, onSave }: LeadEditorProps) {
+    const agentBadges = [
+        draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
+        draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
+        draftLead.confidence ? `Confidence: ${draftLead.confidence}` : '',
+        draftLead.targetOffer ? `Offer: ${draftLead.targetOffer}` : '',
+        typeof draftLead.opportunityScore === 'number' && draftLead.opportunityScore > 0 ? `Opportunity score ${draftLead.opportunityScore}` : '',
+        typeof draftLead.automationNeedScore === 'number' && draftLead.automationNeedScore > 0 ? `Automation ${draftLead.automationNeedScore}` : '',
+        typeof draftLead.reviewFrictionScore === 'number' && draftLead.reviewFrictionScore > 0 ? `Review pain ${draftLead.reviewFrictionScore}` : '',
+    ].filter(Boolean);
+
     return (
         <form className="detail-stack" onSubmit={onSave}>
             <section className="panel form-panel">
@@ -1561,6 +1637,18 @@ function LeadDetail({ copiedTextId = '', draftLead, isCreating = false, onChange
                         </button>
                     </div>
                 </div>
+
+                {draftLead.createdFromAgentAnalysis ? (
+                    <div className="scope-note agent-origin-note">
+                        <strong>Vytvořeno z Lead Finder Agent analýzy</strong>
+                        <div className="metadata-row">
+                            {agentBadges.map((badge) => <span key={badge}>{badge}</span>)}
+                        </div>
+                        {draftLead.qualificationReason ? <span>{draftLead.qualificationReason}</span> : null}
+                    </div>
+                ) : draftLead.addedWithoutAgentAnalysis ? (
+                    <div className="scope-note warning-note">Lead byl přidán bez agentní analýzy. Výstupy je potřeba doplnit ručně nebo kandidáta nejdřív analyzovat v Lead Finderu.</div>
+                ) : null}
 
                 <LeadCoreFields draftLead={draftLead} onChange={onChange} />
             </section>

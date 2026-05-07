@@ -22,6 +22,8 @@ export interface LeadAgentDiagnostic {
     model?: string | null;
     elapsedMs?: number;
     sanitizedSample?: string;
+    sanitizedOutputSample?: string;
+    rawOutputKind?: 'output_text' | 'output_message_content' | 'unknown';
 }
 
 export interface LeadAgentHealth {
