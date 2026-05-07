@@ -2,6 +2,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
+import { cleanLeadDisplayName, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
@@ -369,10 +370,39 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const guardedOpportunityScore = hasUnanalyzedWebsiteExtraction ? Math.min(lead.opportunityScore ?? 0, 64) : lead.opportunityScore ?? 0;
     const sourceText = [lead.notes, lead.firstImpression, lead.websiteExtraction?.summary, ...(lead.sourceMaterials ?? []).map((material) => material.content)].join(' ').toLowerCase();
     const guardedTargetOffer = hasUnanalyzedWebsiteExtraction && lead.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in') ? 'guest-guide' : lead.targetOffer ?? '';
+    const normalizedName = (lead.createdFromAgentAnalysis || lead.websiteExtraction) && lead.name ? cleanLeadDisplayName(lead.name) : lead.name ?? '';
+    const normalizedMiniAudit = sanitizeClientText(lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '');
+    const normalizedWebsiteExtraction = lead.websiteExtraction ? {
+        provider: lead.websiteExtraction.provider ?? 'fallback',
+        status: lead.websiteExtraction.status ?? 'partial',
+        websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
+        pagesExtracted: lead.websiteExtraction.pagesExtracted ?? [],
+        contact: {
+            emails: lead.websiteExtraction.contact?.emails ?? [],
+            phones: lead.websiteExtraction.contact?.phones ?? [],
+            contactPageUrl: lead.websiteExtraction.contact?.contactPageUrl ?? null,
+        },
+        websiteSignals: lead.websiteExtraction.websiteSignals ?? [],
+        arrivalSignals: lead.websiteExtraction.arrivalSignals ?? [],
+        parkingSignals: lead.websiteExtraction.parkingSignals ?? [],
+        faqSignals: lead.websiteExtraction.faqSignals ?? [],
+        guestGuideSignals: lead.websiteExtraction.guestGuideSignals ?? [],
+        automationSignals: lead.websiteExtraction.automationSignals ?? [],
+        missingPublicInfoSignals: lead.websiteExtraction.missingPublicInfoSignals ?? [],
+        likelyManualProcessSignals: lead.websiteExtraction.likelyManualProcessSignals ?? [],
+        strengths: lead.websiteExtraction.strengths ?? [],
+        risks: lead.websiteExtraction.risks ?? [],
+        setupOpportunitySignals: lead.websiteExtraction.setupOpportunitySignals ?? [],
+        fixOpportunitySignals: lead.websiteExtraction.fixOpportunitySignals ?? [],
+        evidenceLimits: lead.websiteExtraction.evidenceLimits ?? [],
+        summary: lead.websiteExtraction.summary ?? '',
+        debug: lead.websiteExtraction.debug ?? { debugId: '', elapsedMs: 0, partial: false, reason: null },
+    } : undefined;
 
     return {
         ...emptyLead(),
         ...lead,
+        name: normalizedName,
         notes: isDemoLead && !baseNotes.toLowerCase().includes('nejde o skutecneho klienta')
             ? `${demoLeadNotice}\n\n${baseNotes}`.trim()
             : baseNotes,
@@ -385,8 +415,11 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         structuredQuickWins: migrateQuickWins(lead),
         selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
         internalAgentBrief: lead.internalAgentBrief ?? '',
-        clientMiniAudit: lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '',
-        generatedMiniAudit: lead.generatedMiniAudit ?? lead.clientMiniAudit ?? '',
+        clientMiniAudit: normalizedMiniAudit,
+        generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit ?? normalizedMiniAudit),
+        generatedOutreach: sanitizeClientText(lead.generatedOutreach ?? ''),
+        generatedFollowUp: sanitizeClientText(lead.generatedFollowUp ?? ''),
+        generatedOffer: sanitizeClientText(lead.generatedOffer ?? ''),
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
         addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
         agentLeadStatus: inferAgentLeadStatus(lead),
@@ -412,7 +445,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         screenshotAnalysisDiagnostic: lead.screenshotAnalysisDiagnostic ?? { status: 'idle' },
         latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic,
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
-        websiteExtraction: lead.websiteExtraction,
+        websiteExtraction: normalizedWebsiteExtraction,
     };
 };
 
@@ -517,6 +550,7 @@ const normalizeAgentAnalysis = (analysis: Partial<LeadAgentAnalysis>, candidate?
     analyzedAt: analysis.analyzedAt ?? nowIso(),
     provider: analysis.provider ?? 'legacy',
     model: analysis.model ?? null,
+    leadDisplayName: analysis.leadDisplayName ?? (candidate?.name ? cleanLeadDisplayName(candidate.name) : undefined),
     firstImpression: analysis.firstImpression ?? 'Legacy analyza bez prvniho dojmu.',
     strengths: analysis.strengths ?? [],
     risks: analysis.risks ?? [],
@@ -613,8 +647,10 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
     const hasWebsiteEmail = (lead.websiteExtraction?.contact.emails.length ?? 0) > 0;
     const contactSignals = hasWebsiteEmail ? [`E-mail nalezen na vlastním webu: ${lead.websiteExtraction?.contact.emails[0]}`] : [];
     const quickWins = ensureThreeQuickWins(lead, analysis.quickWins);
+    const cleanedDisplayName = cleanLeadDisplayName(analysis.leadDisplayName || lead.name);
     const analyzedLead: Lead = {
         ...lead,
+        name: cleanedDisplayName,
         status: 'Audit pripraven',
         createdFromAgentAnalysis: true,
         addedWithoutAgentAnalysis: false,
@@ -648,15 +684,15 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         extractionStatus: 'completed',
         sourceLimitations: analysis.evidenceLimits,
     };
-    const clientMiniAudit = analysis.miniAudit.trim() || generateMiniAudit(analyzedLead);
+    const clientMiniAudit = sanitizeClientText(analysis.miniAudit.trim() || generateMiniAudit(analyzedLead));
     const leadWithClientAudit = { ...analyzedLead, clientMiniAudit, generatedMiniAudit: clientMiniAudit };
 
     return {
         ...leadWithClientAudit,
         internalAgentBrief: generateInternalAgentBrief(leadWithClientAudit),
-        generatedOutreach: analysis.outreachEmail.trim() || generateFirstOutreach(leadWithClientAudit),
-        generatedFollowUp: analysis.followUp.trim() || generateFollowUp(leadWithClientAudit),
-        generatedOffer: analysis.offerRecommendation.trim() || generateOffer(leadWithClientAudit),
+        generatedOutreach: sanitizeClientText(analysis.outreachEmail.trim() || generateFirstOutreach(leadWithClientAudit)),
+        generatedFollowUp: sanitizeClientText(analysis.followUp.trim() || generateFollowUp(leadWithClientAudit)),
+        generatedOffer: sanitizeClientText(analysis.offerRecommendation.trim() || generateOffer(leadWithClientAudit)),
     };
 };
 
@@ -2542,6 +2578,8 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                 ) : draftLead.createdFromAgentAnalysis ? (
                     <div className="scope-note agent-origin-note">
                         <strong>Vytvořeno z Lead Finder Agent analýzy</strong>
+                        {draftLead.agentAnalysisProvider === 'demo-fallback' || draftLead.agentAnalysisProvider === 'fallback' ? <span className="fallback-badge">Fallback analýza — zkontrolovat před odesláním</span> : null}
+                        {latestAnalysisDiagnostic?.userMessage && (draftLead.agentAnalysisProvider === 'demo-fallback' || draftLead.agentAnalysisProvider === 'fallback') ? <span>{latestAnalysisDiagnostic.userMessage}</span> : null}
                         <div className="metadata-row">
                             {agentBadges.map((badge) => <span key={badge}>{badge}</span>)}
                         </div>

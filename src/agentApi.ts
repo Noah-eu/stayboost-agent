@@ -1,4 +1,5 @@
 import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentHealth, LeadAgentSearchRequest } from './leadAgentTypes';
+import { buildFallbackClientMiniAudit, buildFallbackFollowUp, buildFallbackOffer, buildFallbackOutreach, cleanLeadDisplayName, sanitizeClientText } from './clientCopy';
 import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult, WebsiteExtractionResult } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
@@ -268,15 +269,16 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
             analyzedAt: new Date().toISOString(),
             provider: candidate.isMock ? 'demo-fallback' : 'legacy',
             model: null,
-            firstImpression: `${candidate.name} má vlastní veřejný web, který Website Extractor přečetl ve stavu ${websiteExtraction.status}. Kontakt je ${contactSignal.length > 0 ? 'nalezený' : 'zatím slabý'}; obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
+            leadDisplayName: cleanLeadDisplayName(candidate.name),
+            firstImpression: `${cleanLeadDisplayName(candidate.name)} má vlastní veřejný web a dohledatelný kontakt. Obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
             strengths: [...new Set([...websiteExtraction.strengths, ...contactSignal, ...candidate.signals])].slice(0, 5),
             risks: [...new Set([...websiteExtraction.risks, 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
             guestFrictionSignals: websiteExtraction.missingPublicInfoSignals.length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
             quickWins,
-            miniAudit: `Mini-audit veřejného webu: ${candidate.name}\n\nPrvní dojem: vlastní web je dohledatelný a kontakt je ${contactSignal.length > 0 ? 'viditelný' : 'potřeba ještě ověřit'}.\n\nCo působí dobře: ${[...websiteExtraction.strengths, ...contactSignal].slice(0, 3).join(', ') || 'základní prezentace je dostupná'}.\n\nCo bych zlepšil: z veřejných stránek není jasně vidět jedno místo pro příjezd, parkování, check-in a nejčastější otázky hostů.\n\nDalší krok: poslat tři krátké návrhy, které lze ověřit proti webu.`,
-            outreachEmail: `Dobrý den,\n\nnarazil jsem na veřejný web ${candidate.name} a první dojem působí dobře. Zaujalo mě hlavně: ${websiteExtraction.strengths[0] || contactSignal[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosta by šly na webu poskládat víc do jednoho krátkého bloku před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech. Má smysl vám to poslat?\n\nDavid`,
-            followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k veřejnému webu ${candidate.name} - příjezd, parkování, check-in a praktické informace pro hosta.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
-            offerRecommendation: 'Začít krátkým auditem veřejného webu a předpříjezdových informací. Pokud už interní guest guide existuje, ověřit hlavně jeho návaznost na zprávy hostům.',
+            miniAudit: buildFallbackClientMiniAudit({ leadName: candidate.name, websiteExtraction, signals: candidate.signals }),
+            outreachEmail: buildFallbackOutreach({ leadName: candidate.name, websiteExtraction, signals: candidate.signals }),
+            followUp: buildFallbackFollowUp({ leadName: candidate.name }),
+            offerRecommendation: buildFallbackOffer({ leadName: candidate.name }),
             confidence: 'low',
             fitVerdict: candidate.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : candidate.fitVerdict,
             opportunityScore: Math.min(candidate.opportunityScore || 58, 64),
@@ -293,7 +295,7 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
             contactSignals: contactSignal,
             missingAutomationSignals: websiteExtraction.missingPublicInfoSignals,
             likelyManualProcessSignals: websiteExtraction.likelyManualProcessSignals,
-            qualificationReason: 'Fallback analýza z Website Extractoru: vlastní web a kontakt existují, ale konkrétní obchodní výstup má nízkou jistotu bez OpenAI nebo ručního ověření.',
+            qualificationReason: sanitizeClientText('Fallback analýza z veřejného webu: vlastní web a kontakt existují, ale konkrétní obchodní výstup má nízkou jistotu bez ručního ověření.'),
             alreadySolvedSignals: [...websiteExtraction.arrivalSignals, ...websiteExtraction.parkingSignals, ...websiteExtraction.faqSignals, ...websiteExtraction.guestGuideSignals],
             missingEvidence: websiteExtraction.evidenceLimits,
             contradictionWarnings: [],

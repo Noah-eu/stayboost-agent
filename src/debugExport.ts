@@ -1,4 +1,5 @@
 import type { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAgentSession } from './leadAgentTypes';
+import { cleanLeadDisplayName, clientTextSanitizerDiagnostics } from './clientCopy';
 import type { Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
 
 export type DebugExportType = 'run' | 'candidate' | 'lead' | 'website-extraction';
@@ -172,8 +173,14 @@ export function createCandidateDebugExport(candidate: LeadAgentCandidate, contex
 }
 
 export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadAgentDiagnostic; analysis?: LeadAgentAnalysis } = {}, options: DebugExportOptions = {}) {
+    const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
+    const latestDiagnostic = lead.latestAnalysisDiagnostic as { fallbackReason?: string } | undefined;
+
     return withMetadata('lead', {
         lead,
+        cleanedLeadDisplayName: cleanLeadDisplayName(lead.name),
+        ...clientTextSanitizerDiagnostics(clientOutputs),
+        openAIIncomplete: latestDiagnostic?.fallbackReason === 'openai_incomplete' || context.diagnostics?.fallbackReason === 'openai_incomplete',
         diagnostics: context.diagnostics,
         latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic ?? context.diagnostics,
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic ?? lead.websiteExtraction?.debug,

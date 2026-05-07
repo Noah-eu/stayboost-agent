@@ -105,6 +105,7 @@ export interface LeadAgentAnalysis {
     analyzedAt: string;
     provider: 'openai' | 'demo-fallback' | 'legacy';
     model: string | null;
+    leadDisplayName?: string;
     firstImpression: string;
     strengths: string[];
     risks: string[];

@@ -75,7 +75,7 @@ type FallbackReason =
 
 type RawOutputKind = 'output_text' | 'output_message_content' | 'unknown';
 
-const OPENAI_TIMEOUT_MS = 20000;
+const OPENAI_TIMEOUT_MS = 22000;
 const MAX_SNIPPETS = 4;
 const MAX_SNIPPET_LENGTH = 800;
 const MAX_FIELD_LENGTH = 600;
@@ -100,39 +100,22 @@ const analysisJsonSchema = {
     type: 'object',
     additionalProperties: false,
     required: [
-        'firstImpression',
-        'strengths',
-        'risks',
-        'guestFrictionSignals',
+        'leadDisplayName',
+        'internalSummary',
+        'clientMiniAudit',
         'quickWins',
-        'miniAudit',
         'outreachEmail',
         'followUp',
         'offerRecommendation',
         'confidence',
         'fitVerdict',
-        'opportunityType',
-        'opportunityScore',
-        'reviewFrictionScore',
-        'automationNeedScore',
-        'publicMaturityScore',
-        'painSignals',
-        'positiveSolvedSignals',
-        'alreadySolvedSignals',
-        'missingEvidence',
-        'missingAutomationSignals',
-        'likelyManualProcessSignals',
-        'contradictionWarnings',
-        'targetOffer',
         'qualificationReason',
-        'offerHypothesis',
         'evidenceLimits',
     ],
     properties: {
-        firstImpression: { type: 'string' },
-        strengths: { type: 'array', items: { type: 'string' } },
-        risks: { type: 'array', items: { type: 'string' } },
-        guestFrictionSignals: { type: 'array', items: { type: 'string' } },
+        leadDisplayName: { type: 'string' },
+        internalSummary: { type: 'string' },
+        clientMiniAudit: { type: 'string' },
         quickWins: {
             type: 'array',
             minItems: 3,
@@ -149,27 +132,12 @@ const analysisJsonSchema = {
                 },
             },
         },
-        miniAudit: { type: 'string' },
         outreachEmail: { type: 'string' },
         followUp: { type: 'string' },
         offerRecommendation: { type: 'string' },
         confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
         fitVerdict: { type: 'string', enum: ['strong-opportunity', 'moderate-opportunity', 'weak-opportunity', 'not-enough-evidence', 'skip'] },
-        opportunityType: { type: 'string', enum: ['fix-existing-process', 'setup-automation', 'ota-profile-audit', 'benchmark', 'skip'] },
-        opportunityScore: { type: 'number' },
-        reviewFrictionScore: { type: 'number' },
-        automationNeedScore: { type: 'number' },
-        publicMaturityScore: { type: 'number' },
-        painSignals: { type: 'array', items: { type: 'string' } },
-        positiveSolvedSignals: { type: 'array', items: { type: 'string' } },
-        alreadySolvedSignals: { type: 'array', items: { type: 'string' } },
-        missingEvidence: { type: 'array', items: { type: 'string' } },
-        missingAutomationSignals: { type: 'array', items: { type: 'string' } },
-        likelyManualProcessSignals: { type: 'array', items: { type: 'string' } },
-        contradictionWarnings: { type: 'array', items: { type: 'string' } },
-        targetOffer: { type: 'string', enum: ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'] },
         qualificationReason: { type: 'string' },
-        offerHypothesis: { type: 'string' },
         evidenceLimits: { type: 'array', items: { type: 'string' } },
     },
 };
@@ -190,6 +158,79 @@ const trimList = (values: string[] = [], maxItems = MAX_SNIPPETS, maxLength = MA
     .filter(Boolean)
     .slice(0, maxItems)
     .map((value) => trimText(value, maxLength));
+
+const normalizeForMatch = (value = '') => value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const cleanLeadDisplayName = (name = '') => {
+    const withoutPrefix = name.replace(/^(kontakt|contact|rooms|pokoje)\s*[-:|]\s*/i, '').split('|')[0].trim();
+    const normalized = normalizeForMatch(withoutPrefix || name);
+
+    if (normalized.includes('pension city center')) {
+        return normalized.includes('prague') || normalizeForMatch(name).includes('prague') ? 'Pension City Center Prague' : 'Pension City Center';
+    }
+
+    return (withoutPrefix || name).replace(/\s+/g, ' ').trim() || 'vybrane ubytovani';
+};
+
+const humanizeSignal = (signal = '') => {
+    const normalized = normalizeForMatch(signal);
+
+    if (normalized.includes('vlastni verejny web provozu')) return 'mají vlastní web';
+    if (normalized.includes('rezervacni nebo poptavkovy kontakt')) return 'kontakt je snadno dohledatelný';
+    if (normalized.includes('ubytovani popisuje pokoje') || normalized.includes('ubytovani popisuje apartmany')) return 'web popisuje nabídku pokojů';
+    if (normalized.includes('na webu je dohledatelny e mail') || normalized.includes('e mail nalezen na vlastnim webu')) return 'e-mail je na webu dobře dostupný';
+    if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefonický kontakt je vidět';
+    if (normalized.includes('neni jasne strukturovana sekce prijezd check in') || normalized.includes('neni jasne videt kompletni predprijezdova orientace')) return 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě';
+    if (normalized.includes('neni jasne videt parkovani')) return 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené';
+    if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce by mohla hostům ušetřit dotazy';
+
+    return trimText(signal, 180);
+};
+
+const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict'];
+
+const sanitizeClientText = (value = '') => {
+    let cleaned = value
+        .replace(/Vlastni verejny web provozu|Vlastní veřejný web provozu/g, 'mají vlastní web')
+        .replace(/Rezervacni nebo poptavkovy kontakt je videt|Rezervační nebo poptávkový kontakt je vidět/g, 'kontakt je snadno dohledatelný')
+        .replace(/Ubytovani popisuje pokoje nebo apartmany|Ubytování popisuje pokoje nebo apartmány/g, 'web popisuje nabídku pokojů')
+        .replace(/Na webu je dohledateln[yý] e-mail\.?/g, 'e-mail je na webu dobře dostupný.')
+        .replace(/Na webu je dohledateln[yý] telefon\.?/g, 'telefonický kontakt je vidět.')
+        .replace(/Na p[řr]e[čc]ten[eé]m ve[řr]ejn[eé]m webu nen[ií] jasn[eě] strukturovan[aá] sekce p[řr][ií]jezd \/ check-in\.?/g, 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.');
+
+    forbiddenClientTerms.forEach((term) => {
+        cleaned = cleaned.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
+    });
+
+    return cleaned.replace(/\s+([,.!?;:])/g, '$1').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
+};
+
+const bestHumanSignals = (signals: string[]) => [...new Set(signals.map(humanizeSignal).filter(Boolean))].slice(0, 3);
+
+const fallbackClientMiniAudit = (name: string, candidate: CandidateInput) => {
+    const displayName = cleanLeadDisplayName(name);
+    const website = candidate.websiteExtraction;
+    const positives = bestHumanSignals([...(candidate.signals || []), ...(website?.strengths || []), ...(website?.websiteSignals || []), ...(website?.contact?.emails?.length ? ['Na webu je dohledatelný e-mail.'] : []), ...(website?.contact?.phones?.length ? ['Na webu je dohledatelný telefon.'] : [])]);
+    const goodList = positives.length ? positives : ['mají vlastní web', 'kontakt je snadno dohledatelný', 'web popisuje nabídku pokojů'];
+
+    return sanitizeClientText(`Mini-audit veřejného webu: ${displayName}\n\nPrvní dojem:\nWeb působí jako funkční prezentace menšího ubytování v centru Prahy. Kontakt i nabídka pokojů jsou dohledatelné.\n\nCo funguje dobře:\n${goodList.map((item) => `- ${item}`).join('\n')}\n\nCo bych zlepšil:\n- soustředit praktické informace před příjezdem na jedno místo\n- doplnit krátkou FAQ sekci\n- u kontaktu jasně říct, kdy ho host použije\n\nDalší krok:\nPoslat 3 konkrétní návrhy, jak by mohla vypadat jednoduchá předpříjezdová sekce.`);
+};
+
+const fallbackOutreach = (name: string, candidate: CandidateInput) => {
+    const displayName = cleanLeadDisplayName(name);
+    const positives = bestHumanSignals([...(candidate.signals || []), ...(candidate.websiteExtraction?.strengths || [])]);
+    const positiveLine = positives.length ? positives.join(' a ') : 'web má jasně viditelný kontakt a základní informace o pokojích';
+
+    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
+};
+
+const fallbackFollowUp = (name: string) => sanitizeClientText(`Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${cleanLeadDisplayName(name)}, hlavně k příjezdu, parkování a častým otázkám hostů.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.\n\nDavid`);
+const fallbackOffer = (name: string) => sanitizeClientText(`Další krok pro ${cleanLeadDisplayName(name)}: připravit krátký audit veřejného webu a ukázat 3 konkrétní úpravy předpříjezdové sekce, FAQ a kontaktu pro hosty.`);
 
 const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = []) => ({
     name: trimText(candidate.name, 160),
@@ -252,7 +293,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
     const name = candidate.name || 'Vybrany kandidat';
     const websiteExtraction = candidate.websiteExtraction;
     if (websiteExtraction && ['completed', 'partial'].includes(websiteExtraction.status)) {
-        const contacts = [...(websiteExtraction.contact?.emails || []), ...(websiteExtraction.contact?.phones || [])];
+        const displayName = cleanLeadDisplayName(name);
         const contactSignals = [
             ...(websiteExtraction.contact?.emails || []).map((email) => `E-mail nalezen na vlastním webu: ${email}`),
             ...(websiteExtraction.contact?.phones || []).map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
@@ -269,7 +310,8 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         const pages = (websiteExtraction.pagesExtracted || []).map((page) => page.url).join(', ') || websiteExtraction.websiteUrl;
 
         return {
-            firstImpression: `${name} má vlastní veřejný web, který Website Extractor přečetl ve stavu ${websiteExtraction.status}. Kontakt je ${contacts.length > 0 ? 'nalezený' : 'zatím slabý'}; obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
+            leadDisplayName: displayName,
+            firstImpression: `${displayName} má vlastní veřejný web a dohledatelný kontakt. Obchodní hypotéza je opatrná setup analýza z veřejných stránek, ne důkaz provozního problému.`,
             strengths: [...new Set([...(websiteExtraction.strengths || []), ...contactSignals, ...(candidate.signals || [])])].slice(0, 5),
             risks: [...new Set([...(websiteExtraction.risks || []), 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
             guestFrictionSignals: (websiteExtraction.missingPublicInfoSignals || []).length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
@@ -293,10 +335,10 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
                     sourceEvidence: websiteExtraction.contact?.contactPageUrl || websiteExtraction.websiteUrl,
                 },
             ],
-            miniAudit: `Mini-audit veřejného webu: ${name}\n\nPrvní dojem: vlastní web je dohledatelný a kontakt je ${contacts.length > 0 ? 'viditelný' : 'potřeba ještě ověřit'}.\n\nCo působí dobře: ${[...(websiteExtraction.strengths || []), ...contactSignals].slice(0, 3).join(', ') || 'základní prezentace je dostupná'}.\n\nCo bych zlepšil: z veřejných stránek není jasně vidět jedno místo pro příjezd, parkování, check-in a nejčastější otázky hostů.\n\nDalší krok: poslat tři krátké návrhy, které lze ověřit proti webu.`,
-            outreachEmail: `Dobrý den,\n\nnarazil jsem na veřejný web ${name} a první dojem působí dobře. Zaujalo mě hlavně: ${(websiteExtraction.strengths || [])[0] || contactSignals[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosta by šly na webu poskládat víc do jednoho krátkého bloku před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech. Má smysl vám to poslat?\n\nDavid`,
-            followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k veřejnému webu ${name}: příjezd, parkování, check-in a praktické informace pro hosta.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
-            offerRecommendation: 'Začít krátkým auditem veřejného webu a předpříjezdových informací. Pokud už interní guest guide existuje, ověřit hlavně jeho návaznost na zprávy hostům.',
+            miniAudit: fallbackClientMiniAudit(name, candidate),
+            outreachEmail: fallbackOutreach(name, candidate),
+            followUp: fallbackFollowUp(name),
+            offerRecommendation: fallbackOffer(name),
             confidence: 'low' as const,
             fitVerdict: candidate.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : candidate.fitVerdict || 'moderate-opportunity',
             opportunityScore: Math.min(candidate.opportunityScore || 58, 64),
@@ -491,11 +533,19 @@ const isFitVerdict = (value: unknown): value is FitVerdict => ['strong-opportuni
 const isTargetOffer = (value: unknown): value is TargetOffer => ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(String(value));
 const isOpportunityType = (value: unknown): value is OpportunityType => ['fix-existing-process', 'setup-automation', 'ota-profile-audit', 'benchmark', 'skip'].includes(String(value));
 
-const validateAnalysis = (value: unknown) => {
-    const analysis = value as { quickWins?: unknown[]; miniAudit?: unknown; outreachEmail?: unknown; confidence?: unknown; fitVerdict?: unknown; opportunityScore?: unknown; opportunityType?: unknown; automationNeedScore?: unknown; publicMaturityScore?: unknown; reviewFrictionScore?: unknown; painSignals?: unknown; targetOffer?: unknown; offerHypothesis?: unknown; qualificationReason?: unknown };
+const deterministicTargetOffer = (candidate: CandidateInput): TargetOffer => {
+    const sourceText = [candidate.websiteExtraction?.summary, ...(candidate.websiteExtraction?.automationSignals || []), ...(candidate.websiteExtraction?.guestGuideSignals || []), ...(candidate.sourceSnippets || [])].join(' ').toLowerCase();
 
-    if (!analysis || !Array.isArray(analysis.quickWins) || analysis.quickWins.length < 3 || typeof analysis.miniAudit !== 'string' || typeof analysis.outreachEmail !== 'string') {
-        throw new Error('Invalid analysis JSON shape.');
+    if (candidate.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in')) return 'guest-guide';
+    if (candidate.targetOffer && isTargetOffer(candidate.targetOffer) && candidate.targetOffer !== 'skip') return candidate.targetOffer;
+    return candidate.opportunityType === 'ota-profile-audit' ? 'ota-profile-audit' : 'guest-guide';
+};
+
+const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
+    const analysis = value as { leadDisplayName?: unknown; internalSummary?: unknown; clientMiniAudit?: unknown; quickWins?: unknown[]; outreachEmail?: unknown; followUp?: unknown; offerRecommendation?: unknown; confidence?: unknown; fitVerdict?: unknown; qualificationReason?: unknown; evidenceLimits?: unknown };
+
+    if (!analysis || typeof analysis.leadDisplayName !== 'string' || typeof analysis.internalSummary !== 'string' || typeof analysis.clientMiniAudit !== 'string' || !Array.isArray(analysis.quickWins) || analysis.quickWins.length !== 3 || typeof analysis.outreachEmail !== 'string' || typeof analysis.followUp !== 'string' || typeof analysis.offerRecommendation !== 'string') {
+        throw new Error('Invalid compact analysis JSON shape.');
     }
 
     if (!['low', 'medium', 'high'].includes(String(analysis.confidence))) {
@@ -506,43 +556,57 @@ const validateAnalysis = (value: unknown) => {
         throw new Error('Invalid fitVerdict value.');
     }
 
-    if (typeof analysis.opportunityScore !== 'number') {
-        throw new Error('Invalid opportunityScore value.');
-    }
-
-    if (!isOpportunityType(analysis.opportunityType)) {
-        throw new Error('Invalid opportunityType value.');
-    }
-
-    if (typeof analysis.automationNeedScore !== 'number') {
-        throw new Error('Invalid automationNeedScore value.');
-    }
-
-    if (typeof analysis.publicMaturityScore !== 'number') {
-        throw new Error('Invalid publicMaturityScore value.');
-    }
-
-    if (typeof analysis.reviewFrictionScore !== 'number') {
-        throw new Error('Invalid reviewFrictionScore value.');
-    }
-
-    if (!Array.isArray(analysis.painSignals)) {
-        throw new Error('Invalid painSignals value.');
-    }
-
-    if (!isTargetOffer(analysis.targetOffer)) {
-        throw new Error('Invalid targetOffer value.');
-    }
-
-    if (typeof analysis.offerHypothesis !== 'string') {
-        throw new Error('Invalid offerHypothesis value.');
-    }
-
     if (typeof analysis.qualificationReason !== 'string') {
         throw new Error('Invalid qualificationReason value.');
     }
 
-    return value;
+    if (!Array.isArray(analysis.evidenceLimits)) {
+        throw new Error('Invalid evidenceLimits value.');
+    }
+
+    const website = candidate.websiteExtraction;
+    const hasWebsiteContact = Boolean((website?.contact?.emails?.length || 0) + (website?.contact?.phones?.length || 0));
+    const opportunityType: OpportunityType = candidate.opportunityType && isOpportunityType(candidate.opportunityType) ? candidate.opportunityType : website ? 'setup-automation' : 'skip';
+    const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string });
+
+    return {
+        leadDisplayName: cleanLeadDisplayName(analysis.leadDisplayName),
+        firstImpression: trimText(String(analysis.internalSummary), 700),
+        strengths: [...new Set([...(website?.strengths || []), ...(candidate.signals || []), ...(hasWebsiteContact ? ['Kontakt je nalezený na vlastním webu'] : [])])].slice(0, 5),
+        risks: website?.risks || candidate.risks || [],
+        guestFrictionSignals: website?.missingPublicInfoSignals?.length ? website.missingPublicInfoSignals : candidate.risks || [],
+        quickWins: quickWins.map((quickWin) => ({
+            title: trimText(quickWin.title, 120),
+            why: trimText(quickWin.why, 180),
+            action: trimText(quickWin.action, 180),
+            sourceEvidence: trimText(quickWin.sourceEvidence, 180),
+        })),
+        miniAudit: sanitizeClientText(String(analysis.clientMiniAudit)),
+        outreachEmail: sanitizeClientText(String(analysis.outreachEmail)),
+        followUp: sanitizeClientText(String(analysis.followUp)),
+        offerRecommendation: sanitizeClientText(String(analysis.offerRecommendation)),
+        confidence: analysis.confidence,
+        fitVerdict: analysis.fitVerdict,
+        opportunityScore: candidate.opportunityScore || (hasWebsiteContact ? 58 : 40),
+        opportunityType,
+        automationNeedScore: candidate.automationNeedScore || (website ? 58 : 0),
+        publicMaturityScore: candidate.publicMaturityScore || 0,
+        reviewFrictionScore: candidate.reviewFrictionScore || 0,
+        painSignals: candidate.painSignals || [],
+        positiveSolvedSignals: [...(candidate.positiveSolvedSignals || []), ...(website?.arrivalSignals || []), ...(website?.parkingSignals || []), ...(website?.faqSignals || [])],
+        noPainReason: candidate.noPainReason || 'No clear public review pain found; this is a setup analysis from website evidence.',
+        targetOffer: deterministicTargetOffer(candidate),
+        offerHypothesis: trimText(String(analysis.qualificationReason), 500),
+        websiteSignals: [...new Set([...(candidate.websiteSignals || []), ...(website?.websiteSignals || []), ...(website?.arrivalSignals || []), ...(website?.faqSignals || [])])],
+        contactSignals: [...(candidate.contactSignals || []), ...(website?.contact?.emails || []).map((email) => `E-mail nalezen na vlastním webu: ${email}`), ...(website?.contact?.phones || []).map((phone) => `Telefon nalezen na vlastním webu: ${phone}`)],
+        missingAutomationSignals: website?.missingPublicInfoSignals || candidate.missingAutomationSignals || [],
+        likelyManualProcessSignals: website?.likelyManualProcessSignals || candidate.likelyManualProcessSignals || [],
+        qualificationReason: trimText(String(analysis.qualificationReason), 700),
+        alreadySolvedSignals: candidate.alreadySolvedSignals || [],
+        missingEvidence: candidate.missingEvidence || [],
+        contradictionWarnings: candidate.contradictionWarnings || [],
+        evidenceLimits: (analysis.evidenceLimits as string[]).map((item) => trimText(item, 180)),
+    };
 };
 
 const logFallback = (details: { debugId: string; status: number; fallbackReason: string; model: string; hasOpenAIKey: boolean; elapsedMs?: number }) => {
@@ -553,7 +617,7 @@ const fallbackMessage = (fallbackReason: FallbackReason) => {
     if (fallbackReason === 'openai_timeout') return 'OpenAI analýza vypršela. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
     if (fallbackReason === 'netlify_function_timeout_risk') return 'OpenAI analýza pravděpodobně narazila na limit Netlify Function. Zkuste menší model gpt-5.4-mini nebo kratší vstup.';
     if (fallbackReason === 'openai_refusal') return 'OpenAI structured output vratil refusal misto analyzy.';
-    if (fallbackReason === 'openai_incomplete') return 'OpenAI structured output se nedokoncil v limitu odpovedi.';
+    if (fallbackReason === 'openai_incomplete') return 'OpenAI odpověď byla nedokončená, použit fallback.';
     if (fallbackReason === 'openai_json_schema_error') return 'OpenAI structured output schema nebylo prijato nebo validovano.';
     return `OpenAI analyza nebezela: ${fallbackReason}`;
 };
@@ -634,19 +698,13 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         }
 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
-        const prompt = `Vrat pouze JSON bez markdownu a bez uvah. Vytvor kratkou obchodni analyzu leadu pro StayBoost z verejnych podkladu. Pokud je prilozeno websiteExtraction, preferuj ji pred search snippety: je to kvalitnejsi evidence z verejneho vlastniho webu provozu.
-    Pravidla: nesmis tvrdit, ze vidis interni instrukce; nesmis tvrdit, ze jsi scrapoval Booking/Airbnb/Google; pokud jsou zdroje jen snippety, uved evidenceLimits. Internalni pole jako evidenceLimits, missingEvidence, contradictionWarnings, scoring a quickWins.sourceEvidence mohou obsahovat limity evidence. Klientska pole miniAudit, outreachEmail, followUp a offerRecommendation musi byt napsana pro majitele ubytovani: bez slov OpenAI, Tavily, fallback, evidenceLimits, sourceEvidence, setup automation, public snippet, search snippet, aplikace odkazy necetla, interni analyza, Vychodisko, FIX, SETUP.
-    V internich polich evidenceLimits/missingEvidence jasne rozlis: "Vychazime z verejneho vlastniho webu a search snippetu." pokud websiteExtraction existuje, jinak "Vychazime jen ze search snippetu." Klientske oslovení tohle nevysvetluje.
-    Website Extractor pouze shromazdil evidence. Tvym ukolem je z websiteExtraction vytvorit skutecny obchodni vystup: presne 3 quickWins, klientsky miniAudit, kratke studene outreachEmail, followUp, offerRecommendation a interni kvalifikaci. Pokud websiteExtraction najde e-mail nebo telefon, finalni contactSignals musi rict, ze kontakt byl nalezen na vlastnim webu, a risks/guestFrictionSignals nesmi tvrdit, ze e-mail neni videt.
-    Guest guide neni casto verejny: pokud neni videt, nesmis psat "nemaji guest guide" ani to davat do painSignals. Pouzij missingEvidence: "Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci." nebo "Guest guide muze existovat neverejne." Jako obchodni prilezitost to formuluj jen opatrne: "Z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide." Quick win nesmi byt jiste "Zavest guest guide"; pouzij prirozenou podminenou cestinu: "Pokud hoste nedostavaji pred prijezdem jednoduchy prehled, pripravil bych kratky QR/pruvodce; pokud ho uz maji, zkontroloval bych, jestli je dobre napojeny na zpravy hostum." V outreachEmail guest guide nezminuj, pokud hlavni evidence mluvi hlavne o fotkach, galerii, popisu nebo recenzich.
-    Pokud websiteExtraction ukazuje jasnou FAQ/prijezd/parkovani/check-in sekci, neprodavej obecne "zlepsit instrukce", pokud neni konkretni mezera. Pokud vlastni web nema zadne prakticke prijezdove informace, muze to byt setup opportunity. Pokud je web moderni a dobre strukturovany, kandidat muze byt benchmark/weak.
-    Presne 3 quickWins. miniAudit je klientsky mini-audit max 5-7 kratkych bodu nebo kratkych odstavcu, bez technickych disclaimeru. outreachEmail je skutecny studeny prvni kontakt 120-160 slov: neodpovida na poptavku, zacina prirozene, obsahuje jednu pozitivni konkretni observaci, jeden konkretni navrh, vetu "Nejde o kritiku" nebo podobnou, a konci lehkou otazkou typu "Ma smysl vam to poslat?" followUp ma 60-90 slov a neni natlakovy. offerRecommendation je klientsky citelny dalsi krok. Limity: miniAudit max 1200 znaku, outreachEmail max 900, followUp max 500, offerRecommendation max 700.
-    Nejdriv klasifikuj opportunityType: fix-existing-process, setup-automation, ota-profile-audit, benchmark, nebo skip.
-    FIX: pouzij jen kdyz existuje painSignals / reviewFrictionScore: spatny check-in, nejasny prijezd, parkovani, komunikace, recenzni problem. Outreach muze pojmenovat konkretni pain signal.
-    SETUP: muze byt strong/moderate i bez painu, pokud jde o maly penzion/apartman s vlastnim webem nebo kontaktem a z verejne prezentace neni jasne, zda host dostava jednoduchy predprijezdovy guide / QR instrukce / FAQ / automatizovany predprijezdovy workflow. Setup outreach nesmi tvrdit, ze maji problem nebo ze neco delaji spatne. Pouzij formulaci: "Z verejne prezentace neni jasne, zda hoste dostavaji jednoduchy predprijezdovy guide; ten muze existovat neverejne po rezervaci. U podobnych penzionu casto pomaha overit, jestli je dobre napojeny na zpravy hostum."
-    U setup leadu bez recenzniho painu a bez hotovych quickWins nepouzivej strong-opportunity. Strong je dovoleny az kdyz mas konkretni kvalitni evidence pro 3 quickWins. TargetOffer "self-checkin-setup" pouzij jen pokud je self-check-in explicitne hlavni tema a neni zjevne vyreseny; jinak pouzij "guest-guide" nebo "guest-communication-fix".
-    BENCHMARK/SKIP: pokud je vse zjevne vyresene nebo chybi kontakt/web/evidence, outreachEmail je interni poznamka, ne obchodni email. Self-check-in bez painu neni fix lead; muze byt benchmark nebo slaby setup jen pri jasne setup mezere.
-    JSON shape: {"firstImpression":string,"strengths":string[],"risks":string[],"guestFrictionSignals":string[],"quickWins":[{"title":string,"why":string,"action":string,"sourceEvidence":string}],"miniAudit":string,"outreachEmail":string,"followUp":string,"offerRecommendation":string,"confidence":"low"|"medium"|"high","fitVerdict":"strong-opportunity"|"moderate-opportunity"|"weak-opportunity"|"not-enough-evidence"|"skip","opportunityScore":number,"opportunityType":"fix-existing-process"|"setup-automation"|"ota-profile-audit"|"benchmark"|"skip","automationNeedScore":number,"publicMaturityScore":number,"reviewFrictionScore":number,"painSignals":string[],"positiveSolvedSignals":string[],"noPainReason":string,"targetOffer":"guest-communication-fix"|"guest-guide"|"ota-profile-audit"|"review-response-improvement"|"self-checkin-setup"|"skip","offerHypothesis":string,"websiteSignals":string[],"contactSignals":string[],"missingAutomationSignals":string[],"likelyManualProcessSignals":string[],"qualificationReason":string,"alreadySolvedSignals":string[],"missingEvidence":string[],"contradictionWarnings":string[],"evidenceLimits":string[]}.
+        const prompt = `Vrat pouze validni JSON podle schematu. Zadny markdown, zadne uvahy.
+    Ukol: kratka obchodni analyza StayBoost z verejneho vlastniho webu. Metadata a scoring dopocita aplikace, proto nevracej zadna dalsi pole.
+    Klientske texty musi byt lidske pro majitele ubytovani. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict.
+    Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
+    Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
+    leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
+    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 
@@ -656,7 +714,7 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
         const baseRequestBody: { model: string; input: string; max_output_tokens: number; reasoning?: { effort: 'low' } } = {
             model,
             input: prompt,
-            max_output_tokens: 1800,
+            max_output_tokens: 2200,
         };
 
         if (model.startsWith('gpt-5')) {
@@ -788,7 +846,7 @@ Poznamky: ${trimText(body.userNotes || '', 400)}`;
         }
 
         try {
-            const parsed = validateAnalysis(output.parsedObject || (typeof output.text === 'string' ? parseJsonObject(output.text) : output.text));
+            const parsed = expandCompactAnalysis(output.parsedObject || (typeof output.text === 'string' ? parseJsonObject(output.text) : output.text), candidate);
 
             return json(200, {
                 status: 'completed',

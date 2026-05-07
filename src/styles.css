@@ -526,6 +526,18 @@ tbody tr:hover,
     display: block;
 }
 
+.fallback-badge {
+    background: #fff8ef;
+    border: 1px solid #d98925;
+    border-radius: 999px;
+    color: #5a4631;
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 900;
+    padding: 6px 10px;
+    width: fit-content;
+}
+
 .diagnostic-box {
     background: #f7fbfb;
     border: 1px solid #dce5e6;
