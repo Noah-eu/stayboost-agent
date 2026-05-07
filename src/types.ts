@@ -114,6 +114,7 @@ export interface Lead {
     notes: string;
     publicSignals: string[];
     quickWins: string[];
+    leadScore: number;
     publicProfileUrl: string;
     publicLinks: PublicProfileLink[];
     sourceMaterials: SourceMaterial[];

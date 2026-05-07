@@ -20,6 +20,7 @@ export const mockLeads: Lead[] = [
             'Sjednotit prvnich pet fotografii napric kanaly.',
             'Vytahnout snidane do prvni obrazovky webu.',
         ],
+        leadScore: 78,
         publicProfileUrl: 'https://example.com/penzion-u-vinohradu',
         publicLinks: [
             {
@@ -115,6 +116,7 @@ export const mockLeads: Lead[] = [
             'Zvyraznit lokalitu a parkovani v uvodu.',
             'Pridat jednoduche CTA pro prime poptavky.',
         ],
+        leadScore: 62,
         publicProfileUrl: 'https://example.com/apartmany-pod-hradem',
         publicLinks: [
             {

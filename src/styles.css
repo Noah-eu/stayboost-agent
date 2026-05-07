@@ -342,7 +342,44 @@ tbody tr:hover,
 }
 
 .candidate-table {
-    min-width: 1180px;
+    min-width: 1440px;
+}
+
+.source-list,
+.table-actions {
+    display: grid;
+    gap: 8px;
+}
+
+.source-list a {
+    color: #176b57;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.source-list a:hover {
+    text-decoration: underline;
+}
+
+.analysis-preview {
+    background: #fbfdfd;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+    min-width: 360px;
+    padding: 12px;
+}
+
+.analysis-preview strong {
+    color: #314147;
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.analysis-preview textarea {
+    min-height: 170px;
 }
 
 .compact-button {
@@ -442,6 +479,12 @@ textarea:focus {
     line-height: 1.5;
     margin-bottom: 18px;
     padding: 12px 14px;
+}
+
+.demo-note {
+    background: #fff8ef;
+    border-color: #ead6bd;
+    color: #5a4631;
 }
 
 .section-help {

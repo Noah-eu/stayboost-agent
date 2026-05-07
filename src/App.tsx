@@ -1,14 +1,13 @@
 import { Clipboard, ClipboardCheck, ExternalLink, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
+import { analyzeLead, discoverLeads } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
 import { generateFirstOutreach, generateFollowUp, generateMiniAudit, generateOffer } from './generators';
-import { leadFinderMockText, parseLeadCandidates, recommendedSearchQueries } from './leadScoring';
 import { mockLeads } from './mockData';
+import { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentSearchRequest, LeadAgentSession } from './leadAgentTypes';
 import {
     accommodationTypes,
     Lead,
-    LeadCandidate,
-    LeadSearchSession,
     leadStatuses,
     LeadStatus,
     mainPhotoVerdictLabels,
@@ -26,7 +25,7 @@ import {
 type Screen = 'dashboard' | 'finder' | 'leads' | 'detail' | 'audit' | 'outreach' | 'offer';
 
 const storageKey = 'stayboost-agent-leads';
-const finderStorageKey = 'stayboost-agent-lead-finder';
+const agentStorageKey = 'stayboost-agent-lead-agent';
 
 const emptyLead = (): Lead => ({
     id: `lead-${crypto.randomUUID()}`,
@@ -39,6 +38,7 @@ const emptyLead = (): Lead => ({
     notes: '',
     publicSignals: [],
     quickWins: [],
+    leadScore: 0,
     publicProfileUrl: '',
     publicLinks: [],
     sourceMaterials: [],
@@ -188,19 +188,29 @@ const normalizeLead = (lead: Partial<Lead>): Lead => ({
     selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
 });
 
-const emptyLeadSearchSession = (): LeadSearchSession => ({
-    cityOrArea: '',
-    accommodationType: '',
-    targetSegment: '',
+const emptyAgentRequest = (): LeadAgentSearchRequest => ({
+    location: 'Praha',
+    accommodationType: 'apartmany',
+    segment: 'self check-in / bez recepce',
+    maxResults: 10,
     notes: '',
-    sourceText: leadFinderMockText,
-    candidates: [],
 });
 
-const normalizeSearchSession = (session: Partial<LeadSearchSession>): LeadSearchSession => ({
-    ...emptyLeadSearchSession(),
+const emptyAgentSession = (): LeadAgentSession => ({
+    request: emptyAgentRequest(),
+    status: 'idle',
+    message: '',
+    isMock: false,
+    candidates: [],
+    analyses: {},
+});
+
+const normalizeAgentSession = (session: Partial<LeadAgentSession>): LeadAgentSession => ({
+    ...emptyAgentSession(),
     ...session,
+    request: { ...emptyAgentRequest(), ...session.request },
     candidates: session.candidates ?? [],
+    analyses: session.analyses ?? {},
 });
 
 function App() {
@@ -222,17 +232,17 @@ function App() {
     const [draftLead, setDraftLead] = useState<Lead>(() => leads[0] ?? emptyLead());
     const [isCreating, setIsCreating] = useState(false);
     const [copiedTextId, setCopiedTextId] = useState('');
-    const [leadSearchSession, setLeadSearchSession] = useState<LeadSearchSession>(() => {
-        const storedSession = localStorage.getItem(finderStorageKey);
+    const [leadAgentSession, setLeadAgentSession] = useState<LeadAgentSession>(() => {
+        const storedSession = localStorage.getItem(agentStorageKey);
 
         if (!storedSession) {
-            return emptyLeadSearchSession();
+            return emptyAgentSession();
         }
 
         try {
-            return normalizeSearchSession(JSON.parse(storedSession) as Partial<LeadSearchSession>);
+            return normalizeAgentSession(JSON.parse(storedSession) as Partial<LeadAgentSession>);
         } catch {
-            return emptyLeadSearchSession();
+            return emptyAgentSession();
         }
     });
 
@@ -241,8 +251,8 @@ function App() {
     }, [leads]);
 
     useEffect(() => {
-        localStorage.setItem(finderStorageKey, JSON.stringify(leadSearchSession));
-    }, [leadSearchSession]);
+        localStorage.setItem(agentStorageKey, JSON.stringify(leadAgentSession));
+    }, [leadAgentSession]);
 
     const selectedLead = useMemo(
         () => leads.find((lead) => lead.id === selectedLeadId) ?? leads[0],
@@ -331,98 +341,121 @@ function App() {
         });
     };
 
-    const updateLeadSearchSession = <Field extends keyof LeadSearchSession>(field: Field, value: LeadSearchSession[Field]) => {
-        setLeadSearchSession((currentSession) => ({ ...currentSession, [field]: value }));
-    };
-
-    const parseCandidates = () => {
-        setLeadSearchSession((currentSession) => ({
+    const updateAgentRequest = <Field extends keyof LeadAgentSearchRequest>(field: Field, value: LeadAgentSearchRequest[Field]) => {
+        setLeadAgentSession((currentSession) => ({
             ...currentSession,
-            candidates: parseLeadCandidates(currentSession.sourceText, currentSession),
+            request: { ...currentSession.request, [field]: value },
         }));
     };
 
-    const loadMockCandidates = () => {
-        setLeadSearchSession((currentSession) => ({
+    const runLeadAgentSearch = async () => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, status: 'searching', message: 'Vyhledavam potencialni klienty...', candidates: [] }));
+
+        try {
+            const response = await discoverLeads(leadAgentSession.request);
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                status: response.status === 'needs-config' ? 'needs-config' : 'found',
+                message: response.message,
+                isMock: response.isMock,
+                candidates: response.candidates,
+            }));
+        } catch (error) {
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Lead Finder Agent selhal.',
+            }));
+        }
+    };
+
+    const analyzeAgentCandidate = async (candidate: LeadAgentCandidate) => {
+        setLeadAgentSession((currentSession) => ({ ...currentSession, status: 'analyzing', message: `Analyzuji ${candidate.name}...` }));
+
+        try {
+            const response = await analyzeLead(candidate, leadAgentSession.request.notes);
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                status: response.status === 'needs-config' ? 'needs-config' : 'completed',
+                message: response.message,
+                isMock: response.isMock,
+                analyses: response.analysis ? { ...currentSession.analyses, [candidate.id]: response.analysis } : currentSession.analyses,
+            }));
+        } catch (error) {
+            setLeadAgentSession((currentSession) => ({
+                ...currentSession,
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Analyza kandidata selhala.',
+            }));
+        }
+    };
+
+    const rejectAgentCandidate = (candidateId: string) => {
+        setLeadAgentSession((currentSession) => ({
             ...currentSession,
-            cityOrArea: currentSession.cityOrArea || 'Praha / Cesky Krumlov / Brno',
-            accommodationType: currentSession.accommodationType || 'Apartman',
-            targetSegment: currentSession.targetSegment || 'mensi ubytovani s verejnym kontaktem a operacnimi signaly',
-            sourceText: leadFinderMockText,
-            candidates: parseLeadCandidates(leadFinderMockText, currentSession),
+            candidates: currentSession.candidates.map((candidate) => (candidate.id === candidateId ? { ...candidate, rejected: true } : candidate)),
         }));
     };
 
-    const addCandidateToLeads = (candidate: LeadCandidate) => {
+    const addAgentCandidateToLeads = (candidate: LeadAgentCandidate) => {
+        const analysis = leadAgentSession.analyses[candidate.id];
+        const candidateText = candidate.sourceSnippets.join('\n');
+        const quickWins = (analysis?.quickWins ?? []).map((win) => ({
+            ...win,
+            id: win.id || `quick-win-${crypto.randomUUID()}`,
+        }));
         const nextLead: Lead = {
             ...emptyLead(),
             id: `lead-${crypto.randomUUID()}`,
             name: candidate.name,
-            accommodationType: candidate.accommodationType,
-            city: candidate.city,
-            websiteOrOtaUrl: candidate.url,
-            publicProfileUrl: candidate.url,
-            publicLinks: candidate.url
-                ? [
-                      {
-                          id: `link-${crypto.randomUUID()}`,
-                          sourceType: detectSourceType(candidate.url),
-                          url: candidate.url,
-                          label: publicProfileSourceLabels[detectSourceType(candidate.url)],
-                          notes: 'Vytvoreno z Lead Finder kandidata. Link je pouze zdroj pro rucni kontrolu.',
-                      },
-                  ]
-                : [],
-            sourceMaterials: candidate.sourceNotes
-                ? [
-                      {
-                          id: `source-${crypto.randomUUID()}`,
-                          type: 'manual-note',
-                          sourceLinkId: '',
-                          title: 'Lead Finder poznamky',
-                          content: candidate.sourceNotes,
-                          createdAt: new Date().toISOString(),
-                      },
-                  ]
-                : [],
-            extractionStatus: 'ready',
-            email: candidate.email,
+            accommodationType: candidate.type,
+            city: candidate.location,
+            websiteOrOtaUrl: candidate.websiteUrl,
+            publicProfileUrl: candidate.websiteUrl,
+            publicLinks: candidate.sourceUrls.map((url) => ({
+                id: `link-${crypto.randomUUID()}`,
+                sourceType: detectSourceType(url),
+                url,
+                label: publicProfileSourceLabels[detectSourceType(url)],
+                notes: candidate.isMock ? 'Demo agentni kandidat; URL nebyla automaticky ctena.' : 'Agentni kandidat ze search API; URL nebyla scrapovana.',
+            })),
+            sourceMaterials: candidate.sourceSnippets.map((snippet, index) => ({
+                id: `source-${crypto.randomUUID()}`,
+                type: 'pasted-text',
+                sourceLinkId: '',
+                title: `Agent source snippet #${index + 1}`,
+                content: snippet,
+                createdAt: new Date().toISOString(),
+            })),
+            extractionStatus: analysis ? 'completed' : 'ready',
+            email: candidate.possibleEmail,
             status: 'Novy',
-            notes: `Lead Finder kandidat. Segment: ${leadSearchSession.targetSegment || 'neuvedeno'}. ${candidate.sourceNotes}`,
+            notes: `Lead Finder Agent kandidat. Skore: ${candidate.leadScore}. ${candidate.isMock ? 'Demo rezim.' : 'Search API rezim.'} ${candidate.evidenceSummary}`,
+            leadScore: candidate.leadScore,
             publicSignals: candidate.signals,
-            quickWins: [
-                'Zkontrolovat prvni dojem verejne nabidky.',
-                'Projit prvnich pet fotografii a hlavni popis.',
-                'Overit, jestli jsou jasne instrukce k prijezdu, parkovani a check-inu.',
-            ],
-            proposedQuickWins: [
-                'Zkontrolovat prvni dojem verejne nabidky.',
-                'Projit prvnich pet fotografii a hlavni popis.',
-                'Overit, jestli jsou jasne instrukce k prijezdu, parkovani a check-inu.',
-            ],
-            firstImpression: candidate.sourceNotes,
+            quickWins: quickWins.map((win) => win.title),
+            proposedQuickWins: quickWins.map((win) => win.title),
+            firstImpression: analysis?.firstImpression ?? candidate.evidenceSummary,
             mainPhotoVerdict: 'unknown',
-            reviewSignals: candidate.reviewSnippets,
-            guestFrictionSignals: candidate.signals.join('\n'),
-            guestConfusion: candidate.signals.join('\n'),
-            risks: candidate.sourceNotes,
-            structuredQuickWins: [
-                {
-                    id: `quick-win-${crypto.randomUUID()}`,
-                    title: 'Zkontrolovat prvni dojem verejne nabidky',
-                    why: 'Audit musi vychazet z konkretniho verejneho dojmu, ne z domnenek.',
-                    action: 'Otevrit ulozeny verejny link a rucne zapsat prvni dojem, silne stranky a slabsi mista.',
-                    sourceEvidence: candidate.sourceNotes,
-                },
-            ],
-            selectedOfferAngle: candidate.recommendedOfferAngle,
+            reviewSignals: candidateText,
+            guestFrictionSignals: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
+            guestConfusion: analysis?.guestFrictionSignals.join('\n') ?? candidate.risks.join('\n'),
+            strengths: analysis?.strengths.join('\n') ?? candidate.signals.join('\n'),
+            risks: analysis?.risks.join('\n') ?? candidate.risks.join('\n'),
+            businessOpportunity: analysis?.offerRecommendation ?? 'Pripravit mini-audit verejne prezentace a guest guide / komunikaci pred prijezdem.',
+            structuredQuickWins: quickWins,
+            generatedMiniAudit: analysis?.miniAudit ?? '',
+            generatedOutreach: analysis?.outreachEmail ?? '',
+            generatedFollowUp: analysis?.followUp ?? '',
+            generatedOffer: analysis?.offerRecommendation ?? '',
+            selectedOfferAngle: candidate.recommendedAngle,
         };
 
         setLeads((currentLeads) => [nextLead, ...currentLeads]);
         setSelectedLeadId(nextLead.id);
         setDraftLead(nextLead);
         setIsCreating(false);
-        setLeadSearchSession((currentSession) => ({
+        setLeadAgentSession((currentSession) => ({
             ...currentSession,
             candidates: currentSession.candidates.map((currentCandidate) =>
                 currentCandidate.id === candidate.id ? { ...currentCandidate, addedLeadId: nextLead.id } : currentCandidate,
@@ -516,11 +549,12 @@ function App() {
         if (activeScreen === 'finder') {
             return (
                 <LeadFinderPanel
-                    onAddCandidate={addCandidateToLeads}
-                    onLoadMockCandidates={loadMockCandidates}
-                    onParseCandidates={parseCandidates}
-                    onUpdateSession={updateLeadSearchSession}
-                    session={leadSearchSession}
+                    onAddCandidate={addAgentCandidateToLeads}
+                    onAnalyzeCandidate={analyzeAgentCandidate}
+                    onRejectCandidate={rejectAgentCandidate}
+                    onRunSearch={runLeadAgentSearch}
+                    onUpdateRequest={updateAgentRequest}
+                    session={leadAgentSession}
                 />
             );
         }
@@ -688,91 +722,68 @@ function Dashboard({ leads, stats, onSelectLead }: DashboardProps) {
 }
 
 interface LeadFinderPanelProps {
-    session: LeadSearchSession;
-    onUpdateSession: <Field extends keyof LeadSearchSession>(field: Field, value: LeadSearchSession[Field]) => void;
-    onParseCandidates: () => void;
-    onLoadMockCandidates: () => void;
-    onAddCandidate: (candidate: LeadCandidate) => void;
+    session: LeadAgentSession;
+    onUpdateRequest: <Field extends keyof LeadAgentSearchRequest>(field: Field, value: LeadAgentSearchRequest[Field]) => void;
+    onRunSearch: () => void;
+    onAnalyzeCandidate: (candidate: LeadAgentCandidate) => void;
+    onAddCandidate: (candidate: LeadAgentCandidate) => void;
+    onRejectCandidate: (candidateId: string) => void;
 }
 
-function LeadFinderPanel({ onAddCandidate, onLoadMockCandidates, onParseCandidates, onUpdateSession, session }: LeadFinderPanelProps) {
+function LeadFinderPanel({ onAddCandidate, onAnalyzeCandidate, onRejectCandidate, onRunSearch, onUpdateRequest, session }: LeadFinderPanelProps) {
+    const visibleCandidates = session.candidates.filter((candidate) => !candidate.rejected);
+
     return (
         <section className="finder-layout">
             <div className="panel form-panel finder-form">
                 <div className="panel-header">
                     <div>
-                        <p className="eyebrow">Rucni/poloautomaticky vstup</p>
-                        <h2>Lead Finder</h2>
+                        <p className="eyebrow">Agentni workflow</p>
+                        <h2>Spustit Lead Finder Agenta</h2>
                     </div>
                     <div className="button-group">
-                        <button className="secondary-button" onClick={onLoadMockCandidates} type="button">
-                            <Sparkles size={18} aria-hidden="true" />
-                            Nacist mock priklady
-                        </button>
-                        <button className="primary-button" onClick={onParseCandidates} type="button">
+                        <button className="primary-button" disabled={session.status === 'searching'} onClick={onRunSearch} type="button">
                             <Search size={18} aria-hidden="true" />
-                            Vytvorit kandidaty
+                            {session.status === 'searching' ? 'Hledam...' : 'Najit potencialni klienty'}
                         </button>
                     </div>
                 </div>
 
                 <div className="scope-note">
-                    Kandidati jsou pouze navrhy ke schvaleni clovekem. Aplikace nic nescrapuje, nikam se nepripojuje a nikoho automaticky nekontaktuje.
+                    Autonomni hledani vyzaduje TAVILY_API_KEY a OPENAI_API_KEY v Netlify environment variables. Bez nich bezi demo rezim.
+                    Aplikace nescrapuje Booking, Airbnb ani Google Maps a neposila e-maily automaticky.
                 </div>
+
+                {session.isMock || session.status === 'needs-config' ? <div className="scope-note demo-note">Demo rezim: vysledky nejsou z realneho API a jsou oznacene jako demo.</div> : null}
 
                 <div className="form-grid">
                     <label>
                         Mesto / oblast
-                        <input value={session.cityOrArea} onChange={(event) => onUpdateSession('cityOrArea', event.target.value)} />
+                        <input value={session.request.location} onChange={(event) => onUpdateRequest('location', event.target.value)} />
                     </label>
                     <label>
                         Typ ubytovani
-                        <select
-                            value={session.accommodationType}
-                            onChange={(event) => onUpdateSession('accommodationType', event.target.value as LeadSearchSession['accommodationType'])}
-                        >
-                            <option value="">Libovolny</option>
-                            {accommodationTypes.map((type) => (
-                                <option key={type} value={type}>
-                                    {type}
-                                </option>
-                            ))}
-                        </select>
+                        <input value={session.request.accommodationType} onChange={(event) => onUpdateRequest('accommodationType', event.target.value)} />
                     </label>
                     <label>
                         Cilovy segment
-                        <input value={session.targetSegment} onChange={(event) => onUpdateSession('targetSegment', event.target.value)} />
+                        <input value={session.request.segment} onChange={(event) => onUpdateRequest('segment', event.target.value)} />
                     </label>
                     <label>
-                        Poznamky
-                        <input value={session.notes} onChange={(event) => onUpdateSession('notes', event.target.value)} />
+                        Max vysledku
+                        <input min={1} max={20} type="number" value={session.request.maxResults} onChange={(event) => onUpdateRequest('maxResults', Number(event.target.value))} />
                     </label>
                     <label className="full-width">
-                        Zdrojovy text nebo rucne vlozene vysledky hledani
-                        <textarea
-                            value={session.sourceText}
-                            onChange={(event) => onUpdateSession('sourceText', event.target.value)}
-                            rows={14}
-                        />
+                        Poznamky pro agenta
+                        <textarea value={session.request.notes} onChange={(event) => onUpdateRequest('notes', event.target.value)} rows={5} />
                     </label>
                 </div>
             </div>
 
             <aside className="panel query-box">
-                <p className="eyebrow">Inspirace</p>
-                <h2>Doporucene vyhledavaci dotazy</h2>
-                <div className="query-list">
-                    {recommendedSearchQueries.map((query) => (
-                        <button
-                            className="query-chip"
-                            key={query}
-                            onClick={() => onUpdateSession('notes', `${session.notes ? `${session.notes}\n` : ''}${query}`)}
-                            type="button"
-                        >
-                            {query}
-                        </button>
-                    ))}
-                </div>
+                <p className="eyebrow">Stav agenta</p>
+                <h2>{session.status}</h2>
+                <p className="section-help">{session.message || 'Zadej lokalitu a segment, potom spust hledani.'}</p>
             </aside>
 
             <div className="panel finder-results">
@@ -781,13 +792,13 @@ function LeadFinderPanel({ onAddCandidate, onLoadMockCandidates, onParseCandidat
                         <p className="eyebrow">Kandidati ke schvaleni</p>
                         <h2>Vyhodnocene nalezy</h2>
                     </div>
-                    <span className="status-pill">{session.candidates.length} kandidatu</span>
+                    <span className="status-pill">{visibleCandidates.length} kandidatu</span>
                 </div>
 
-                {session.candidates.length === 0 ? (
+                {visibleCandidates.length === 0 ? (
                     <div className="empty-state compact-empty">
                         <h2>Zatim nejsou vytvoreni zadni kandidati</h2>
-                        <p>Vloz zdrojovy text nebo nacti mock priklady a spust vytvoreni kandidatu.</p>
+                        <p>Spust Lead Finder Agenta. Bez API klicu se zobrazi demo kandidati.</p>
                     </div>
                 ) : (
                     <div className="table-wrap">
@@ -795,55 +806,85 @@ function LeadFinderPanel({ onAddCandidate, onLoadMockCandidates, onParseCandidat
                             <thead>
                                 <tr>
                                     <th>Nazev</th>
-                                    <th>Mesto</th>
+                                    <th>Lokalita</th>
                                     <th>Typ</th>
-                                    <th>Kontakt</th>
-                                    <th>URL</th>
-                                    <th>Signaly</th>
                                     <th>Skore</th>
+                                    <th>Duvod</th>
+                                    <th>Zdroje</th>
+                                    <th>Signaly</th>
                                     <th>Uhel</th>
                                     <th>Akce</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {session.candidates.map((candidate) => (
+                                {visibleCandidates.map((candidate) => {
+                                    const analysis = session.analyses[candidate.id];
+
+                                    return (
                                     <tr key={candidate.id}>
                                         <td>
                                             <strong>{candidate.name}</strong>
-                                            <small>{candidate.sourceNotes.slice(0, 120)}</small>
+                                            <small>{candidate.isMock ? 'DEMO vysledek' : candidate.possibleEmail || 'Kontakt neznamy'}</small>
                                         </td>
-                                        <td>{candidate.city || 'Neuvedeno'}</td>
-                                        <td>{candidate.accommodationType}</td>
-                                        <td>{candidate.email || 'Nenalezen'}</td>
-                                        <td>{candidate.url || 'Nenalezeno'}</td>
+                                        <td>{candidate.location || 'Neuvedeno'}</td>
+                                        <td>{candidate.type}</td>
+                                        <td>
+                                            <strong className="score-value">{candidate.leadScore}</strong>
+                                        </td>
+                                        <td>{candidate.evidenceSummary}</td>
+                                        <td>
+                                            <div className="source-list">
+                                                {candidate.sourceUrls.map((url) => (
+                                                    <a href={url} key={url} rel="noreferrer" target="_blank">Odkaz</a>
+                                                ))}
+                                            </div>
+                                        </td>
                                         <td>
                                             <div className="signal-list">
                                                 {candidate.signals.length > 0 ? candidate.signals.map((signal) => <span key={signal}>{signal}</span>) : <span>Bez signalu</span>}
                                             </div>
                                         </td>
+                                        <td>{offerAngleLabels[candidate.recommendedAngle]}</td>
                                         <td>
-                                            <strong className="score-value">{candidate.score}</strong>
-                                        </td>
-                                        <td>{offerAngleLabels[candidate.recommendedOfferAngle]}</td>
-                                        <td>
-                                            <button
-                                                className="secondary-button compact-button"
-                                                disabled={Boolean(candidate.addedLeadId)}
-                                                onClick={() => onAddCandidate(candidate)}
-                                                type="button"
-                                            >
-                                                <Plus size={16} aria-hidden="true" />
-                                                {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
-                                            </button>
+                                            <div className="table-actions">
+                                                <button className="secondary-button compact-button" onClick={() => onAnalyzeCandidate(candidate)} type="button">
+                                                    <Sparkles size={16} aria-hidden="true" />
+                                                    Analyzovat
+                                                </button>
+                                                <button className="secondary-button compact-button" disabled={Boolean(candidate.addedLeadId)} onClick={() => onAddCandidate(candidate)} type="button">
+                                                    <Plus size={16} aria-hidden="true" />
+                                                    {candidate.addedLeadId ? 'Pridano' : 'Pridat do leadu'}
+                                                </button>
+                                                <button className="secondary-button compact-button danger-button" onClick={() => onRejectCandidate(candidate.id)} type="button">
+                                                    Zamítnout
+                                                </button>
+                                            </div>
+                                            {analysis ? <AgentAnalysisPreview analysis={analysis} /> : null}
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
                 )}
             </div>
         </section>
+    );
+}
+
+function AgentAnalysisPreview({ analysis }: { analysis: LeadAgentAnalysis }) {
+    return (
+        <div className="analysis-preview">
+            <p className="eyebrow">Analyza</p>
+            <strong>{analysis.firstImpression}</strong>
+            <div className="signal-list">
+                {analysis.quickWins.slice(0, 3).map((win) => (
+                    <span key={win.title}>{win.title}</span>
+                ))}
+            </div>
+            <textarea readOnly value={`${analysis.miniAudit}\n\n---\n\n${analysis.outreachEmail}`} rows={8} />
+        </div>
     );
 }
 
