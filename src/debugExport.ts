@@ -184,6 +184,10 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     return withMetadata('lead', {
         lead,
         cleanedLeadDisplayName: cleanLeadDisplayName(lead.name),
+        canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),
+        removedInvalidSignals: lead.evidenceCanonicalizationDiagnostic?.removedInvalidSignals ?? [],
+        removedInvalidPhones: lead.evidenceCanonicalizationDiagnostic?.removedInvalidPhones ?? [],
+        removedStaleSourceMaterials: lead.evidenceCanonicalizationDiagnostic?.removedStaleSourceMaterials ?? 0,
         ...clientTextSanitizerDiagnostics(clientOutputs),
         openAIIncomplete: latestDiagnostic?.fallbackReason === 'openai_incomplete' || context.diagnostics?.fallbackReason === 'openai_incomplete',
         diagnostics: context.diagnostics,

@@ -66,23 +66,19 @@ const blockedAggregatorHosts = [
     'trip.com',
 ];
 
-const pageHints = [
-    '',
+const fallbackPageHints = [
     'kontakt',
-    'contact',
     'pokoje',
-    'rooms',
+    'ubytovani',
     'apartmany',
-    'apartments',
-    'faq',
-    'casto-kladene-dotazy',
-    'prijezd',
-    'arrival',
-    'check-in',
-    'parking',
     'parkovani',
-    'rules',
-    'house-rules',
+    'rezervace',
+    'faq',
+];
+
+const internalLinkKeywords = [
+    'kontakt', 'pokoje', 'ubytovani', 'ubytování', 'apartmany', 'apartmány', 'prijezd', 'příjezd', 'parkovani', 'parkování', 'sluzby', 'služby', 'wellness', 'rezervace', 'faq',
+    'contact', 'rooms', 'accommodation', 'apartments', 'arrival', 'parking', 'services', 'booking',
 ];
 
 const json = (statusCode: number, body: unknown) => ({ statusCode, headers, body: JSON.stringify(body) });
@@ -121,29 +117,62 @@ const candidateWebsiteUrl = (request: ExtractWebsiteRequest) => {
     return candidates.find((url) => !isBlockedAggregatorUrl(url)) || candidates[0] || '';
 };
 
-const buildExtractionUrls = (websiteUrl: string, sourceUrls: string[]) => {
+const originUrl = (url: URL) => `${url.protocol}//${url.host}/`;
+
+const buildInitialExtractionUrls = (websiteUrl: string, sourceUrls: string[]) => {
     const baseUrl = safeUrl(websiteUrl);
     if (!baseUrl) return [];
 
-    const urls = [baseUrl.toString()];
+    const urls = [baseUrl.toString(), originUrl(baseUrl)];
     for (const sourceUrl of sourceUrls) {
         if (sameHostUrl(baseUrl, sourceUrl) && !isBlockedAggregatorUrl(sourceUrl)) urls.push(safeUrl(sourceUrl)?.toString() || sourceUrl);
     }
 
-    for (const hint of pageHints) {
-        if (urls.length >= MAX_URLS) break;
-        if (!hint) continue;
-        const nextUrl = new URL(`/${hint.replace(/^\//, '')}`, baseUrl);
-        urls.push(nextUrl.toString());
-    }
-
-    return unique(urls).slice(0, MAX_URLS);
+    return unique(urls).slice(0, 3);
 };
 
-const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = [], skippedPages: SkippedPage[] = []) => ({
+const buildFallbackGuessUrls = (websiteUrl: string, existingUrls: string[]) => {
+    const baseUrl = safeUrl(websiteUrl);
+    if (!baseUrl) return [];
+
+    const urls: string[] = [];
+    for (const hint of fallbackPageHints) {
+        if (urls.length >= 4) break;
+        const nextUrl = new URL(`/${hint.replace(/^\//, '')}`, baseUrl);
+        if (!existingUrls.includes(nextUrl.toString())) urls.push(nextUrl.toString());
+    }
+
+    return unique(urls);
+};
+
+const extractDiscoveredInternalLinks = (results: TavilyExtractResult[], baseUrl: URL, existingUrls: string[]) => {
+    const candidates: Array<{ url: string; score: number }> = [];
+    const text = results.map((result) => `${result.raw_content || ''}\n${result.content || ''}`).join('\n');
+    const linkPattern = /\[[^\]]+\]\(([^)]+)\)|href=["']([^"']+)["']|https?:\/\/[^\s)"']+|\s(\/[A-Za-z0-9_./?=&%#-]+)/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = linkPattern.exec(text))) {
+        const rawValue = (match[1] || match[2] || match[0] || '').trim().replace(/^\s+/, '');
+        const parsed = rawValue.startsWith('/') ? new URL(rawValue, baseUrl) : safeUrl(rawValue);
+        if (!parsed || hostWithoutWww(parsed) !== hostWithoutWww(baseUrl) || isBlockedAggregatorUrl(parsed.toString())) continue;
+
+        const normalizedUrl = parsed.toString().split('#')[0];
+        if (existingUrls.includes(normalizedUrl)) continue;
+        const searchable = `${parsed.pathname} ${rawValue}`.toLowerCase();
+        const score = internalLinkKeywords.reduce((sum, keyword) => sum + (searchable.includes(keyword.toLowerCase()) ? 1 : 0), 0);
+        if (score > 0) candidates.push({ url: normalizedUrl, score });
+    }
+
+    return unique(candidates.sort((a, b) => b.score - a.score).map((candidate) => candidate.url)).slice(0, MAX_URLS - existingUrls.length);
+};
+
+const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = [], skippedPages: SkippedPage[] = [], guessedUrlsUsed: string[] = []) => ({
     provider,
     status,
     websiteUrl: candidateWebsiteUrl(request),
+    extractionStrategy: 'homepage-first' as const,
+    discoveredInternalLinksCount: 0,
+    guessedUrlsUsed,
     pagesExtracted: pages,
     skippedPages,
     validPagesCount: pages.length,
@@ -210,7 +239,7 @@ const isNotFoundPage = (page: ExtractedPage) => notFoundPagePattern.test(`${page
 
 const signalMatches = (content: string, matchers: Array<{ label: string; keywords: string[] }>) => matchers.filter((matcher) => includesAny(content, matcher.keywords)).map((matcher) => matcher.label);
 
-const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[]) => {
+const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[], strategy: { discoveredInternalLinksCount: number; guessedUrlsUsed: string[] }) => {
     const content = pages.map((page) => `${page.url}\n${page.title}\n${page.textPreview}`).join('\n').toLowerCase();
     const rawText = pages.map((page) => page.textPreview).join('\n');
     const emails = extractEmails(rawText);
@@ -276,6 +305,9 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         provider: 'tavily-extract' as const,
         status,
         websiteUrl: candidateWebsiteUrl(request),
+        extractionStrategy: 'homepage-first' as const,
+        discoveredInternalLinksCount: strategy.discoveredInternalLinksCount,
+        guessedUrlsUsed: strategy.guessedUrlsUsed,
         pagesExtracted: pages,
         skippedPages,
         validPagesCount: pages.length,
@@ -363,14 +395,25 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         }
 
         const apiKey = process.env.TAVILY_API_KEY;
-        const urls = buildExtractionUrls(websiteUrl, request.sourceUrls || []);
+        const initialUrls = buildInitialExtractionUrls(websiteUrl, request.sourceUrls || []);
 
         if (!apiKey) {
             return json(200, fallbackResult(request, debugId, startedAt, 'partial', 'missing_tavily_api_key'));
         }
 
-        const outcome = await tavilyExtract(apiKey, urls);
-        const extractedPages = outcome.results
+        const baseUrl = safeUrl(websiteUrl);
+        const initialOutcome = await tavilyExtract(apiKey, initialUrls);
+        const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
+        const guessedUrlsUsed = discoveredUrls.length === 0 ? buildFallbackGuessUrls(websiteUrl, initialUrls) : [];
+        const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].slice(0, Math.max(0, MAX_URLS - initialUrls.length));
+        const secondaryOutcome = secondaryUrls.length > 0 && elapsed(startedAt) < MAX_FUNCTION_MS - 4500
+            ? await tavilyExtract(apiKey, secondaryUrls)
+            : { ok: true, results: [] as TavilyExtractResult[], failedCount: 0, reason: null };
+        const allResults = [...initialOutcome.results, ...secondaryOutcome.results];
+        const failedCount = initialOutcome.failedCount + secondaryOutcome.failedCount;
+        const outcomeReason = initialOutcome.reason || secondaryOutcome.reason;
+        const outcomeOk = initialOutcome.ok || secondaryOutcome.ok;
+        const extractedPages = allResults
             .map((result) => {
                 const text = result.raw_content || result.content || '';
                 return {
@@ -393,10 +436,10 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             .slice(0, MAX_URLS);
 
         if (pages.length === 0) {
-            return json(200, fallbackResult(request, debugId, startedAt, 'error', outcome.reason || 'no_valid_extractable_content', outcome.ok ? 'tavily-extract' : 'error', [], skippedPages));
+            return json(200, fallbackResult(request, debugId, startedAt, 'error', outcomeReason || 'no_valid_extractable_content', outcomeOk ? 'tavily-extract' : 'error', [], skippedPages, guessedUrlsUsed));
         }
 
-        return json(200, analyzePages(request, debugId, startedAt, pages, outcome.failedCount + skippedPages.length, skippedPages));
+        return json(200, analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed }));
     } catch (error) {
         return json(500, fallbackResult({}, debugId, startedAt, 'error', error instanceof Error ? error.message : 'function_runtime_error', 'error'));
     }

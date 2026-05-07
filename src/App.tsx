@@ -178,6 +178,129 @@ const isLikelyPhoneNumber = (value: string) => {
 
     return digits.length >= 7 && digits.length <= 15;
 };
+const decimalCoordinatePattern = /\b\d{1,3}\.\d{5,}\b/g;
+const dataUrlPattern = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/gi;
+const markdownImagePattern = /!\[[^\]]*\]\([^)]*\)/g;
+const invalidPhoneSignalPattern = /Telefon nalezen na vlastn[íi]m webu:\s*(.+)$/i;
+
+const sanitizeSourceMaterialContent = (content = '') => content
+    .replace(dataUrlPattern, '[image data omitted]')
+    .replace(markdownImagePattern, '[image omitted]')
+    .replace(decimalCoordinatePattern, '[coordinate omitted]')
+    .split('\n')
+    .filter((line) => !notFoundPagePattern.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 8000);
+const redactInvalidEvidenceValue = (value: string) => value
+    .replace(decimalCoordinatePattern, '[coordinate omitted]')
+    .replace(/Telefon nalezen na vlastn[íi]m webu:\s*\[coordinate omitted\]/gi, 'Telefon nalezen na vlastním webu: [invalid phone omitted]');
+
+const sanitizeWebsiteExtractionForSourceMaterial = (extraction: WebsiteExtractionResult) => sanitizeSourceMaterialContent([
+    extraction.summary,
+    '',
+    'Contacts:',
+    [...extraction.contact.emails, ...extraction.contact.phones].join('\n') || 'Kontakt nenalezen',
+    '',
+    'Valid pages:',
+    extraction.pagesExtracted.map((page) => `${page.title || page.url}\n${page.url}\n${page.textPreview}`).join('\n\n') || 'Žádná validní stránka nebyla přečtena.',
+    '',
+    'Skipped pages:',
+    (extraction.skippedPages ?? []).map((page) => `${page.title || page.url}\n${page.url}\nReason: ${page.reason}`).join('\n\n') || 'Žádné stránky nebyly přeskočeny.',
+    '',
+    'Key signals:',
+    [...extraction.websiteSignals, ...extraction.arrivalSignals, ...extraction.parkingSignals, ...extraction.faqSignals, ...extraction.setupOpportunitySignals, ...extraction.fixOpportunitySignals].join('\n') || 'Bez výrazných signálů.',
+    '',
+    'Evidence limits:',
+    extraction.evidenceLimits.join('\n'),
+].join('\n'));
+
+const invalidSignalReason = (signal: string, hasWebsiteEmail: boolean) => {
+    const phoneMatch = signal.match(invalidPhoneSignalPattern);
+
+    if (phoneMatch && !isLikelyPhoneNumber(phoneMatch[1])) return 'invalid-phone-signal';
+    if (decimalCoordinatePattern.test(signal)) {
+        decimalCoordinatePattern.lastIndex = 0;
+        return 'coordinate-signal';
+    }
+    decimalCoordinatePattern.lastIndex = 0;
+    if (hasWebsiteEmail && emailMissingSignalPattern.test(signal)) return 'email-contradiction';
+    return '';
+};
+
+const canonicalizeLeadEvidence = (lead: Lead): Lead => {
+    const extraction = lead.websiteExtraction;
+    if (!extraction) return lead;
+
+    const validPhones = uniqueStrings((extraction.contact.phones ?? []).filter(isLikelyPhoneNumber));
+    const removedInvalidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => !isLikelyPhoneNumber(phone)));
+    const normalizedExtraction: WebsiteExtractionResult = {
+        ...extraction,
+        contact: { ...extraction.contact, phones: validPhones },
+        pagesExtracted: extraction.pagesExtracted.filter((page) => !isInvalidExtractedPage(page)).map((page) => ({
+            ...page,
+            textPreview: sanitizeSourceMaterialContent(page.textPreview),
+        })),
+        skippedPages: [
+            ...(extraction.skippedPages ?? []),
+            ...extraction.pagesExtracted
+                .filter(isInvalidExtractedPage)
+                .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const })),
+        ],
+    };
+    normalizedExtraction.validPagesCount = normalizedExtraction.pagesExtracted.length;
+    normalizedExtraction.invalidPagesCount = normalizedExtraction.skippedPages.length;
+
+    const hasWebsiteEmail = normalizedExtraction.contact.emails.length > 0;
+    const cleanContactSignals = [
+        ...normalizedExtraction.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`),
+        ...normalizedExtraction.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
+    ];
+    const nextPublicSignals = uniqueStrings([
+        ...normalizedExtraction.websiteSignals,
+        ...cleanContactSignals,
+        ...normalizedExtraction.setupOpportunitySignals,
+        ...normalizedExtraction.fixOpportunitySignals,
+    ]);
+    const removedInvalidSignals = uniqueStrings([
+        ...lead.publicSignals.filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
+        ...splitLines(lead.strengths).filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
+        ...splitLines(lead.risks).filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
+        ...splitLines(lead.guestFrictionSignals).filter((signal) => invalidSignalReason(signal, hasWebsiteEmail)),
+    ]);
+    const cleanedSourceMaterials = (lead.sourceMaterials ?? []).filter((material) => material.type !== 'website-extraction').map((material) => ({
+        ...material,
+        content: sanitizeSourceMaterialContent(material.content),
+    }));
+    const removedStaleSourceMaterials = (lead.sourceMaterials ?? []).filter((material) => material.type === 'website-extraction').length;
+    const websiteSourceMaterial: SourceMaterial = {
+        id: `source-website-${lead.id}`,
+        type: 'website-extraction',
+        sourceLinkId: '',
+        title: 'Website extraction source',
+        content: sanitizeWebsiteExtractionForSourceMaterial(normalizedExtraction),
+        createdAt: new Date().toISOString(),
+    };
+
+    return {
+        ...lead,
+        notes: sanitizeSourceMaterialContent(lead.notes),
+        websiteExtraction: normalizedExtraction,
+        publicSignals: nextPublicSignals,
+        sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
+        strengths: joinLines(removeContactContradictions(uniqueStrings([...splitLines(lead.strengths), ...normalizedExtraction.strengths]).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
+        risks: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.risks)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
+        guestFrictionSignals: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.guestFrictionSignals)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
+        guestConfusion: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.guestConfusion)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
+        evidenceCanonicalizationDiagnostic: {
+            canonicalizationApplied: true,
+            removedInvalidSignals: removedInvalidSignals.map(redactInvalidEvidenceValue),
+            removedInvalidPhones: removedInvalidPhones.map(redactInvalidEvidenceValue),
+            removedStaleSourceMaterials,
+        },
+    };
+};
 
 const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'confidence' | 'structuredQuickWins' | 'fitVerdict'>) => {
     const hasNoQuickWins = (lead.structuredQuickWins ?? []).length === 0;
@@ -401,13 +524,16 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         provider: lead.websiteExtraction.provider ?? 'fallback',
         status: lead.websiteExtraction.status ?? 'partial',
         websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
+        extractionStrategy: lead.websiteExtraction.extractionStrategy ?? 'legacy',
+        discoveredInternalLinksCount: lead.websiteExtraction.discoveredInternalLinksCount ?? 0,
+        guessedUrlsUsed: lead.websiteExtraction.guessedUrlsUsed ?? [],
         pagesExtracted: validPagesExtracted,
         skippedPages: normalizedSkippedPages,
         validPagesCount: validPagesExtracted.length,
         invalidPagesCount: normalizedSkippedPages.length,
         contact: {
             emails: lead.websiteExtraction.contact?.emails ?? [],
-            phones: (lead.websiteExtraction.contact?.phones ?? []).filter(isLikelyPhoneNumber),
+            phones: lead.websiteExtraction.contact?.phones ?? [],
             contactPageUrl: lead.websiteExtraction.contact?.contactPageUrl ?? null,
         },
         websiteSignals: lead.websiteExtraction.websiteSignals ?? [],
@@ -431,7 +557,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         ? buildWebsiteOnlyOutreach({ leadName: normalizedName, websiteExtraction: normalizedWebsiteExtraction, signals: lead.publicSignals ?? [] })
         : sanitizedGeneratedOutreach;
 
-    return {
+    const normalizedLead: Lead = {
         ...emptyLead(),
         ...lead,
         name: normalizedName,
@@ -479,6 +605,8 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
         websiteExtraction: normalizedWebsiteExtraction,
     };
+
+    return canonicalizeLeadEvidence(normalizedLead);
 };
 
 const emptyAgentRequest = (): LeadAgentSearchRequest => ({
@@ -921,17 +1049,19 @@ function App() {
     };
 
     const persistLead = (lead: Lead) => {
-        if (!lead.name.trim()) {
-            setDraftLead(lead);
+        const canonicalLead = canonicalizeLeadEvidence(lead);
+
+        if (!canonicalLead.name.trim()) {
+            setDraftLead(canonicalLead);
             return;
         }
 
-        setDraftLead(lead);
+        setDraftLead(canonicalLead);
         setLeads((currentLeads) => {
-            const exists = currentLeads.some((currentLead) => currentLead.id === lead.id);
-            return exists ? currentLeads.map((currentLead) => (currentLead.id === lead.id ? lead : currentLead)) : [lead, ...currentLeads];
+            const exists = currentLeads.some((currentLead) => currentLead.id === canonicalLead.id);
+            return exists ? currentLeads.map((currentLead) => (currentLead.id === canonicalLead.id ? canonicalLead : currentLead)) : [canonicalLead, ...currentLeads];
         });
-        setSelectedLeadId(lead.id);
+        setSelectedLeadId(canonicalLead.id);
         setIsCreating(false);
     };
 
@@ -1326,18 +1456,7 @@ function App() {
                     type: 'website-extraction' as const,
                     sourceLinkId: '',
                     title: 'Website extraction source',
-                    content: [
-                        websiteExtraction.summary,
-                        '',
-                        'Contacts:',
-                        [...websiteExtraction.contact.emails, ...websiteExtraction.contact.phones].join('\n') || 'Kontakt nenalezen',
-                        '',
-                        'Pages:',
-                        websiteExtraction.pagesExtracted.map((page) => `${page.title}\n${page.url}\n${page.textPreview}`).join('\n\n'),
-                        '',
-                        'Evidence limits:',
-                        websiteExtraction.evidenceLimits.join('\n'),
-                    ].join('\n'),
+                    content: sanitizeWebsiteExtractionForSourceMaterial(websiteExtraction),
                     createdAt: new Date().toISOString(),
                 }] : []),
             ],
@@ -1395,14 +1514,14 @@ function App() {
             generatedOffer: '',
             selectedOfferAngle,
         };
-        const nextLead: Lead = analysis ? {
+        const nextLead: Lead = canonicalizeLeadEvidence(analysis ? {
             ...nextLeadBase,
             clientMiniAudit: generateMiniAudit(nextLeadBase),
             generatedMiniAudit: generateMiniAudit(nextLeadBase),
             generatedOutreach: generateFirstOutreach(nextLeadBase),
             generatedFollowUp: generateFollowUp(nextLeadBase),
             generatedOffer: generateOffer(nextLeadBase),
-        } : nextLeadBase;
+        } : nextLeadBase);
 
         setLeads((currentLeads) => [nextLead, ...currentLeads]);
         setSelectedLeadId(nextLead.id);

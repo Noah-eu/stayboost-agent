@@ -63,7 +63,7 @@ export function humanizeSignal(signal = '') {
     if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefon je na webu viditelný';
     if (normalized.includes('neni jasne strukturovana sekce prijezd check in') || normalized.includes('neni jasne videt kompletni predprijezdova orientace')) return 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě';
     if (normalized.includes('neni jasne videt parkovani')) return 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené';
-    if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce by mohla hostům ušetřit dotazy';
+    if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce často pomáhá hostům zorientovat se před příjezdem';
     if (normalized.includes('kontakt je nalezeny') || normalized.includes('kontakt nalezen')) return 'kontakt je snadno dohledatelný';
     if (normalized.includes('pokoje') || normalized.includes('apartmany')) return 'web popisuje nabídku pokojů';
 
@@ -95,8 +95,10 @@ export function sanitizeClientText(text = '') {
         ['Na přečteném veřejném webu není jasně strukturovaná sekce příjezd / check-in.', 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.'],
         ['Na prectenem verejnem webu neni jasne videt parkovani.', 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené.'],
         ['Na přečteném veřejném webu není jasně vidět parkování.', 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené.'],
-        ['Na prectenem verejnem webu neni videt FAQ / casto kladene dotazy.', 'krátká FAQ sekce by mohla hostům ušetřit dotazy.'],
-        ['Na přečteném veřejném webu není vidět FAQ / často kladené dotazy.', 'krátká FAQ sekce by mohla hostům ušetřit dotazy.'],
+        ['Na prectenem verejnem webu neni videt FAQ / casto kladene dotazy.', 'krátká FAQ sekce často pomáhá hostům zorientovat se před příjezdem.'],
+        ['Na přečteném veřejném webu není vidět FAQ / často kladené dotazy.', 'krátká FAQ sekce často pomáhá hostům zorientovat se před příjezdem.'],
+        ['To může zbytečně přidávat dotazy na recepci.', 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.'],
+        ['To muze zbytecne pridavat dotazy na recepci.', 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.'],
     ];
 
     replacements.forEach(([from, to]) => {
@@ -190,6 +192,7 @@ export function buildFallbackOutreach(input: { leadName: string; websiteExtracti
 narazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.
 
 Všiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.
+Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.
 
 Nejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?
 

@@ -120,6 +120,9 @@ export interface WebsiteExtractionResult {
     provider: 'tavily-extract' | 'fallback' | 'error';
     status: 'completed' | 'partial' | 'unsupported' | 'error';
     websiteUrl: string;
+    extractionStrategy?: 'homepage-first' | 'fallback-guesses' | 'legacy';
+    discoveredInternalLinksCount?: number;
+    guessedUrlsUsed?: string[];
     pagesExtracted: WebsiteExtractedPage[];
     skippedPages: WebsiteSkippedPage[];
     validPagesCount: number;
@@ -241,6 +244,12 @@ export interface Lead {
     websiteExtraction?: WebsiteExtractionResult;
     latestAnalysisDiagnostic?: unknown;
     websiteExtractionDiagnostic?: unknown;
+    evidenceCanonicalizationDiagnostic?: {
+        canonicalizationApplied: boolean;
+        removedInvalidSignals: string[];
+        removedInvalidPhones: string[];
+        removedStaleSourceMaterials: number;
+    };
     extractionStatus: ExtractionStatus;
     firstImpression: string;
     mainPhotoVerdict: MainPhotoVerdict;

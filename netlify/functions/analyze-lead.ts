@@ -187,7 +187,7 @@ const humanizeSignal = (signal = '') => {
     if (normalized.includes('na webu je dohledatelny telefon') || normalized.includes('telefon nalezen na vlastnim webu')) return 'telefon je na webu viditelný';
     if (normalized.includes('neni jasne strukturovana sekce prijezd check in') || normalized.includes('neni jasne videt kompletni predprijezdova orientace')) return 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě';
     if (normalized.includes('neni jasne videt parkovani')) return 'informace k parkování nejsou ve veřejné prezentaci výrazně oddělené';
-    if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce by mohla hostům ušetřit dotazy';
+    if (normalized.includes('neni videt faq') || normalized.includes('casto kladene dotazy')) return 'krátká FAQ sekce často pomáhá hostům zorientovat se před příjezdem';
 
     return trimText(signal, 180);
 };
@@ -205,7 +205,8 @@ const sanitizeClientText = (value = '') => {
         .replace(/Ubytovani popisuje pokoje nebo apartmany|Ubytování popisuje pokoje nebo apartmány/g, 'web přehledně popisuje pokoje')
         .replace(/Na webu je dohledateln[yý] e-mail\.?/g, 'e-mail je na webu viditelný.')
         .replace(/Na webu je dohledateln[yý] telefon\.?/g, 'telefon je na webu viditelný.')
-        .replace(/Na p[řr]e[čc]ten[eé]m ve[řr]ejn[eé]m webu nen[ií] jasn[eě] strukturovan[aá] sekce p[řr][ií]jezd \/ check-in\.?/g, 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.');
+        .replace(/Na p[řr]e[čc]ten[eé]m ve[řr]ejn[eé]m webu nen[ií] jasn[eě] strukturovan[aá] sekce p[řr][ií]jezd \/ check-in\.?/g, 'praktické informace k příjezdu by mohly být lépe soustředěné na jednom místě.')
+        .replace(/To m[ůu][žz]e zbyte[čc]n[eě] p[řr]id[aá]vat dotazy na recepci\.?/gi, 'Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.');
 
     forbiddenClientTerms.forEach((term) => {
         cleaned = cleaned.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
@@ -242,7 +243,7 @@ const websiteOnlyOutreach = (name: string, candidate: CandidateInput) => {
     const hasContact = Boolean((candidate.websiteExtraction?.contact?.emails?.length || 0) + (candidate.websiteExtraction?.contact?.phones?.length || 0));
     const contactText = hasContact ? 'kontakt, pokoje i základní informace jsou dohledatelné' : 'pokoje a základní informace jsou dohledatelné';
 
-    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
+    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci. Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
 };
 
 const fallbackFollowUp = (name: string) => sanitizeClientText(`Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${cleanLeadDisplayName(name)}, hlavně k příjezdu, parkování a častým otázkám hostů.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.\n\nDavid`);
