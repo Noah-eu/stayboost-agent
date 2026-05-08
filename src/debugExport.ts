@@ -134,6 +134,10 @@ const leadWorkflowState = (lead: Lead) => {
         playbookSignals: ideaDiagnostics.playbookSignals,
         freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
         repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
+        localExperienceExtractionReady: ideaDiagnostics.localExperienceExtractionReady,
+        extractedPriorityPages: lead.websiteExtraction?.extractedPriorityPages ?? [],
+        missedPriorityPages: lead.websiteExtraction?.missedPriorityPages ?? [],
+        localExperienceSignals: lead.websiteExtraction?.localExperienceSignals ?? [],
         unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
         evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
@@ -143,6 +147,8 @@ const leadWorkflowState = (lead: Lead) => {
         missingSignalsUsedCount: ideaDiagnostics.missingSignalsUsedCount,
         nextRecommendedAction: needsOfficialWebsite
             ? 'needs-official-website'
+            : ideaDiagnostics.localExperienceExtractionReady === false
+                ? 'needs-extraction-review'
             : (lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady) === false
                 ? 'needs-evidence-review'
             : hasWebsiteExtraction && contactQuality.emailSource === 'discovery-fallback'
@@ -272,6 +278,9 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
         evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
+        extractedPriorityPages: lead.websiteExtraction?.extractedPriorityPages ?? [],
+        missedPriorityPages: lead.websiteExtraction?.missedPriorityPages ?? [],
+        localExperienceSignals: lead.websiteExtraction?.localExperienceSignals ?? [],
         guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: lead.guestGuideSecondEmail ?? '',

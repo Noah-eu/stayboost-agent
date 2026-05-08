@@ -48,6 +48,14 @@ const TAVILY_TIMEOUT_MS = 10500;
 const MAX_URLS = 8;
 const MAX_PREVIEW = 1200;
 
+const priorityPageDefinitions = [
+    { label: 'Kontakt', keywords: ['kontakt', 'contact'] },
+    { label: 'Možnosti rekreace', keywords: ['moznosti-rekreace', 'možnosti-rekreace', 'moznosti_rekreace', 'možnosti_rekreace', 'rekreace', 'vylety', 'výlety', 'tipy-v-okoli', 'tipy-v-okolí'] },
+    { label: 'Ceník', keywords: ['cenik', 'ceník', 'cena', 'prices', 'price-list'] },
+    { label: 'Rezervace', keywords: ['rezervace', 'reservation', 'booking'] },
+    { label: 'Pokoje / apartmány', keywords: ['pokoje', 'pokoj', 'apartmany', 'apartmány', 'ubytovani', 'ubytování', 'rooms', 'apartments', 'accommodation'] },
+];
+
 const blockedAggregatorHosts = [
     'booking.com',
     'airbnb.',
@@ -72,16 +80,22 @@ const blockedAggregatorHosts = [
 
 const fallbackPageHints = [
     'kontakt',
+    'kontakt.php',
+    'rekreace.php',
+    'moznosti-rekreace',
+    'možnosti-rekreace',
+    'cenik.php',
+    'cenik',
+    'rezervace.php',
+    'rezervace',
     'pokoje',
     'ubytovani',
     'apartmany',
-    'parkovani',
-    'rezervace',
     'faq',
 ];
 
 const internalLinkKeywords = [
-    'kontakt', 'pokoje', 'ubytovani', 'ubytování', 'apartmany', 'apartmány', 'prijezd', 'příjezd', 'parkovani', 'parkování', 'sluzby', 'služby', 'wellness', 'rezervace', 'faq',
+    'kontakt', 'rekreace', 'možnosti rekreace', 'moznosti rekreace', 'cenik', 'ceník', 'rezervace', 'pokoje', 'ubytovani', 'ubytování', 'apartmany', 'apartmány', 'prijezd', 'příjezd', 'parkovani', 'parkování', 'sluzby', 'služby', 'wellness', 'faq',
     'contact', 'rooms', 'accommodation', 'apartments', 'arrival', 'parking', 'services', 'booking',
 ];
 
@@ -96,6 +110,12 @@ const includesAny = (value: string, keywords: string[]) => {
     return keywords.some((keyword) => normalizedValue.includes(normalizeForMatch(keyword)));
 };
 const trimText = (value = '', maxLength = MAX_PREVIEW) => value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+const priorityRank = (value = '') => {
+    const normalizedValue = normalizeForMatch(value);
+    const index = priorityPageDefinitions.findIndex((definition) => definition.keywords.some((keyword) => normalizedValue.includes(normalizeForMatch(keyword))));
+
+    return index === -1 ? priorityPageDefinitions.length : index;
+};
 
 const safeUrl = (value = '') => {
     try {
@@ -168,11 +188,19 @@ const extractDiscoveredInternalLinks = (results: TavilyExtractResult[], baseUrl:
         if (existingUrls.includes(normalizedUrl)) continue;
         const searchable = `${parsed.pathname} ${rawValue}`.toLowerCase();
         const score = internalLinkKeywords.reduce((sum, keyword) => sum + (searchable.includes(keyword.toLowerCase()) ? 1 : 0), 0);
-        if (score > 0) candidates.push({ url: normalizedUrl, score });
+        if (score > 0) candidates.push({ url: normalizedUrl, score: score * 10 + (priorityPageDefinitions.length - Math.min(priorityRank(searchable), priorityPageDefinitions.length)) });
     }
 
-    return unique(candidates.sort((a, b) => b.score - a.score).map((candidate) => candidate.url)).slice(0, MAX_URLS - existingUrls.length);
+    return unique(candidates.sort((a, b) => b.score - a.score || priorityRank(a.url) - priorityRank(b.url)).map((candidate) => candidate.url)).slice(0, MAX_URLS - existingUrls.length);
 };
+
+const priorityPageLabel = (page: Pick<ExtractedPage, 'url' | 'title'>) => {
+    const searchable = `${page.url}\n${page.title}`;
+    return priorityPageDefinitions.find((definition) => includesAny(searchable, definition.keywords))?.label ?? null;
+};
+
+const priorityUrlGuesses = (websiteUrl: string, existingUrls: string[]) => buildFallbackGuessUrls(websiteUrl, existingUrls)
+    .sort((a, b) => priorityRank(a) - priorityRank(b));
 
 const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = [], skippedPages: SkippedPage[] = [], guessedUrlsUsed: string[] = []) => ({
     ...assessWebsiteOwnership({ url: candidateWebsiteUrl(request), notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'), sourceUrls: request.sourceUrls || [] }),
@@ -190,6 +218,9 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
     directoryContact: { emails: [], phones: [], contactPageUrl: null },
     contactOwnershipStatus: 'unknown' as const,
     websiteSignals: [],
+    extractedPriorityPages: [],
+    missedPriorityPages: priorityPageDefinitions.map((definition) => definition.label),
+    localExperienceSignals: [],
     arrivalSignals: [],
     parkingSignals: [],
     faqSignals: [],
@@ -266,6 +297,26 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         { label: 'Web verejne zminuje online check-in nebo self check-in', keywords: ['online check-in', 'self check-in', 'self checkin', 'automaticky check-in', 'keybox', 'schranka na klice'] },
         { label: 'Web zminuje QR nebo digitalni instrukce', keywords: ['qr', 'digitalni', 'digitální', 'online guide'] },
     ]);
+    const localExperienceSignals = signalMatches(content, [
+        { label: 'historické centrum Českého Krumlova', keywords: ['historicke centrum', 'historickem centru', 'centrum ceskeho krumlova', 'centrum českého krumlova'] },
+        { label: 'výhled na hrad a zámek', keywords: ['vyhled na hrad', 'výhled na hrad', 'hrad a zamek', 'hrad a zámek'] },
+        { label: 'zahrádka u kanálu od Krumlovského mlýna', keywords: ['zahradka u kanalu', 'zahrádka u kanálu', 'krumlovskeho mlyna', 'krumlovského mlýna'] },
+        { label: 'historické prvky domu', keywords: ['hradby', 'tramovy strop', 'trámový strop', 'drevene podlahy', 'dřevěné podlahy'] },
+        { label: 'Možnosti rekreace', keywords: ['moznosti rekreace', 'možnosti rekreace', 'rekreace.php'] },
+        { label: 'Zámek Český Krumlov', keywords: ['zamek cesky krumlov', 'zámek český krumlov'] },
+        { label: 'Fotoateliér Seidl', keywords: ['fotoatelier seidl', 'fotoateliér seidl'] },
+        { label: 'muzea', keywords: ['muzea'] },
+        { label: 'otáčivé divadlo', keywords: ['otacive divadlo', 'otáčivé divadlo'] },
+        { label: 'plavba vorů po Vltavě', keywords: ['plavba voru', 'plavba vorů', 'vltave', 'vltavě'] },
+        { label: 'Lipno', keywords: ['lipno'] },
+        { label: 'Kleť', keywords: ['klet', 'kleť'] },
+        { label: 'Rožmberk', keywords: ['rozmberk', 'rožmberk'] },
+        { label: 'Hluboká', keywords: ['hluboka', 'hluboká'] },
+        { label: 'Holašovice', keywords: ['holasovice', 'holašovice'] },
+    ]);
+    const extractedPriorityPages = unique(pages.map((page) => priorityPageLabel(page) ? page.url : '').filter(Boolean));
+    const extractedPriorityLabels = unique(pages.map((page) => priorityPageLabel(page) ?? '').filter(Boolean));
+    const missedPriorityPages = priorityPageDefinitions.map((definition) => definition.label).filter((label) => !extractedPriorityLabels.includes(label));
 
     const missingPublicInfoSignals: string[] = [];
     const suppressedMissingSignals: string[] = [];
@@ -320,6 +371,9 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         directoryContact: { ...directoryContact, contactPageUrl: ownership.websiteOwnershipStatus === 'official' ? null : contactPage },
         contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' as const : 'directory-contact' as const,
         websiteSignals,
+        extractedPriorityPages,
+        missedPriorityPages,
+        localExperienceSignals,
         arrivalSignals,
         parkingSignals,
         faqSignals,
@@ -423,7 +477,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const baseUrl = safeUrl(websiteUrl);
         const initialOutcome = await tavilyExtract(apiKey, initialUrls);
         const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
-        const guessedUrlsUsed = discoveredUrls.length === 0 ? buildFallbackGuessUrls(websiteUrl, initialUrls) : [];
+        const guessedUrlsUsed = priorityUrlGuesses(websiteUrl, [...initialUrls, ...discoveredUrls]).slice(0, Math.max(0, MAX_URLS - initialUrls.length - discoveredUrls.length));
         const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].filter((url) => !isAssetUrl(url)).slice(0, Math.max(0, MAX_URLS - initialUrls.length));
         const secondaryOutcome = secondaryUrls.length > 0 && elapsed(startedAt) < MAX_FUNCTION_MS - 4500
             ? await tavilyExtract(apiKey, secondaryUrls)

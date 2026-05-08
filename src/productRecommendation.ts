@@ -96,6 +96,8 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
             paidOfferShort: 'Guest Communication Setup',
             paidOfferDetails: leadPlaybook === 'restaurant-linked-stay'
                 ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, první večer, restaurace, Wi-Fi, kontakt a odjezd. Sekce se dají upravit podle typu pokoje/apartmánu a navázat na zprávy po rezervaci.'
+                : leadPlaybook === 'historic-local-experience-stay'
+                    ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, konkrétní lokální tipy a odjezd. Sekce se dají upravit podle typu apartmánu a navázat na zprávy po rezervaci.'
                 : 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, tipy v okolí a odjezd. U různých typů pobytu se dají informace upravit podle hosta a napojit na zprávy po rezervaci.',
         };
     }
@@ -169,6 +171,9 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteExtraction' | '
     } else if (leadPlaybook === 'family-local-experience') {
         recommendedProduct = 'guest-guide-starter';
         recommendedProductReason = 'Playbook family-local-experience nejlépe navazuje jednoduchým guest guide starterem s lokálními tipy a praktickými informacemi pro rodiny.';
+    } else if (leadPlaybook === 'historic-local-experience-stay') {
+        recommendedProduct = 'guest-communication-setup';
+        recommendedProductReason = 'Playbook historic-local-experience-stay má konkrétní lokální a historické signály, takže nejlepší návaznost je online průvodce a komunikace po rezervaci.';
     } else if (leadPlaybook === 'romantic-wellness-stay' || leadPlaybook === 'event-wedding-hotel') {
         recommendedProduct = 'guest-communication-setup';
         recommendedProductReason = `Playbook ${leadPlaybook} potřebuje komunikaci podle typu pobytu a očekávání hosta, proto dává smysl Guest Communication Setup.`;

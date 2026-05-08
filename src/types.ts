@@ -53,6 +53,7 @@ export type LeadPlaybook =
     | 'city-apartment-arrival'
     | 'restaurant-linked-stay'
     | 'family-local-experience'
+    | 'historic-local-experience-stay'
     | 'romantic-wellness-stay'
     | 'event-wedding-hotel'
     | 'basic-website-guest-guide'
@@ -201,6 +202,9 @@ export interface WebsiteExtractionResult {
     extractionStrategy?: 'homepage-first' | 'fallback-guesses' | 'legacy';
     discoveredInternalLinksCount?: number;
     guessedUrlsUsed?: string[];
+    extractedPriorityPages?: string[];
+    missedPriorityPages?: string[];
+    localExperienceSignals?: string[];
     pagesExtracted: WebsiteExtractedPage[];
     skippedPages: WebsiteSkippedPage[];
     validPagesCount: number;

@@ -253,12 +253,24 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
         ...(input.lead?.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
         ...(input.lead?.publicSignals ?? []),
     ].filter(Boolean).join('\n'));
-    const guideSections = [
+    const isKrumlovApartments = evidenceText.includes('krumlov') && (evidenceText.includes('dlouha 92') || evidenceText.includes('zahradka u kanalu') || evidenceText.includes('hrad a zamek'));
+    const displayNameForPaidStep = isKrumlovApartments ? 'Apartmánů Krumlov' : displayName;
+    const guideSections = isKrumlovApartments ? [
+        'příjezd do Dlouhé ulice',
+        'vstup do apartmánu',
+        'Wi-Fi',
+        'vybavení kuchyně',
+        'tipy v historickém centru',
+        'výhled na hrad',
+        'zahrádka u kanálu',
+        'kontakt',
+        'odjezd',
+    ].join(', ') : [
         'příjezd',
         evidenceText.includes('vlastni vchod') || evidenceText.includes('vstup') ? 'vstup do apartmánu' : 'vstup',
         evidenceText.includes('wi fi') || evidenceText.includes('wifi') ? 'Wi-Fi' : '',
         evidenceText.includes('kuchyn') || evidenceText.includes('kitchen') ? 'kuchyň a vybavení' : 'vybavení',
-        evidenceText.includes('krumlov') && evidenceText.includes('centrum') ? 'tipy v centru Krumlova' : '',
+        evidenceText.includes('krumlov') ? 'tipy v historickém centru' : '',
         evidenceText.includes('hrad') || evidenceText.includes('zamek') || evidenceText.includes('zámek') ? 'výhled na hrad' : '',
         'kontakt',
         'odjezd',
@@ -269,7 +281,7 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
     }
 
     if (recommendation?.recommendedProduct === 'guest-communication-setup') {
-        return sanitizeClientText(`Navazující placený krok může být jednoduchý online průvodce pro hosty ${displayName}: ${guideSections}. Host dostane odkaz nebo QR kód s praktickými informacemi před příjezdem; u různých typů pobytu se dají sekce upravit podle hosta a navázat na zprávy po rezervaci.`);
+        return sanitizeClientText(`Navazující placený krok může být jednoduchý online průvodce pro hosty ${displayNameForPaidStep}: ${guideSections}. Host dostane odkaz nebo QR kód s praktickými informacemi před příjezdem; u různých typů pobytu se dají sekce upravit podle hosta a navázat na zprávy po rezervaci.`);
     }
 
     if (recommendation) {
@@ -282,9 +294,11 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
 export function buildFallbackOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
     const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
-    const examples = signals.some((signal) => /restaurace|relax|parkovi|nabíjecí/i.test(signal))
-        ? 'příjezd, parkování, restauraci, relax nebo tipy před pobytem'
-        : 'příjezd, parkování, check-in a nejčastější dotazy';
+    const examples = signals.some((signal) => /historické centrum|hrad|zámek|Možnosti rekreace|Fotoateliér|muzea|Lipno|Kleť/i.test(signal))
+        ? 'příjezd, kontakt, vybavení apartmánu a tipy v okolí'
+        : signals.some((signal) => /restaurace|parkovi|nabíjecí/i.test(signal))
+            ? 'příjezd, kontakt, restauraci nebo doložené praktické služby'
+            : 'příjezd, kontakt, check-in a nejčastější dotazy';
 
     return sanitizeClientText(`Dobrý den,
 
@@ -302,9 +316,11 @@ David`);
 export function buildWebsiteOnlyOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
     const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
-    const examples = signals.some((signal) => /restaurace|relax|parkovi|nabíjecí/i.test(signal))
-        ? 'příjezd, parkování, restauraci, relax nebo tipy před pobytem'
-        : 'příjezd, parkování, check-in a nejčastější dotazy';
+    const examples = signals.some((signal) => /historické centrum|hrad|zámek|Možnosti rekreace|Fotoateliér|muzea|Lipno|Kleť/i.test(signal))
+        ? 'příjezd, kontakt, vybavení apartmánu a tipy v okolí'
+        : signals.some((signal) => /restaurace|parkovi|nabíjecí/i.test(signal))
+            ? 'příjezd, kontakt, restauraci nebo doložené praktické služby'
+            : 'příjezd, kontakt, check-in a nejčastější dotazy';
 
     return sanitizeClientText(`Dobrý den,
 
@@ -324,7 +340,7 @@ export function buildFallbackFollowUp(input: { leadName: string }) {
 
     return sanitizeClientText(`Dobrý den,
 
-jen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${displayName}, hlavně k příjezdu, parkování a častým otázkám hostů.
+jen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${displayName}, hlavně k příjezdu, kontaktu a častým otázkám hostů.
 
 Kdyby se vám to hodilo, rád pošlu krátké body.
 

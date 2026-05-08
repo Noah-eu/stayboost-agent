@@ -102,7 +102,8 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const hasWellness = hasAny(text, ['wellness', 'relax', 'sauna', 'spa']);
     const hasEvents = hasAny(text, ['svatba', 'svatebni', 'altan', 'konference', 'firemni', 'event']);
     const hasNearby = hasAny(text, ['karlstejn', 'berounka', 'hrad', 'okoli', 'nearby']);
-    const nearbyTitle = hasAny(text, ['krumlov']) ? 'Centrum Krumlova a okolí' : hasAny(text, ['karlstejn']) ? 'Karlštejn, Berounka a tipy v okolí' : 'Okolí a tipy';
+    const isKrumlov = hasAny(text, ['krumlov']);
+    const nearbyTitle = isKrumlov ? 'Centrum Krumlova a okolí' : hasAny(text, ['karlstejn']) ? 'Karlštejn, Berounka a tipy v okolí' : 'Okolí a tipy';
     const hasRooms = hasAny(text, ['pokoj', 'pokoje', 'room', 'rooms', 'vybaveni']);
     const hasWifi = hasAny(text, ['wi-fi', 'wifi', 'internet']);
     const hasRules = hasAny(text, ['pravidla', 'domovni rad', 'pobyt', 'no smoking', 'zakaz koureni']);
@@ -133,18 +134,18 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
         }),
         section({
             id: 'transport',
-            title: 'Doprava a parkování',
-            headline: 'Jak se k vám dostat a kde zaparkovat',
-            overview: 'Sekce shrnuje příjezd, parkování a praktické dopravní informace bez vymýšlení neveřejných instrukcí.',
+            title: hasParking ? 'Doprava a parkování' : 'Příjezd a orientace',
+            headline: hasParking ? 'Jak se k vám dostat a kde zaparkovat' : 'Jak se k vám dostat bez nejistoty',
+            overview: hasParking ? 'Sekce shrnuje příjezd, parkování a praktické dopravní informace bez vymýšlení neveřejných instrukcí.' : 'Sekce shrnuje příjezd a praktickou orientaci bez vymýšlení parkovacích benefitů.',
             groups: [
                 {
                     title: 'Veřejně zmíněné informace',
                     items: [
-                        hasParking ? 'Web zmiňuje parkování / parkoviště.' : '[DOPLNIT: parkování a příjezd autem]',
+                        hasParking ? 'Web zmiňuje parkování / parkoviště.' : '[DOPLNIT: příjezd a orientační bod ke vstupu]',
                         hasAny(text, ['nabijeci stanice', 'charging station', 'elektromobil']) ? 'Web zmiňuje nabíjecí stanici pro elektromobily.' : '',
                     ],
                 },
-                { title: 'Doplnit do hotového průvodce', items: ['[DOPLNIT: přesná adresa parkování / navigační bod]', '[DOPLNIT: instrukce pro příjezd veřejnou dopravou]'] },
+                { title: 'Doplnit do hotového průvodce', items: hasParking ? ['[DOPLNIT: přesná adresa parkování / navigační bod]', '[DOPLNIT: instrukce pro příjezd]'] : ['[DOPLNIT: přesný postup příjezdu]', '[DOPLNIT: kdy host volá nebo píše v den příjezdu]'] },
             ],
             sourceEvidence: unique([...(extraction?.parkingSignals ?? []), ...commonEvidence]),
         }),
@@ -302,6 +303,29 @@ export function createGuestGuideSecondEmail(lead: Lead, preview: GuestGuidePrevi
     const ideaBlock = ideas.length ? ideas.join('\n') : '1. [DOPLNIT: první konkrétní nápad]\n2. [DOPLNIT: druhý konkrétní nápad]\n3. [DOPLNIT: třetí konkrétní nápad]';
     const sectionList = preview.sections.map((guideSection) => guideSection.title).slice(0, 8).join(', ');
     const recommendation = recommendProductForLead(lead);
+    const text = normalize(extractionEvidenceText(lead));
+    const isKrumlov = hasAny(text, ['krumlov']);
+
+    if (isKrumlov) {
+        return sanitizeClientText(`Dobrý den,
+
+děkuji, posílám slíbené 3 krátké nápady. Berte to jen jako rychlý pohled zvenku.
+
+1. Příjezd do historického centra bez nejistoty
+U apartmánů v centru Krumlova může hostům pomoct krátký přehled ještě před příjezdem: Dlouhá 92, vstup do domu, kontakt v den příjezdu a co čekat po příjezdu.
+
+2. Využít příběh výhledu a historického domu
+Na webu působí silně výhled na hrad a zámek, zahrádka u kanálu od Krumlovského mlýna i historické prvky domu. Tyto věci by šly hostům připomenout ještě před pobytem.
+
+3. Udělat mini průvodce Krumlovem a okolím
+Na webu už máte stránku Možnosti rekreace. Z ní by šel udělat krátký přehled: co pěšky v Krumlově, kam s dětmi, co za kulturou a kam na výlet v okolí.
+
+Ukázka struktury průvodce: příjezd do Dlouhé ulice, vstup do apartmánu, Wi-Fi, vybavení kuchyně, tipy v historickém centru, výhled na hrad, zahrádka u kanálu, kontakt a odjezd.
+
+Kdyby vám to dávalo smysl, dokážu z toho připravit jednoduchou online stránku pro hosty. Tu můžete poslat odkazem po rezervaci nebo dát do QR kódu v apartmánu.
+
+David`);
+    }
 
     return sanitizeClientText(`Dobrý den,
 

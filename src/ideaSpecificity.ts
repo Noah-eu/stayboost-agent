@@ -33,7 +33,25 @@ type SignalKey =
     | 'roomTypes'
     | 'kitchen'
     | 'tram'
-    | 'cityArrival';
+    | 'cityArrival'
+    | 'historicCentre'
+    | 'castleView'
+    | 'krumlovCastle'
+    | 'canalGarden'
+    | 'historicElements'
+    | 'privateEntry'
+    | 'krumlovRecreation'
+    | 'seidlAtelier'
+    | 'museums'
+    | 'revolvingTheatre'
+    | 'vltavaRafting'
+    | 'lipno'
+    | 'klet'
+    | 'rozmberk'
+    | 'hluboka'
+    | 'holasovice'
+    | 'dlouhaAddress'
+    | 'babyCot';
 
 interface SpecificSignal {
     key: SignalKey;
@@ -85,14 +103,32 @@ const matchers: Array<{ key: SignalKey; label: string; keywords: string[] }> = [
     { key: 'kitchen', label: 'kuchyň v apartmánech', keywords: ['kuchyn', 'kitchen', 'kitchenette'] },
     { key: 'tram', label: 'tramvaj / městská doprava', keywords: ['tramvaj', 'tram', 'public transport', 'mhd'] },
     { key: 'cityArrival', label: 'městský příjezd', keywords: ['city centre', 'centrum prahy', 'centrum brna', 'seifertova', 'praha 3', 'zizkov'] },
+    { key: 'historicCentre', label: 'historické centrum', keywords: ['historicke centrum', 'historickem centru', 'stare mesto', 'staré město', 'centrum ceskeho krumlova', 'centrum českého krumlova'] },
+    { key: 'castleView', label: 'výhled na hrad a zámek', keywords: ['vyhled na hrad', 'výhled na hrad', 'vyhled na zamek', 'výhled na zámek', 'hrad a zamek', 'hrad a zámek'] },
+    { key: 'krumlovCastle', label: 'Zámek Český Krumlov', keywords: ['zamek cesky krumlov', 'zámek český krumlov', 'statni hrad a zamek cesky krumlov', 'státní hrad a zámek český krumlov'] },
+    { key: 'canalGarden', label: 'zahrádka u kanálu', keywords: ['zahradka u kanalu', 'zahrádka u kanálu', 'krumlovskeho mlyna', 'krumlovského mlýna', 'kanal od krumlovskeho mlyna'] },
+    { key: 'historicElements', label: 'historické prvky domu', keywords: ['hradby', 'tramovy strop', 'trámový strop', 'drevene podlahy', 'dřevěné podlahy', 'historicke prvky'] },
+    { key: 'privateEntry', label: 'vlastní vchod', keywords: ['vlastni vchod', 'vlastní vchod', 'mala predsinka', 'malá předsíňka'] },
+    { key: 'krumlovRecreation', label: 'Možnosti rekreace', keywords: ['moznosti rekreace', 'možnosti rekreace', 'rekreace.php', 'tipy v okoli', 'tipy v okolí', 'vylety', 'výlety'] },
+    { key: 'seidlAtelier', label: 'Fotoateliér Seidl', keywords: ['fotoatelier seidl', 'fotoateliér seidl', 'seidl'] },
+    { key: 'museums', label: 'muzea', keywords: ['muzea', 'museum', 'museums'] },
+    { key: 'revolvingTheatre', label: 'otáčivé divadlo', keywords: ['otacive divadlo', 'otáčivé divadlo'] },
+    { key: 'vltavaRafting', label: 'plavba vorů po Vltavě', keywords: ['plavba voru', 'plavba vorů', 'vltave', 'vltavě', 'voru po vltave'] },
+    { key: 'lipno', label: 'Lipno', keywords: ['lipno'] },
+    { key: 'klet', label: 'Kleť', keywords: ['klet', 'kleť'] },
+    { key: 'rozmberk', label: 'Rožmberk', keywords: ['rozmberk', 'rožmberk'] },
+    { key: 'hluboka', label: 'Hluboká', keywords: ['hluboka', 'hluboká'] },
+    { key: 'holasovice', label: 'Holašovice', keywords: ['holasovice', 'holašovice'] },
+    { key: 'dlouhaAddress', label: 'Dlouhá 92', keywords: ['dlouha 92', 'dlouhá 92'] },
+    { key: 'babyCot', label: 'dětská postýlka', keywords: ['detska postylka', 'dětská postýlka', 'pristylka', 'přistýlka'] },
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'nabijeni elektromobilu', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
     { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant', 'grill restaurant', 'bar ', ' menu ', 'snidane', 'snídaně'] },
     { key: 'breakfast', label: 'snídaně', keywords: ['snidane', 'snídaně', 'breakfast'] },
     { key: 'terrace', label: 'terasa', keywords: ['terasa', 'terrace'] },
-    { key: 'relax', label: 'relax centrum', keywords: ['relax centrum', 'relaxacni centrum', 'wellness', 'spa', 'sauna'] },
-    { key: 'spa', label: 'wellness / spa', keywords: ['wellness', 'spa', 'sauna', 'masaz', 'masáž'] },
+    { key: 'relax', label: 'relax centrum', keywords: ['relax centrum', 'relaxacni centrum', 'relaxační centrum'] },
+    { key: 'spa', label: 'wellness / spa', keywords: ['wellness', 'spa', 'sauna', 'masaz', 'masáž', 'virivka', 'vířivka', 'bazen', 'bazén', 'lazensky', 'lázeňský', 'koupelovy', 'koupelový'] },
     { key: 'wine', label: 'víno', keywords: ['vino', 'víno', 'vinny sklep', 'vinný sklep', 'wine'] },
     { key: 'view', label: 'výhledy', keywords: ['vyhled', 'výhled', 'views'] },
     { key: 'river', label: 'Berounka', keywords: ['berounka'] },
@@ -158,7 +194,8 @@ const playbookReason = (playbook: LeadPlaybook, signals: string[]) => {
         'restaurant-linked-stay': `Web má výrazný gastro signál (${joined}), proto nápady nemají být jen obecný guest guide.`,
         'city-apartment-arrival': `Evidence ukazuje městské ubytování nebo více typů pokojů/apartmánů (${joined}).`,
         'family-local-experience': `Web staví pobyt na rodině, okolí, zahradě nebo lokálních tipech (${joined}).`,
-        'romantic-wellness-stay': `Web zmiňuje romantiku, relax, wellness nebo párový pobyt (${joined}).`,
+        'historic-local-experience-stay': `Web ukazuje historický dům, centrum nebo konkrétní lokální tipy (${joined}).`,
+        'romantic-wellness-stay': `Web explicitně zmiňuje wellness, spa, saunu, relax centrum nebo podobnou službu (${joined}).`,
         'event-wedding-hotel': `Web pracuje s eventy, svatbami nebo firemními hosty (${joined}).`,
         'basic-website-guest-guide': 'Nejsou vidět výraznější konkrétní signály, proto zůstává základní guest-guide playbook.',
         'ops-audit': `Evidence ukazuje širší provozní témata (${joined}).`,
@@ -173,12 +210,14 @@ export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'st
     const restaurantSignals = firstSignals(signals, ['sklepRestaurant', 'restaurant', 'breakfast']);
     const citySignals = firstSignals(signals, ['zizkov', 'pragueCentre', 'brnoCentre', 'tram', 'cityArrival', 'roomTypes', 'kitchen']);
     const familySignals = firstSignals(signals, ['families', 'gardenGrill', 'quietPrivacy', 'barbora', 'jesuitCollege', 'kutnaHora', 'vrchlice', 'historicHouse']);
-    const wellnessSignals = firstSignals(signals, ['romantic', 'relax', 'spa', 'wine', 'view', 'terrace', 'castle']);
+    const historicLocalSignals = firstSignals(signals, ['historicCentre', 'castleView', 'krumlovCastle', 'canalGarden', 'historicElements', 'privateEntry', 'krumlovRecreation', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice', 'dlouhaAddress', 'kitchen', 'babyCot'], 8);
+    const wellnessSignals = firstSignals(signals, ['relax', 'spa']);
     const eventSignals = firstSignals(signals, ['wedding', 'conference']);
     const opsSignals = firstSignals(signals, ['parking', 'ev', 'contact']);
 
     if (restaurantSignals.length > 0) return { leadPlaybook: 'restaurant-linked-stay', leadPlaybookReason: playbookReason('restaurant-linked-stay', restaurantSignals), playbookSignals: restaurantSignals };
     if (eventSignals.length > 0) return { leadPlaybook: 'event-wedding-hotel', leadPlaybookReason: playbookReason('event-wedding-hotel', eventSignals), playbookSignals: eventSignals };
+    if (historicLocalSignals.length > 0 && wellnessSignals.length === 0) return { leadPlaybook: 'historic-local-experience-stay', leadPlaybookReason: playbookReason('historic-local-experience-stay', historicLocalSignals), playbookSignals: historicLocalSignals };
     if (wellnessSignals.length > 0) return { leadPlaybook: 'romantic-wellness-stay', leadPlaybookReason: playbookReason('romantic-wellness-stay', wellnessSignals), playbookSignals: wellnessSignals };
     if (familySignals.length > 0) return { leadPlaybook: 'family-local-experience', leadPlaybookReason: playbookReason('family-local-experience', familySignals), playbookSignals: familySignals };
     if (citySignals.length > 0) return { leadPlaybook: 'city-apartment-arrival', leadPlaybookReason: playbookReason('city-apartment-arrival', citySignals), playbookSignals: citySignals };
@@ -242,6 +281,33 @@ const familyLocalWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: Specifi
         firstSignals(signals, ['gardenGrill', 'quietPrivacy', 'vrchlice'], 5),
     ),
     roomTypeWin(lead, signals),
+];
+
+const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
+    makeWin(
+        'Příjezd do historického centra bez nejistoty',
+        `Evidence ukazuje ubytování v historickém centru s vlastním vstupem a dohledatelným kontaktem: ${evidenceFor(signals, ['historicCentre', 'dlouhaAddress', 'privateEntry', 'contact'], 'historické centrum a kontakt')}.`,
+        'Připravit krátký přehled pro hosty: adresa Dlouhá 92, jak se dostat ke vstupu, kdy volat, co čekat po příjezdu a co je potřeba vědět u apartmánů v centru Krumlova.',
+        evidenceFor(signals, ['dlouhaAddress', 'historicCentre', 'privateEntry', 'contact'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        'příjezd do historického centra s vlastním vstupem',
+        firstSignals(signals, ['dlouhaAddress', 'historicCentre', 'privateEntry', 'contact'], 5),
+    ),
+    makeWin(
+        'Využít příběh výhledu, zahrádky a historického domu',
+        `Silné části pobytu jsou atmosféra domu a místa: ${evidenceFor(signals, ['castleView', 'canalGarden', 'historicElements', 'quietPrivacy'], 'výhled, zahrádka a historický dům')}.`,
+        'Po rezervaci poslat hostům krátké „co si u nás nenechat ujít“: výhled na hrad a zámek, zahrádka u kanálu od Krumlovského mlýna, historické prvky domu, klidné prostředí.',
+        evidenceFor(signals, ['castleView', 'canalGarden', 'historicElements', 'quietPrivacy'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        'historický dům a konkrétní atmosféra pobytu',
+        firstSignals(signals, ['castleView', 'canalGarden', 'historicElements', 'quietPrivacy'], 5),
+    ),
+    makeWin(
+        'Mini průvodce Krumlovem a okolím',
+        `Web obsahuje lokální tipy pro hosty: ${evidenceFor(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], 'Možnosti rekreace a tipy v okolí')}.`,
+        'Z existující stránky Možnosti rekreace udělat přehled pro hosty: co pěšky v Krumlově, co s dětmi, kam za kulturou a kam na výlet v okolí.',
+        evidenceFor(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        'lokální průvodce z existující stránky Možnosti rekreace',
+        firstSignals(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], 8),
+    ),
 ];
 
 const romanticWellnessWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
@@ -322,6 +388,7 @@ const playbookWins = (playbook: LeadPlaybook, lead: Pick<Lead, 'websiteExtractio
     if (playbook === 'restaurant-linked-stay') return [cityOrientationWin(lead, signals), restaurantWin(lead, signals), roomTypeWin(lead, signals)];
     if (playbook === 'city-apartment-arrival') return [cityOrientationWin(lead, signals), roomTypeWin(lead, signals), restaurantWin(lead, signals)].filter((win) => win.usedSignals?.length);
     if (playbook === 'family-local-experience') return familyLocalWins(lead, signals);
+    if (playbook === 'historic-local-experience-stay') return historicLocalExperienceWins(lead, signals);
     if (playbook === 'romantic-wellness-stay') return romanticWellnessWins(lead, signals);
     if (playbook === 'event-wedding-hotel') return eventWeddingWins(lead, signals);
     return basicGuestGuideWins(lead, signals);
@@ -379,6 +446,7 @@ const conceptForIdea = (idea: QuickWin) => {
     if (/restaur|sklep|snidan|menu|jidlo/.test(text)) return 'restaurant';
     if (/typ pobytu|typ poko|apartman|kuchyn|studio|rodinny apartman/.test(text)) return 'room-type';
     if (/zizkov|praha|brno|tram|mesto|ulice|seifertova|prvni vecer/.test(text)) return 'city-orientation';
+    if (/krumlov|hrad|zamek|zahrad|kanal|muze|seidl|divadlo|vltav|lipno|klet|rozmberk|hluboka|holasovic|historick/.test(text)) return 'historic-local';
     if (/rodin|det|zahrad|gril|pamat|kutna hora|barbor|okol|pesky|vrchlice/.test(text)) return 'family-local';
     if (/romant|wellness|relax|spa|vino|par|vyhled/.test(text)) return 'romantic-wellness';
     if (/svat|konfer|firemn|event|akce/.test(text)) return 'event';
@@ -410,11 +478,15 @@ export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuick
         || concepts.filter((concept) => arrivalOnlyConcepts.has(concept)).length === ideas.length;
     const freeIdeasDiversityScore = ideas.length ? Math.round((uniqueConceptCount / ideas.length) * 100) : 0;
     const playbook = determineLeadPlaybook(lead);
+    const localExperienceExtractionReady = playbook.leadPlaybook !== 'historic-local-experience-stay'
+        || !(lead.websiteExtraction?.missedPriorityPages ?? []).includes('Možnosti rekreace')
+        || (lead.websiteExtraction?.localExperienceSignals?.length ?? 0) >= 3;
     const freeIdeasReady = ideas.length === 3
         && genericFreeIdeasCount <= 1
         && candidateSpecificSignalsUsed.length >= 3
         && positiveSignalsUsedCount >= 2
         && missingSignalsUsedCount <= 1
+        && localExperienceExtractionReady
         && !repeatedTemplateWarning
         && !repeatedConceptWarning
         && ideas.filter((idea) => idea.candidateSpecificity === 'specific').length >= 2;
@@ -437,5 +509,6 @@ export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuick
         repeatedConceptWarning,
         positiveSignalsUsedCount,
         missingSignalsUsedCount,
+        localExperienceExtractionReady,
     };
 };

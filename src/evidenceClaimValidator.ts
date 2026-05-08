@@ -14,9 +14,9 @@ const normalize = (value = '') => value
 const unique = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 
 const claimGroups = [
-    { label: 'tramvaj / městská doprava', claim: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i, evidence: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport|doprava)\b/i },
+    { label: 'tramvaj / městská doprava', claim: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i, evidence: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i },
     { label: 'restaurace', claim: /\b(restaurace|restaurant|bistro|bar|menu)\b/i, evidence: /\b(restaurace|restaurant|bistro|bar|menu|snídaně|snidane)\b/i },
-    { label: 'wellness / relax', claim: /\b(wellness|relax|spa|sauna|mas[aá]ž|masaz)\b/i, evidence: /\b(wellness|relax|spa|sauna|mas[aá]ž|masaz)\b/i },
+    { label: 'wellness / relax', claim: /\b(wellness|relax|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i, evidence: /\b(wellness|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|relax\s+centrum|relaxačn[ií]\s+centrum|relaxacni\s+centrum|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i },
     { label: 'parkoviště', claim: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i, evidence: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i },
     { label: 'snídaně', claim: /\b(sn[ií]daně|snidane|breakfast)\b/i, evidence: /\b(sn[ií]daně|snidane|breakfast)\b/i },
     { label: 'svatby', claim: /\b(svatba|svatby|svatebn[ií]|wedding)\b/i, evidence: /\b(svatba|svatby|svatebn[ií]|wedding)\b/i },
@@ -47,10 +47,11 @@ const quickWinText = (wins?: QuickWin[]) => (wins ?? []).map((win) => [
     ...(win.usedSignals ?? []),
 ].join('\n')).join('\n');
 
-export const evidenceTextForLead = (lead: Partial<Lead>) => [
+export const evidenceTextForLead = (lead: Partial<Lead> & { confirmedSignals?: string[] }) => [
     lead.websiteExtraction?.summary,
     ...(lead.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
     ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content]),
+    ...(lead.confirmedSignals ?? []),
 ].filter(Boolean).join('\n');
 
 export const clientClaimTextForLead = (lead: Partial<Lead>) => [

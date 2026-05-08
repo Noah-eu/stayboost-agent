@@ -195,6 +195,7 @@ const leadPlaybookLabels = {
     'city-apartment-arrival': 'City apartment arrival',
     'restaurant-linked-stay': 'Restaurant-linked stay',
     'family-local-experience': 'Family local experience',
+    'historic-local-experience-stay': 'Historic local experience stay',
     'romantic-wellness-stay': 'Romantic wellness stay',
     'event-wedding-hotel': 'Event / wedding hotel',
     'basic-website-guest-guide': 'Basic website guest guide',
@@ -635,6 +636,7 @@ const clientOutputReadiness = (lead: Lead) => {
         ideaDiagnostics.genericFreeIdeasCount > 0 ? `${ideaDiagnostics.genericFreeIdeasCount} nápad je generic / vyžaduje kontrolu` : '',
         ideaDiagnostics.repeatedTemplateWarning ? 'free ideas opakují šablonu' : '',
         ideaDiagnostics.repeatedConceptWarning ? 'free ideas opakují stejný koncept' : '',
+        ideaDiagnostics.localExperienceExtractionReady === false ? 'Chybí stránka Možnosti rekreace, která je pro tento lead důležitá.' : '',
         evidenceDiagnostics.unsupportedClientClaims.length > 0 ? `chybí evidence pro klientské signály: ${evidenceDiagnostics.unsupportedClientClaims.join(', ')}` : '',
         evidenceDiagnostics.unsupportedSignalClaims.length > 0 ? `chybí evidence pro interní signály: ${evidenceDiagnostics.unsupportedSignalClaims.join(', ')}` : '',
         !contactQuality.contactReady ? 'kontakt není připravený' : '',
@@ -689,6 +691,7 @@ const workflowNextAction = (lead: Lead) => {
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
 
     if (lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official')) return 'needs-official-website';
+    if (ideaDiagnostics.localExperienceExtractionReady === false) return 'needs-extraction-review';
     if (lead.evidenceClaimReady === false) return 'needs-evidence-review';
     if (lead.websiteExtraction && contactQuality.emailSource === 'discovery-fallback') return contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review';
     if (lead.websiteExtraction && !contactQuality.contactReady) return 'needs-contact-review';
@@ -903,6 +906,9 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         extractionStrategy: lead.websiteExtraction.extractionStrategy ?? 'legacy',
         discoveredInternalLinksCount: lead.websiteExtraction.discoveredInternalLinksCount ?? 0,
         guessedUrlsUsed: lead.websiteExtraction.guessedUrlsUsed ?? [],
+        extractedPriorityPages: lead.websiteExtraction.extractedPriorityPages ?? [],
+        missedPriorityPages: lead.websiteExtraction.missedPriorityPages ?? [],
+        localExperienceSignals: lead.websiteExtraction.localExperienceSignals ?? [],
         pagesExtracted: validPagesExtracted,
         skippedPages: normalizedSkippedPages,
         validPagesCount: validPagesExtracted.length,
@@ -2582,7 +2588,7 @@ function LeadFinderPanel({
                     <div className="scope-note error-note">
                         <strong>{session.message}</strong>
                         <span>Zkontroluj Netlify Functions logs pro discover-leads.</span>
-                        <span>Ověř TAVILY_API_KEY.</span>
+                        <span>Ověř konfiguraci discovery provideru.</span>
                         <span>Zkus menší max výsledků.</span>
                     </div>
                 ) : null}
@@ -2970,7 +2976,7 @@ function AgentDiagnosticBox({ diagnostic }: { diagnostic?: LeadAgentDiagnostic }
             {typeof diagnostic.timeoutBudgetMs === 'number' ? <span>Timeout budget: {diagnostic.timeoutBudgetMs} ms</span> : null}
             {typeof diagnostic.skippedHeavyEnrichment === 'boolean' ? <span>Skipped heavy enrichment: {diagnostic.skippedHeavyEnrichment ? 'true' : 'false'}</span> : null}
             {diagnostic.debugId ? <span>Debug ID: {diagnostic.debugId}</span> : null}
-            {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>OpenAI key: {diagnostic.hasOpenAIKey ? 'OK' : 'chybi'}</span> : null}
+            {typeof diagnostic.hasOpenAIKey === 'boolean' ? <span>AI provider: {diagnostic.hasOpenAIKey ? 'configured' : 'missing config'}</span> : null}
             {diagnostic.model ? <span>Model: {diagnostic.model}</span> : null}
             {diagnostic.rawOutputKind ? <span>Raw output kind: {diagnostic.rawOutputKind}</span> : null}
             {diagnostic.sanitizedOutputSample || diagnostic.sanitizedSample ? <span>Sanitized sample: {diagnostic.sanitizedOutputSample || diagnostic.sanitizedSample}</span> : null}
@@ -2989,8 +2995,8 @@ function AgentHealthBox({ health, message }: { health?: LeadAgentHealth; message
             {health ? (
                 <>
                     <span>Runtime: {health.runtime}</span>
-                    <span>Tavily key: {health.hasTavilyKey ? 'OK' : 'chybi'}</span>
-                    <span>OpenAI key: {health.hasOpenAIKey ? 'OK' : 'chybi'}</span>
+                    <span>Discovery provider: {health.hasTavilyKey ? 'configured' : 'missing config'}</span>
+                    <span>AI provider: {health.hasOpenAIKey ? 'configured' : 'missing config'}</span>
                     <span>Model: {health.openAIModel || 'nenastaveno'}</span>
                     <span>Timestamp: {health.timestamp}</span>
                 </>
