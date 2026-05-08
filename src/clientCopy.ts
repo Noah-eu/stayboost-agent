@@ -248,16 +248,35 @@ export function buildFreeIdeaTeaser(input: { leadName: string }) {
 export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<typeof recommendProductForLead>[0] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
     const recommendation = input.lead ? recommendProductForLead(input.lead) : undefined;
+    const evidenceText = normalizeForMatch([
+        input.lead?.websiteExtraction?.summary,
+        ...(input.lead?.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
+        ...(input.lead?.publicSignals ?? []),
+    ].filter(Boolean).join('\n'));
+    const guideSections = [
+        'příjezd',
+        evidenceText.includes('vlastni vchod') || evidenceText.includes('vstup') ? 'vstup do apartmánu' : 'vstup',
+        evidenceText.includes('wi fi') || evidenceText.includes('wifi') ? 'Wi-Fi' : '',
+        evidenceText.includes('kuchyn') || evidenceText.includes('kitchen') ? 'kuchyň a vybavení' : 'vybavení',
+        evidenceText.includes('krumlov') && evidenceText.includes('centrum') ? 'tipy v centru Krumlova' : '',
+        evidenceText.includes('hrad') || evidenceText.includes('zamek') || evidenceText.includes('zámek') ? 'výhled na hrad' : '',
+        'kontakt',
+        'odjezd',
+    ].filter(Boolean).join(', ');
 
     if (recommendation?.recommendedProduct === 'skip') {
         return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, nechal bych to zatím bez placené nabídky. ${recommendation.paidOfferDetails}`);
     }
 
-    if (recommendation) {
-        return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být ${recommendation.paidOfferDetails} Pro ${displayName} bych to pojal jako ${recommendation.paidOfferShort}. Když ne, vůbec se nic neděje.`);
+    if (recommendation?.recommendedProduct === 'guest-communication-setup') {
+        return sanitizeClientText(`Navazující placený krok může být jednoduchý online průvodce pro hosty ${displayName}: ${guideSections}. Host dostane odkaz nebo QR kód s praktickými informacemi před příjezdem; u různých typů pobytu se dají sekce upravit podle hosta a navázat na zprávy po rezervaci.`);
     }
 
-    return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, parkování, check-in, kontakt a FAQ pro ${displayName}. Když ne, vůbec se nic neděje.`);
+    if (recommendation) {
+        return sanitizeClientText(`Navazující placený krok může být ${recommendation.paidOfferDetails} Pro ${displayName} bych to pojal jako ${recommendation.paidOfferShort}.`);
+    }
+
+    return sanitizeClientText(`Navazující placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, check-in, kontakt a FAQ pro ${displayName}.`);
 }
 
 export function buildFallbackOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
@@ -307,7 +326,7 @@ export function buildFallbackFollowUp(input: { leadName: string }) {
 
 jen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${displayName}, hlavně k příjezdu, parkování a častým otázkám hostů.
 
-Pokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.
+Kdyby se vám to hodilo, rád pošlu krátké body.
 
 David`);
 }

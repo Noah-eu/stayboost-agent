@@ -95,8 +95,8 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
         return {
             paidOfferShort: 'Guest Communication Setup',
             paidOfferDetails: leadPlaybook === 'restaurant-linked-stay'
-                ? 'Úprava předpříjezdové komunikace a jednoduchý online průvodce pro různé typy hostů: příjezd, první večer, restaurace a informace podle typu pokoje/apartmánu.'
-                : 'Úprava předpříjezdové komunikace a jednoduchý online průvodce pro různé typy hostů: příjezd, program pobytu, služby a informace podle typu hosta.',
+                ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, první večer, restaurace, Wi-Fi, kontakt a odjezd. Sekce se dají upravit podle typu pokoje/apartmánu a navázat na zprávy po rezervaci.'
+                : 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, tipy v okolí a odjezd. U různých typů pobytu se dají informace upravit podle hosta a napojit na zprávy po rezervaci.',
         };
     }
 

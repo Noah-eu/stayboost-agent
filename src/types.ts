@@ -59,7 +59,9 @@ export type LeadPlaybook =
     | 'ops-audit'
     | 'skip';
 
-export type GuestGuidePreviewStatus = 'not-created' | 'created' | 'needs-review';
+export type GuestGuidePreviewStatus = 'not-created' | 'created' | 'needs-review' | 'draft-needs-review';
+
+export type ClientOutputStatus = 'ready' | 'draft-needs-review';
 
 export type GuestGuideLanguage = 'cs' | 'en';
 
@@ -87,7 +89,7 @@ export interface ContactQuality {
     validPhones: string[];
     rejectedPhones: string[];
     emailSource: 'website' | 'discovery-fallback' | 'missing';
-    phoneSource: 'website' | 'missing';
+    phoneSource: 'website' | 'website-and-discovery' | 'discovery-fallback' | 'missing';
     contactReady: boolean;
 }
 
@@ -360,6 +362,11 @@ export interface Lead {
     freeIdeaPurpose?: string;
     paidOfferShort?: string;
     paidOfferDetails?: string;
+    clientOutputStatus?: ClientOutputStatus;
+    notReadyReasons?: string[];
+    unsupportedClientClaims?: string[];
+    unsupportedSignalClaims?: string[];
+    evidenceClaimReady?: boolean;
     guestGuidePreviewStatus?: GuestGuidePreviewStatus;
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;

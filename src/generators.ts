@@ -175,7 +175,7 @@ export function generateFollowUp(lead: Lead) {
 
 jen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k ${topic}.
 
-Pokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.
+Kdyby se vám to hodilo, rád pošlu krátké body.
 
 David`, 85);
 }

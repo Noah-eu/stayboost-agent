@@ -1,4 +1,5 @@
 import { sanitizeClientText } from './clientCopy';
+import { recommendProductForLead } from './productRecommendation';
 import type { GuestGuidePreview, GuestGuideSection, Lead, QuickWin, WebsiteExtractionResult } from './types';
 
 const placeholderCheckIn = '[DOPLNIT: čas check-inu]';
@@ -101,6 +102,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const hasWellness = hasAny(text, ['wellness', 'relax', 'sauna', 'spa']);
     const hasEvents = hasAny(text, ['svatba', 'svatebni', 'altan', 'konference', 'firemni', 'event']);
     const hasNearby = hasAny(text, ['karlstejn', 'berounka', 'hrad', 'okoli', 'nearby']);
+    const nearbyTitle = hasAny(text, ['krumlov']) ? 'Centrum Krumlova a okolí' : hasAny(text, ['karlstejn']) ? 'Karlštejn, Berounka a tipy v okolí' : 'Okolí a tipy';
     const hasRooms = hasAny(text, ['pokoj', 'pokoje', 'room', 'rooms', 'vybaveni']);
     const hasWifi = hasAny(text, ['wi-fi', 'wifi', 'internet']);
     const hasRules = hasAny(text, ['pravidla', 'domovni rad', 'pobyt', 'no smoking', 'zakaz koureni']);
@@ -205,10 +207,10 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
         sections.push(section({
             id: 'nearby',
             title: 'Okolí a tipy',
-            headline: 'Karlštejn, Berounka a tipy v okolí',
+            headline: nearbyTitle,
             overview: 'Sekce může hostům připomenout nejsilnější důvody pobytu a praktické tipy bez nutnosti dalšího hledání.',
             groups: [
-                { title: 'Signály z webu', items: [hasAny(text, ['karlstejn']) ? 'Web zmiňuje Karlštejn.' : '', hasAny(text, ['berounka']) ? 'Web zmiňuje Berounku.' : '', hasAny(text, ['hrad']) ? 'Web zmiňuje hrad / okolí hradu.' : ''] },
+                { title: 'Signály z webu', items: [hasAny(text, ['krumlov']) ? 'Web zmiňuje Český Krumlov.' : '', hasAny(text, ['karlstejn']) ? 'Web zmiňuje Karlštejn.' : '', hasAny(text, ['berounka']) ? 'Web zmiňuje Berounku.' : '', hasAny(text, ['hrad', 'zamek']) ? 'Web zmiňuje hrad / zámek.' : ''] },
                 { title: 'Doplnit do průvodce', items: ['[DOPLNIT: 3 až 5 doporučených míst v okolí]', '[DOPLNIT: sezónní tipy / délka procházky / doprava]'] },
             ],
             sourceEvidence: commonEvidence,
@@ -298,19 +300,20 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
 export function createGuestGuideSecondEmail(lead: Lead, preview: GuestGuidePreview = createGuestGuidePreview(lead)) {
     const ideas = quickWinLines(lead);
     const ideaBlock = ideas.length ? ideas.join('\n') : '1. [DOPLNIT: první konkrétní nápad]\n2. [DOPLNIT: druhý konkrétní nápad]\n3. [DOPLNIT: třetí konkrétní nápad]';
-    const sectionList = preview.sections.map((guideSection) => guideSection.title.toLowerCase()).join(', ');
+    const sectionList = preview.sections.map((guideSection) => guideSection.title).slice(0, 8).join(', ');
+    const recommendation = recommendProductForLead(lead);
 
     return sanitizeClientText(`Dobrý den,
 
-děkuji, posílám slíbené 3 krátké nápady.
-
-Beru to opravdu jen jako ukázku pohledu zvenku. U vašeho ubytování mi dává smysl hlavně jednoduchý online průvodce pro hosty před příjezdem - ne kvůli tomu, že by bylo něco špatně, ale aby měli hosté praktické informace na jednom místě.
+děkuji, posílám slíbené 3 krátké nápady. Berte to jen jako rychlý pohled zvenku.
 
 ${ideaBlock}
 
-Připravil jsem si i jednoduchý návrh struktury takového průvodce: ${sectionList}.
+Ukázka struktury online průvodce: ${sectionList}.
 
-Pokud by vám to dávalo smysl, můžeme z toho udělat hotovou online stránku / QR průvodce pro hosty za úplatu.
+Online průvodce je jednoduchá stránka pro hosty před příjezdem. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, tipy v okolí a odjezd. Sekce se dají upravit podle typu pobytu a napojit na zprávy po rezervaci.
+
+Navazující placený krok může být ${recommendation.paidOfferShort}: ${recommendation.paidOfferDetails}
 
 David`);
 }
