@@ -150,6 +150,7 @@ const emptyLead = (): Lead => ({
         rejectedPhones: [],
         emailSource: 'missing',
         phoneSource: 'missing',
+        addressSource: 'missing',
         contactReady: false,
     },
     websiteOwnershipStatus: 'unknown',
@@ -196,6 +197,7 @@ const leadPlaybookLabels = {
     'restaurant-linked-stay': 'Restaurant-linked stay',
     'family-local-experience': 'Family local experience',
     'historic-local-experience-stay': 'Historic local experience stay',
+    'social-profile-web-presence': 'Social profile web presence',
     'romantic-wellness-stay': 'Romantic wellness stay',
     'event-wedding-hotel': 'Event / wedding hotel',
     'basic-website-guest-guide': 'Basic website guest guide',
@@ -231,33 +233,56 @@ const discoveryPhoneText = (lead: Pick<Lead, 'sourceMaterials' | 'notes'>) => [
     lead.notes,
     ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content]),
 ].filter(Boolean).join('\n');
+const extractAddressFromEvidence = (text = '') => text.match(/Pod\s+Kamenem\s+170(?:,\s*Český\s+Krumlov|,\s*Cesky\s+Krumlov)?/i)?.[0]
+    || text.match(/[A-ZÁ-Ž][A-Za-zÁ-ž.]+(?:\s+[A-ZÁ-Ž]?[A-Za-zÁ-ž.]+){0,2}\s+\d{1,4},\s*(?:Český|Cesky)\s+Krumlov/i)?.[0]
+    || '';
+const isSocialOwnershipStatus = (status?: string) => ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(status ?? '');
 const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction' | 'sourceMaterials' | 'notes'>, rejectedPhones: string[] = []): ContactQuality => {
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? 'official';
     const websitePhones = lead.websiteExtraction?.contact.phones ?? [];
-    const discoveryPhones = extractValidPhones(discoveryPhoneText(lead));
+    const evidenceText = discoveryPhoneText(lead);
+    const discoveryPhones = extractValidPhones(evidenceText);
     const validWebsitePhones = uniqueStrings(websitePhones.filter((phone) => isLikelyPhoneNumber(phone)));
     const validPhones = mergePhones(validWebsitePhones, discoveryPhones);
     const allRejectedPhones = uniqueStrings([...rejectedPhones, ...websitePhones.filter((phone) => !isLikelyPhoneNumber(phone)), ...extractRejectedPhones(discoveryPhoneText(lead))]);
+    const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map(normalizeEmail).filter(validEmail));
+    const fallbackEmail = normalizeEmail(lead.email || '');
+    const socialEmails = uniqueStrings([...(evidenceText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []).map(normalizeEmail), fallbackEmail].filter(validEmail));
+    const address = extractAddressFromEvidence(evidenceText);
+    if (isSocialOwnershipStatus(ownershipStatus)) {
+        return {
+            validEmails: socialEmails,
+            validPhones,
+            rejectedPhones: allRejectedPhones,
+            address,
+            emailSource: socialEmails.length > 0 ? 'search-or-social-profile' : 'missing',
+            phoneSource: validPhones.length > 0 ? 'search-or-social-profile' : 'missing',
+            addressSource: address ? 'search-or-social-profile' : 'missing',
+            contactReady: socialEmails.length > 0 || validPhones.length > 0,
+        };
+    }
     if (ownershipStatus !== 'official') {
         return {
             validEmails: [],
             validPhones: [],
             rejectedPhones: allRejectedPhones,
+            address,
             emailSource: 'missing',
             phoneSource: 'missing',
+            addressSource: address ? 'search-or-social-profile' : 'missing',
             contactReady: false,
         };
     }
-    const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map(normalizeEmail).filter(validEmail));
-    const fallbackEmail = normalizeEmail(lead.email || '');
     const validEmails = websiteEmails.length > 0 ? websiteEmails : validEmail(fallbackEmail) ? [fallbackEmail] : [];
 
     return {
         validEmails,
         validPhones,
         rejectedPhones: allRejectedPhones,
+        address,
         emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
         phoneSource: validWebsitePhones.length > 0 && discoveryPhones.length > 0 ? 'website-and-discovery' : validWebsitePhones.length > 0 ? 'website' : discoveryPhones.length > 0 ? 'discovery-fallback' : 'missing',
+        addressSource: address ? 'search-or-social-profile' : 'missing',
         contactReady: validEmails.length > 0 || validPhones.length > 0,
     };
 };
@@ -304,6 +329,10 @@ const websiteExtractionSummary = (leadName: string, extraction: WebsiteExtractio
     const invalidCount = extraction.invalidPagesCount ?? extraction.skippedPages.length;
     const validLabel = validCount === 1 ? 'validní stránka' : validCount > 1 && validCount < 5 ? 'validní stránky' : 'validních stránek';
     const skippedLabel = invalidCount === 1 ? 'neplatná/404 stránka přeskočena' : invalidCount > 1 && invalidCount < 5 ? 'neplatné/404 stránky přeskočeny' : 'neplatných/404 stránek přeskočeno';
+
+    if (isSocialOwnershipStatus(extraction.websiteOwnershipStatus)) {
+        return `${leadName || 'Kandidat'}: zdroj je sociální profil / veřejná prezentace, ne vlastní web. Validní stránky provozu: ${validCount}. Kontakt: ${extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0 ? 'nalezen ze social/search evidence' : 'nenalezen'}.`;
+    }
 
     return `${leadName || 'Kandidat'}: přečteny ${validCount} ${validLabel} vlastního webu, ${invalidCount} ${skippedLabel}. Kontakt: ${extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${extraction.setupOpportunitySignals.length}. Fix signály: ${extraction.fixOpportunitySignals.length}.`;
 };
@@ -390,7 +419,9 @@ const analyzedLeadNotes = (lead: Lead, extraction: WebsiteExtractionResult) => {
     const provider = lead.agentAnalysisProvider === 'openai' ? 'OpenAI analýzy' : 'agentní analýzy';
     const discovery = lead.isDemoLead ? 'demo hledání' : 'reálného Tavily hledání';
 
-    return `Lead vznikl z ${discovery}, website extraction a ${provider}. Vlastní web byl přečten: ${validCount} validní stránky, ${invalidCount} neplatné/404 stránky přeskočeny. Kontakt nalezen: ${contact}. Doporučený úhel: guest guide / předpříjezdové informace.`;
+    return isSocialOwnershipStatus(extraction.websiteOwnershipStatus)
+        ? `Lead vznikl z ${discovery}, social/search evidence a ${provider}. Vlastní web nebyl potvrzen. Kontakt nalezen: ${contact}. Doporučený úhel: jednoduchý web / veřejná prezentace.`
+        : `Lead vznikl z ${discovery}, website extraction a ${provider}. Vlastní web byl přečten: ${validCount} validní stránky, ${invalidCount} neplatné/404 stránky přeskočeny. Kontakt nalezen: ${contact}. Doporučený úhel: guest guide / předpříjezdové informace.`;
 };
 
 const softenQuickWinWhy = (quickWin: QuickWin): QuickWin => {
@@ -422,6 +453,7 @@ const withProductRecommendation = (lead: Lead): Lead => {
         freeIdeaPurpose: sanitizeClientText(recommendation.freeIdeaPurpose),
         paidOfferShort: sanitizeClientText(recommendation.paidOfferShort),
         paidOfferDetails: sanitizeClientText(recommendation.paidOfferDetails),
+        targetOffer: recommendation.recommendedProduct === 'simple-website-starter' ? 'simple-website' : lead.targetOffer,
     };
 };
 
@@ -473,6 +505,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     });
     const rawValidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => isLikelyPhoneNumber(phone)));
     const removedInvalidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => !isLikelyPhoneNumber(phone)));
+    const isSocialSource = isSocialOwnershipStatus(ownership.websiteOwnershipStatus);
     const directoryContact = ownership.websiteOwnershipStatus === 'official'
         ? extraction.directoryContact ?? { emails: [], phones: [], contactPageUrl: null }
         : {
@@ -480,7 +513,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
             phones: uniqueStrings([...(extraction.directoryContact?.phones ?? []), ...rawValidPhones]),
             contactPageUrl: extraction.directoryContact?.contactPageUrl ?? extraction.contact.contactPageUrl,
         };
-    const officialContact = ownership.websiteOwnershipStatus === 'official'
+    const officialContact = ownership.websiteOwnershipStatus === 'official' || isSocialSource
         ? { ...extraction.contact, phones: rawValidPhones }
         : { emails: [], phones: [], contactPageUrl: null };
     const contactQuality = contactQualityForLead({ ...lead, websiteExtraction: { ...extraction, ...ownership, contact: officialContact } }, removedInvalidPhones);
@@ -490,7 +523,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         ...ownership,
         contact: { ...officialContact, emails: contactQuality.validEmails, phones: contactQuality.validPhones },
         directoryContact,
-        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' : 'directory-contact',
+        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' : isSocialSource ? 'source-contact' : 'directory-contact',
         skippedAssetUrls: uniqueStrings([...(extraction.skippedAssetUrls ?? []), ...assetPages.map((page) => page.url), ...(lead.publicLinks ?? []).map((link) => link.url).filter(isAssetUrl)]),
         pagesExtracted: extraction.pagesExtracted.filter((page) => !isInvalidExtractedPage(page)).map((page) => ({
             ...page,
@@ -509,11 +542,12 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
 
     const hasWebsiteEmail = normalizedExtraction.contact.emails.length > 0;
     const cleanContactSignals = [
-        ...normalizedExtraction.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`),
-        ...normalizedExtraction.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`),
+        ...normalizedExtraction.contact.emails.map((email) => isSocialSource ? `E-mail nalezen z veřejného profilu/search evidence: ${email}` : `E-mail nalezen na vlastním webu: ${email}`),
+        ...normalizedExtraction.contact.phones.map((phone) => isSocialSource ? `Telefon nalezen z veřejného profilu/search evidence: ${phone}` : `Telefon nalezen na vlastním webu: ${phone}`),
     ];
     const nextPublicSignals = uniqueStrings([
-        ...normalizedExtraction.websiteSignals,
+        ...normalizedExtraction.websiteSignals.filter((signal) => !isSocialSource || !/vlastni|vlastní.*web/i.test(signal)),
+        isSocialSource ? 'Veřejný sociální profil provozu' : '',
         ...cleanContactSignals,
         ...normalizedExtraction.setupOpportunitySignals,
         ...normalizedExtraction.fixOpportunitySignals,
@@ -566,6 +600,13 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         websiteExtraction: normalizedExtraction,
         contactQuality,
         websiteOwnershipStatus: normalizedExtraction.websiteOwnershipStatus,
+        sourceUrlClassification: normalizedExtraction.sourceUrlClassification,
+        socialProfileStatus: normalizedExtraction.socialProfileStatus,
+        ownedWebsiteDetected: normalizedExtraction.ownedWebsiteDetected,
+        needsOwnedWebsite: normalizedExtraction.needsOwnedWebsite,
+        needsScreenshotAnalysis: isSocialSource,
+        analysisSource: normalizedExtraction.analysisSource,
+        extractionAllowedForWebsiteAudit: normalizedExtraction.extractionAllowedForWebsiteAudit,
         websiteOwnershipReason: normalizedExtraction.websiteOwnershipReason,
         officialWebsiteCandidateUrl: normalizedExtraction.officialWebsiteCandidateUrl,
         directoryExtractedCandidates: normalizedExtraction.directoryExtractedCandidates,
@@ -689,7 +730,9 @@ const workflowNextAction = (lead: Lead) => {
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
+    const isSocialSource = isSocialOwnershipStatus(ownershipStatus);
 
+    if (isSocialSource) return contactQuality.contactReady ? 'ready-to-review' : 'needs-owned-website-or-screenshot-review';
     if (lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official')) return 'needs-official-website';
     if (ideaDiagnostics.localExperienceExtractionReady === false) return 'needs-extraction-review';
     if (lead.evidenceClaimReady === false) return 'needs-evidence-review';
@@ -713,7 +756,7 @@ const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
     return prepareFreeIdeas(lead, [...completeWins, ...fallbackWins].slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` })));
 };
 
-const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
+const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'facebook.', 'instagram.', 'linktr.ee', 'business.site', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
 const isOtaOrAggregatorUrl = (url = '') => blockedWebsiteExtractorHosts.some((host) => url.toLowerCase().includes(host));
 const hasOwnWebsiteUrl = (candidate: Pick<LeadAgentCandidate, 'websiteUrl' | 'sourceUrls'>) => Boolean(candidate.websiteUrl && !isOtaOrAggregatorUrl(candidate.websiteUrl)) || candidate.sourceUrls.some((url) => !isOtaOrAggregatorUrl(url));
 
@@ -730,6 +773,14 @@ const detectSourceType = (url: string): PublicProfileSourceType => {
 
     if (normalizedUrl.includes('google.')) {
         return 'google';
+    }
+
+    if (normalizedUrl.includes('facebook.')) {
+        return 'facebook';
+    }
+
+    if (normalizedUrl.includes('instagram.')) {
+        return 'instagram';
     }
 
     return normalizedUrl ? 'website' : 'other';
@@ -903,6 +954,12 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         provider: lead.websiteExtraction.provider ?? 'fallback',
         status: lead.websiteExtraction.status ?? 'partial',
         websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
+        sourceUrlClassification: lead.websiteExtraction.sourceUrlClassification,
+        socialProfileStatus: lead.websiteExtraction.socialProfileStatus ?? 'none',
+        ownedWebsiteDetected: lead.websiteExtraction.ownedWebsiteDetected,
+        needsOwnedWebsite: lead.websiteExtraction.needsOwnedWebsite,
+        analysisSource: lead.websiteExtraction.analysisSource,
+        extractionAllowedForWebsiteAudit: lead.websiteExtraction.extractionAllowedForWebsiteAudit,
         extractionStrategy: lead.websiteExtraction.extractionStrategy ?? 'legacy',
         discoveredInternalLinksCount: lead.websiteExtraction.discoveredInternalLinksCount ?? 0,
         guessedUrlsUsed: lead.websiteExtraction.guessedUrlsUsed ?? [],
@@ -1031,6 +1088,13 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
         websiteExtraction: normalizedWebsiteExtraction,
         websiteOwnershipStatus: normalizedWebsiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'unknown',
+        sourceUrlClassification: normalizedWebsiteExtraction?.sourceUrlClassification ?? lead.sourceUrlClassification,
+        socialProfileStatus: normalizedWebsiteExtraction?.socialProfileStatus ?? lead.socialProfileStatus ?? 'none',
+        ownedWebsiteDetected: normalizedWebsiteExtraction?.ownedWebsiteDetected ?? lead.ownedWebsiteDetected ?? normalizedWebsiteExtraction?.websiteOwnershipStatus === 'official',
+        needsOwnedWebsite: normalizedWebsiteExtraction?.needsOwnedWebsite ?? lead.needsOwnedWebsite ?? isSocialOwnershipStatus(normalizedWebsiteExtraction?.websiteOwnershipStatus),
+        needsScreenshotAnalysis: lead.needsScreenshotAnalysis ?? isSocialOwnershipStatus(normalizedWebsiteExtraction?.websiteOwnershipStatus),
+        analysisSource: normalizedWebsiteExtraction?.analysisSource ?? lead.analysisSource ?? 'unknown',
+        extractionAllowedForWebsiteAudit: normalizedWebsiteExtraction?.extractionAllowedForWebsiteAudit ?? lead.extractionAllowedForWebsiteAudit ?? normalizedWebsiteExtraction?.websiteOwnershipStatus === 'official',
         websiteOwnershipReason: normalizedWebsiteExtraction?.websiteOwnershipReason ?? lead.websiteOwnershipReason ?? '',
         officialWebsiteCandidateUrl: normalizedWebsiteExtraction?.officialWebsiteCandidateUrl ?? lead.officialWebsiteCandidateUrl ?? '',
         directoryExtractedCandidates: normalizedWebsiteExtraction?.directoryExtractedCandidates ?? lead.directoryExtractedCandidates ?? [],
@@ -1220,7 +1284,7 @@ const candidateFromLead = (lead: Lead): LeadAgentCandidate => ({
     painSignals: splitLines(lead.reviewSignals).filter((signal) => !signal.toLowerCase().includes('guest guide')),
     positiveSolvedSignals: [],
     noPainReason: '',
-    targetOffer: ['guest-communication-fix', 'guest-guide', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(lead.targetOffer || '') ? lead.targetOffer as LeadAgentCandidate['targetOffer'] : 'guest-guide',
+    targetOffer: ['guest-communication-fix', 'guest-guide', 'simple-website', 'ota-profile-audit', 'review-response-improvement', 'self-checkin-setup', 'skip'].includes(lead.targetOffer || '') ? lead.targetOffer as LeadAgentCandidate['targetOffer'] : 'guest-guide',
     offerHypothesis: lead.offerHypothesis || lead.businessOpportunity || 'Z dostupných veřejných podkladů zatím chybí plná agentní analýza.',
     websiteSignals: uniqueStrings([...(lead.publicLinks.some((link) => link.sourceType === 'website') ? ['Vlastní web jako odkaz k ruční kontrole'] : []), ...(lead.websiteExtraction?.websiteSignals ?? []), ...(lead.websiteExtraction?.arrivalSignals ?? []), ...(lead.websiteExtraction?.faqSignals ?? [])]),
     contactSignals: uniqueStrings([lead.email ? 'Veřejný e-mail v CRM' : '', ...(lead.websiteExtraction?.contact.emails.map((email) => `E-mail nalezen na vlastním webu: ${email}`) ?? []), ...(lead.websiteExtraction?.contact.phones.map((phone) => `Telefon nalezen na vlastním webu: ${phone}`) ?? [])]),
@@ -3175,6 +3239,7 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
     const guestGuideConfigText = draftLead.guestGuidePreview ? JSON.stringify(draftLead.guestGuidePreview.configExport, null, 2) : '';
     const guestGuidePlaceholderItems = draftLead.guestGuidePreview?.sections.flatMap((guideSection) => guideSection.groups.flatMap((group) => group.items.filter((item) => item.includes('[DOPLNIT:')))) ?? [];
     const ownershipStatus = draftLead.websiteExtraction?.websiteOwnershipStatus ?? draftLead.websiteOwnershipStatus;
+    const socialSource = isSocialOwnershipStatus(ownershipStatus);
     const showOfficialWebsiteGate = Boolean(draftLead.websiteExtraction && ownershipStatus && ownershipStatus !== 'official');
     const nextAction = workflowNextAction(draftLead);
     const clientOutputNeedsReview = draftLead.clientOutputStatus === 'draft-needs-review' || ['needs-idea-review', 'needs-evidence-review', 'needs-contact-review'].includes(nextAction);
@@ -3291,7 +3356,9 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <div className="scope-note warning-note website-ownership-note">
                         <strong>{ownershipStatus === 'asset' ? 'URL je obrázek nebo soubor' : 'Toto není vlastní web ubytování'}</strong>
                         <span>{draftLead.websiteExtraction?.websiteOwnershipReason ?? draftLead.websiteOwnershipReason}</span>
-                        {ownershipStatus === 'asset'
+                        {socialSource
+                            ? <span>U sociálních profilů extractor často nepřečte obsah. Pro lepší audit nahraj screenshot profilu nebo fotek.</span>
+                            : ownershipStatus === 'asset'
                             ? <span>Soubor nebo GIF asset nelze analyzovat jako web. Další krok je doplnit oficiální web konkrétního provozu.</span>
                             : <span>Katalog nebo městský portál může pomoct najít položku, ale jeho kontakty se nepočítají jako kontakt leadu.</span>}
                         {directoryCandidates.length > 0 ? <span>Nalezené položky: {directoryCandidates.map((candidate) => [candidate.name, candidate.websiteUrl || candidate.email || candidate.phone].filter(Boolean).join(' - ')).join('; ')}</span> : null}
@@ -3319,7 +3386,8 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                 <div className="evidence-status-panel">
                     <span>{agentLeadStatusLabels[draftLead.agentLeadStatus]}</span>
                     <span>{evidenceLevelLabels[draftLead.evidenceLevel]}</span>
-                    {draftLead.websiteExtraction && ['completed', 'partial'].includes(draftLead.websiteExtraction.status) ? <span>Web přečten</span> : null}
+                    {draftLead.websiteExtraction && ['completed', 'partial'].includes(draftLead.websiteExtraction.status) ? <span>{socialSource ? 'Veřejný profil / social evidence' : 'Web přečten'}</span> : null}
+                    {draftLead.needsScreenshotAnalysis ? <span>Needs screenshot analysis</span> : null}
                     <span>{draftLead.needsAgentAnalysis ? 'Needs agent analysis' : 'Evidence ready'}</span>
                     <span>Další krok: {nextAction}</span>
                 </div>

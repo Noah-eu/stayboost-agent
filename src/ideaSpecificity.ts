@@ -51,7 +51,10 @@ type SignalKey =
     | 'hluboka'
     | 'holasovice'
     | 'dlouhaAddress'
-    | 'babyCot';
+    | 'babyCot'
+    | 'socialProfile'
+    | 'noOwnedWebsite'
+    | 'photoPresentation';
 
 interface SpecificSignal {
     key: SignalKey;
@@ -73,6 +76,9 @@ const normalize = (value = '') => value
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 
 const textForExtraction = (extraction?: WebsiteExtractionResult) => [
+    extraction?.sourceUrlClassification,
+    extraction?.websiteOwnershipStatus,
+    extraction?.socialProfileStatus,
     extraction?.summary,
     ...(extraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
     ...(extraction?.websiteSignals ?? []),
@@ -121,6 +127,9 @@ const matchers: Array<{ key: SignalKey; label: string; keywords: string[] }> = [
     { key: 'holasovice', label: 'Holašovice', keywords: ['holasovice', 'holašovice'] },
     { key: 'dlouhaAddress', label: 'Dlouhá 92', keywords: ['dlouha 92', 'dlouhá 92'] },
     { key: 'babyCot', label: 'dětská postýlka', keywords: ['detska postylka', 'dětská postýlka', 'pristylka', 'přistýlka'] },
+    { key: 'socialProfile', label: 'Facebook / veřejný profil', keywords: ['facebook', 'instagram', 'social-profile', 'veřejný sociální profil', 'verejny socialni profil', 'veřejný profil', 'verejny profil'] },
+    { key: 'noOwnedWebsite', label: 'žádný vlastní web nenalezen', keywords: ['zadny vlastni web nenalezen', 'žádný vlastní web nenalezen', 'neni videt vlastni web', 'není vidět vlastní web', 'ne vlastni web'] },
+    { key: 'photoPresentation', label: 'fotky ubytování', keywords: ['fotky ubytovani', 'fotky ubytování', 'cover', 'titulni fotka', 'titulní fotka', 'fotka krumlova'] },
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'nabijeni elektromobilu', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
@@ -195,6 +204,7 @@ const playbookReason = (playbook: LeadPlaybook, signals: string[]) => {
         'city-apartment-arrival': `Evidence ukazuje městské ubytování nebo více typů pokojů/apartmánů (${joined}).`,
         'family-local-experience': `Web staví pobyt na rodině, okolí, zahradě nebo lokálních tipech (${joined}).`,
         'historic-local-experience-stay': `Web ukazuje historický dům, centrum nebo konkrétní lokální tipy (${joined}).`,
+        'social-profile-web-presence': `Zdroj je veřejný sociální profil bez dohledaného vlastního webu (${joined}).`,
         'romantic-wellness-stay': `Web explicitně zmiňuje wellness, spa, saunu, relax centrum nebo podobnou službu (${joined}).`,
         'event-wedding-hotel': `Web pracuje s eventy, svatbami nebo firemními hosty (${joined}).`,
         'basic-website-guest-guide': 'Nejsou vidět výraznější konkrétní signály, proto zůstává základní guest-guide playbook.',
@@ -203,6 +213,18 @@ const playbookReason = (playbook: LeadPlaybook, signals: string[]) => {
     };
 
     return reasons[playbook];
+};
+
+const socialProfileSignalsForLead = (lead: Pick<Lead, 'websiteExtraction' | 'publicSignals'>) => {
+    const text = normalize([
+        lead.websiteExtraction?.websiteUrl,
+        lead.websiteExtraction?.sourceUrlClassification,
+        lead.websiteExtraction?.websiteOwnershipStatus,
+        lead.websiteExtraction?.summary,
+        ...(lead.publicSignals ?? []),
+    ].filter(Boolean).join('\n'));
+
+    return /facebook|instagram|social-profile|verejny socialni profil|veřejný sociální profil/.test(text) ? ['Facebook / veřejný profil'] : [];
 };
 
 export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'strengths' | 'publicSignals' | 'checkInParkingInfo'>): PlaybookAssessment => {
@@ -214,7 +236,9 @@ export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'st
     const wellnessSignals = firstSignals(signals, ['relax', 'spa']);
     const eventSignals = firstSignals(signals, ['wedding', 'conference']);
     const opsSignals = firstSignals(signals, ['parking', 'ev', 'contact']);
+    const socialProfileSignals = socialProfileSignalsForLead(lead);
 
+    if (socialProfileSignals.length > 0) return { leadPlaybook: 'social-profile-web-presence', leadPlaybookReason: playbookReason('social-profile-web-presence', socialProfileSignals), playbookSignals: socialProfileSignals };
     if (restaurantSignals.length > 0) return { leadPlaybook: 'restaurant-linked-stay', leadPlaybookReason: playbookReason('restaurant-linked-stay', restaurantSignals), playbookSignals: restaurantSignals };
     if (eventSignals.length > 0) return { leadPlaybook: 'event-wedding-hotel', leadPlaybookReason: playbookReason('event-wedding-hotel', eventSignals), playbookSignals: eventSignals };
     if (historicLocalSignals.length > 0 && wellnessSignals.length === 0) return { leadPlaybook: 'historic-local-experience-stay', leadPlaybookReason: playbookReason('historic-local-experience-stay', historicLocalSignals), playbookSignals: historicLocalSignals };
@@ -310,6 +334,36 @@ const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, sign
     ),
 ];
 
+const socialProfileWebPresenceWins = (lead: Pick<Lead, 'websiteExtraction'>): QuickWin[] => {
+    const evidence = lead.websiteExtraction?.summary || 'Facebook profil / veřejná prezentace bez dohledaného vlastního webu.';
+    return [
+        makeWin(
+            'Jednoduchý web místo samotné Facebook stránky',
+            'Pokud je hlavní veřejná prezentace hlavně Facebook, host nemusí rychle najít základní informace mimo sociální platformu.',
+            'Vytvořit jednoduchou stránku s názvem ubytování, fotkami, adresou Pod Kamenem 170, telefonem, e-mailem, mapou a tlačítkem „zavolat / napsat“.',
+            'Facebook profil, žádný vlastní web nenalezen, kontakt je veřejně vidět.',
+            'malý web jako stabilní veřejná prezentace mimo Facebook',
+            ['Facebook / veřejný profil', 'žádný vlastní web nenalezen', 'kontakt / recepce'],
+        ),
+        makeWin(
+            'Přerovnat fotky tak, aby první ukazovaly ubytování',
+            'První dojem má rychle ukázat samotné ubytování, ne jen obecnou atmosféru lokality.',
+            'Jako první použít fotku pokoje/apartmánu nebo domu, ne obecnou fotku Krumlova; potom ukázat pokoj, koupelnu, vstup a okolí.',
+            'Facebook cover je obecný pohled na Krumlov, fotky ubytování jsou až níže.',
+            'lepší první dojem z veřejného profilu a budoucího webu',
+            ['fotky ubytování', 'Facebook / veřejný profil'],
+        ),
+        makeWin(
+            'Přidat praktický blok pro hosty před příjezdem',
+            'Kontakt je vidět, ale host před rezervací nebo příjezdem potřebuje praktické informace na jednom místě.',
+            'Na web/online stránku dát: adresa, mapa, jak se dostat ke vstupu, kontakt v den příjezdu, čas příjezdu, odjezd a nejčastější dotazy.',
+            evidence.includes('Pod Kamenem') ? evidence : 'Facebook profil ukazuje kontakt, ale ne strukturované příjezdové informace.',
+            'praktické informace pro hosta bez hledání ve feedu',
+            ['kontakt / recepce', 'Facebook / veřejný profil'],
+        ),
+    ];
+};
+
 const romanticWellnessWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
     makeWin(
         'Předem naladit romantický scénář pobytu',
@@ -389,6 +443,7 @@ const playbookWins = (playbook: LeadPlaybook, lead: Pick<Lead, 'websiteExtractio
     if (playbook === 'city-apartment-arrival') return [cityOrientationWin(lead, signals), roomTypeWin(lead, signals), restaurantWin(lead, signals)].filter((win) => win.usedSignals?.length);
     if (playbook === 'family-local-experience') return familyLocalWins(lead, signals);
     if (playbook === 'historic-local-experience-stay') return historicLocalExperienceWins(lead, signals);
+    if (playbook === 'social-profile-web-presence') return socialProfileWebPresenceWins(lead);
     if (playbook === 'romantic-wellness-stay') return romanticWellnessWins(lead, signals);
     if (playbook === 'event-wedding-hotel') return eventWeddingWins(lead, signals);
     return basicGuestGuideWins(lead, signals);
@@ -447,6 +502,9 @@ const conceptForIdea = (idea: QuickWin) => {
     if (/typ pobytu|typ poko|apartman|kuchyn|studio|rodinny apartman/.test(text)) return 'room-type';
     if (/zizkov|praha|brno|tram|mesto|ulice|seifertova|prvni vecer/.test(text)) return 'city-orientation';
     if (/krumlov|hrad|zamek|zahrad|kanal|muze|seidl|divadlo|vltav|lipno|klet|rozmberk|hluboka|holasovic|historick/.test(text)) return 'historic-local';
+    if (/fotk|cover|pokoj|koupeln|dum|domu/.test(text)) return 'photo-order';
+    if (/jednoduchy web|facebook strank|vlastni web nenalezen|zavolat|napsat/.test(text)) return 'simple-website';
+    if (/praktick|prijezd|mapa|kontakt v den|faq/.test(text)) return 'arrival';
     if (/rodin|det|zahrad|gril|pamat|kutna hora|barbor|okol|pesky|vrchlice/.test(text)) return 'family-local';
     if (/romant|wellness|relax|spa|vino|par|vyhled/.test(text)) return 'romantic-wellness';
     if (/svat|konfer|firemn|event|akce/.test(text)) return 'event';

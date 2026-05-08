@@ -284,6 +284,10 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
         return sanitizeClientText(`Navazující placený krok může být jednoduchý online průvodce pro hosty ${displayNameForPaidStep}: ${guideSections}. Host dostane odkaz nebo QR kód s praktickými informacemi před příjezdem; u různých typů pobytu se dají sekce upravit podle hosta a navázat na zprávy po rezervaci.`);
     }
 
+    if (recommendation?.recommendedProduct === 'simple-website-starter') {
+        return sanitizeClientText(`Navazující placený krok může být jednoduchý web pro ubytování ${displayName}: úvod s fotkami, adresa, mapa, telefon, e-mail, tlačítko zavolat / napsat, základní informace k příjezdu a prostor pro fotky pokojů nebo apartmánu.`);
+    }
+
     if (recommendation) {
         return sanitizeClientText(`Navazující placený krok může být ${recommendation.paidOfferDetails} Pro ${displayName} bych to pojal jako ${recommendation.paidOfferShort}.`);
     }
@@ -293,6 +297,20 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
 
 export function buildFallbackOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const isSocialProfile = /social-profile|facebook|instagram/i.test([input.websiteExtraction?.sourceUrlClassification, input.websiteExtraction?.websiteOwnershipStatus, input.websiteExtraction?.websiteUrl, ...(input.signals ?? [])].filter(Boolean).join('\n'));
+    if (isSocialProfile) {
+        return sanitizeClientText(`Dobrý den,
+
+omlouvám se za nevyžádanou zprávu. Narazil jsem na vaši facebookovou stránku ${displayName}.
+
+Nevím samozřejmě, jak máte řešené rezervace bokem, ale z veřejné prezentace to na mě působí tak, že hlavní informace jsou teď hlavně na Facebooku. Napadlo mě, že by vám mohl dávat smysl jednoduchý malý web pro hosty — s fotkami, kontaktem, mapou, příjezdem a základními informacemi na jednom místě.
+
+Můžu vám zdarma poslat 3 krátké nápady, jak by taková stránka mohla vypadat u vašeho ubytování.
+
+Kdyby to nedávalo smysl, v pořádku.
+
+David`);
+    }
     const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
     const examples = signals.some((signal) => /historické centrum|hrad|zámek|Možnosti rekreace|Fotoateliér|muzea|Lipno|Kleť/i.test(signal))
         ? 'příjezd, kontakt, vybavení apartmánu a tipy v okolí'
@@ -315,6 +333,10 @@ David`);
 
 export function buildWebsiteOnlyOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const isSocialProfile = /social-profile|facebook|instagram/i.test([input.websiteExtraction?.sourceUrlClassification, input.websiteExtraction?.websiteOwnershipStatus, input.websiteExtraction?.websiteUrl, ...(input.signals ?? [])].filter(Boolean).join('\n'));
+    if (isSocialProfile) {
+        return buildFallbackOutreach(input);
+    }
     const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
     const examples = signals.some((signal) => /historické centrum|hrad|zámek|Možnosti rekreace|Fotoateliér|muzea|Lipno|Kleť/i.test(signal))
         ? 'příjezd, kontakt, vybavení apartmánu a tipy v okolí'

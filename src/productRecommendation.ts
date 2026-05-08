@@ -102,6 +102,13 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
         };
     }
 
+    if (product === 'simple-website-starter') {
+        return {
+            paidOfferShort: 'Jednoduchý web pro ubytování',
+            paidOfferDetails: 'Jednoduchá webová stránka pro ubytování: fotky, kontakt, mapa, adresa, rezervace přes telefon/e-mail a praktické informace pro hosty na jednom místě.',
+        };
+    }
+
     if (product === 'ops-audit') {
         return {
             paidOfferShort: 'Ops Audit',
@@ -118,6 +125,7 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
 export const recommendedProductLabels: Record<RecommendedProduct, string> = {
     'guest-guide-starter': 'Guest Guide Starter',
     'guest-communication-setup': 'Guest Communication Setup',
+    'simple-website-starter': 'Jednoduchý web pro ubytování',
     'ops-audit': 'Ops Audit',
     skip: 'Skip / nepokračovat',
 };
@@ -133,6 +141,7 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteExtraction' | '
     const leadPlaybook = lead.leadPlaybook ?? ideaDiagnostics.leadPlaybook;
     const contactReady = lead.contactQuality?.contactReady ?? contactFound;
     const ownershipStatus = extraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'unknown';
+    const socialProfileLead = ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(ownershipStatus) || leadPlaybook === 'social-profile-web-presence';
     const extractionAllowed = extraction?.extractionAllowed ?? lead.extractionAllowed ?? true;
     const specificIdeasReady = ideaDiagnostics.freeIdeasReady && !ideaDiagnostics.repeatedTemplateWarning && !ideaDiagnostics.repeatedConceptWarning;
     const strongChaosOpsSignals = hasStrongChaosOpsSignals(lead, weakAreas, topics);
@@ -157,7 +166,10 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteExtraction' | '
     let recommendedProduct: RecommendedProduct = 'guest-guide-starter';
     let recommendedProductReason = 'Web má dohledatelný kontakt a dává smysl ukázat jednoduchý předpříjezdový přehled pro hosty.';
 
-    if (opsEligible && strongChaosOpsSignals && !(specificIdeasReady && leadPlaybook !== 'basic-website-guest-guide')) {
+    if (socialProfileLead) {
+        recommendedProduct = 'simple-website-starter';
+        recommendedProductReason = 'Lead stojí hlavně na sociálním profilu bez dohledaného vlastního webu, takže nejvhodnější produkt je jednoduchý web pro ubytování s kontaktem, fotkami, mapou a základními informacemi.';
+    } else if (opsEligible && strongChaosOpsSignals && !(specificIdeasReady && leadPlaybook !== 'basic-website-guest-guide')) {
         recommendedProduct = 'ops-audit';
         recommendedProductReason = 'Evidence ukazuje širší provozní nejasnosti napříč více oblastmi a konkrétní nápady zatím nejsou dostatečně jisté, takže dává smysl nejdřív širší Ops Audit.';
     } else if (leadPlaybook === 'restaurant-linked-stay') {

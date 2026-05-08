@@ -76,20 +76,39 @@ const dateStamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '
 const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 const discoveryPhoneText = (lead: Pick<Lead, 'sourceMaterials' | 'notes'>) => [lead.notes, ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content])].filter(Boolean).join('\n');
+const isSocialOwnershipStatus = (status?: string) => ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(status ?? '');
+const extractAddressFromEvidence = (text = '') => text.match(/Pod\s+Kamenem\s+170(?:,\s*Český\s+Krumlov|,\s*Cesky\s+Krumlov)?/i)?.[0] || '';
 const contactQualityForLead = (lead: Lead): ContactQuality => {
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'official';
     const allPhones = lead.websiteExtraction?.contact.phones ?? [];
     const websitePhones = uniqueStrings(allPhones.filter((phone) => isLikelyPhoneNumber(phone)));
-    const discoveryPhones = extractValidPhones(discoveryPhoneText(lead));
+    const evidenceText = discoveryPhoneText(lead);
+    const discoveryPhones = extractValidPhones(evidenceText);
     const validPhones = mergePhones(websitePhones, discoveryPhones);
-    const rejectedPhones = uniqueStrings([...allPhones.filter((phone) => !isLikelyPhoneNumber(phone)), ...extractRejectedPhones(discoveryPhoneText(lead))]);
+    const rejectedPhones = uniqueStrings([...allPhones.filter((phone) => !isLikelyPhoneNumber(phone)), ...extractRejectedPhones(evidenceText)]);
+    const socialEmails = uniqueStrings([...(evidenceText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []), lead.email].map((email) => email.trim().toLowerCase()).filter((email) => emailPattern.test(email)));
+    const address = extractAddressFromEvidence(evidenceText);
+    if (isSocialOwnershipStatus(ownershipStatus)) {
+        return {
+            validEmails: socialEmails,
+            validPhones,
+            rejectedPhones,
+            address,
+            emailSource: socialEmails.length > 0 ? 'search-or-social-profile' : 'missing',
+            phoneSource: validPhones.length > 0 ? 'search-or-social-profile' : 'missing',
+            addressSource: address ? 'search-or-social-profile' : 'missing',
+            contactReady: socialEmails.length > 0 || validPhones.length > 0,
+        };
+    }
     if (ownershipStatus !== 'official') {
         return {
             validEmails: [],
             validPhones: [],
             rejectedPhones,
+            address,
             emailSource: 'missing',
             phoneSource: 'missing',
+            addressSource: address ? 'search-or-social-profile' : 'missing',
             contactReady: false,
         };
     }
@@ -101,8 +120,10 @@ const contactQualityForLead = (lead: Lead): ContactQuality => {
         validEmails,
         validPhones,
         rejectedPhones,
+        address,
         emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
         phoneSource: websitePhones.length > 0 && discoveryPhones.length > 0 ? 'website-and-discovery' : websitePhones.length > 0 ? 'website' : discoveryPhones.length > 0 ? 'discovery-fallback' : 'missing',
+        addressSource: address ? 'search-or-social-profile' : 'missing',
         contactReady: validEmails.length > 0 || validPhones.length > 0,
     };
 };
@@ -118,6 +139,7 @@ const leadWorkflowState = (lead: Lead) => {
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
     const evidenceDiagnostics = validateEvidenceClaims(lead);
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
+    const isSocialSource = isSocialOwnershipStatus(ownershipStatus);
     const needsOfficialWebsite = Boolean(lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official'));
 
     return {
@@ -128,6 +150,11 @@ const leadWorkflowState = (lead: Lead) => {
         clientTextReady: clientDiagnostics.clientTextReady,
         contactReady: contactQuality.contactReady,
         contactQuality,
+        sourceUrlClassification: lead.websiteExtraction?.sourceUrlClassification ?? lead.sourceUrlClassification,
+        socialProfileStatus: lead.websiteExtraction?.socialProfileStatus ?? lead.socialProfileStatus ?? 'none',
+        ownedWebsiteDetected: lead.websiteExtraction?.ownedWebsiteDetected ?? lead.ownedWebsiteDetected ?? ownershipStatus === 'official',
+        needsOwnedWebsite: lead.websiteExtraction?.needsOwnedWebsite ?? lead.needsOwnedWebsite ?? isSocialSource,
+        needsScreenshotAnalysis: lead.needsScreenshotAnalysis ?? isSocialSource,
         freeIdeasSpecificEnough: ideaDiagnostics.freeIdeasReady && !ideaDiagnostics.repeatedConceptWarning,
         leadPlaybook: ideaDiagnostics.leadPlaybook,
         leadPlaybookReason: ideaDiagnostics.leadPlaybookReason,
@@ -140,13 +167,16 @@ const leadWorkflowState = (lead: Lead) => {
         localExperienceSignals: lead.websiteExtraction?.localExperienceSignals ?? [],
         unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
+        evidenceBlockedClaims: uniqueStrings([...(lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims), ...(lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims)]),
         evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
         clientOutputStatus: lead.clientOutputStatus ?? (ideaDiagnostics.freeIdeasReady && evidenceDiagnostics.evidenceClaimReady ? 'ready' : 'draft-needs-review'),
         notReadyReasons: lead.notReadyReasons ?? [],
         positiveSignalsUsedCount: ideaDiagnostics.positiveSignalsUsedCount,
         missingSignalsUsedCount: ideaDiagnostics.missingSignalsUsedCount,
-        nextRecommendedAction: needsOfficialWebsite
-            ? 'needs-official-website'
+        nextRecommendedAction: isSocialSource
+            ? contactQuality.contactReady ? 'ready-to-review' : 'needs-owned-website-or-screenshot-review'
+            : needsOfficialWebsite
+                ? 'needs-official-website'
             : ideaDiagnostics.localExperienceExtractionReady === false
                 ? 'needs-extraction-review'
             : (lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady) === false
@@ -277,6 +307,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         notReadyReasons: lead.notReadyReasons ?? [],
         unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
+        evidenceBlockedClaims: uniqueStrings([...(lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims), ...(lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims)]),
         evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
         extractedPriorityPages: lead.websiteExtraction?.extractedPriorityPages ?? [],
         missedPriorityPages: lead.websiteExtraction?.missedPriorityPages ?? [],
@@ -285,6 +316,19 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: lead.guestGuideSecondEmail ?? '',
         contactQuality,
+        sourceUrlClassification: lead.websiteExtraction?.sourceUrlClassification ?? lead.sourceUrlClassification,
+        socialProfileStatus: lead.websiteExtraction?.socialProfileStatus ?? lead.socialProfileStatus ?? 'none',
+        ownedWebsiteDetected: lead.websiteExtraction?.ownedWebsiteDetected ?? lead.ownedWebsiteDetected ?? (lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus) === 'official',
+        needsOwnedWebsite: lead.websiteExtraction?.needsOwnedWebsite ?? lead.needsOwnedWebsite ?? isSocialOwnershipStatus(lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus),
+        needsScreenshotAnalysis: lead.needsScreenshotAnalysis ?? isSocialOwnershipStatus(lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus),
+        socialProfileEvidence: isSocialOwnershipStatus(lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus) ? {
+            sourceUrl: lead.websiteExtraction?.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl,
+            contactQuality,
+            publicSignals: lead.publicSignals ?? [],
+            sourceMaterials: (lead.sourceMaterials ?? []).map((material) => ({ title: material.title, type: material.type, preview: material.content.slice(0, 500) })),
+        } : undefined,
+        analysisSource: lead.websiteExtraction?.analysisSource ?? lead.analysisSource ?? 'unknown',
+        extractionAllowedForWebsiteAudit: lead.websiteExtraction?.extractionAllowedForWebsiteAudit ?? lead.extractionAllowedForWebsiteAudit ?? false,
         websiteOwnershipStatus: lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'unknown',
         websiteOwnershipReason: lead.websiteExtraction?.websiteOwnershipReason ?? lead.websiteOwnershipReason ?? '',
         extractionAllowed: lead.websiteExtraction?.extractionAllowed ?? lead.extractionAllowed ?? true,

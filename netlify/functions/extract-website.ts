@@ -1,4 +1,4 @@
-import { assessWebsiteOwnership, isAssetPage, isAssetUrl } from '../../src/websiteOwnership';
+import { assessWebsiteOwnership, isAssetPage, isAssetUrl, isSocialPlatformLoginUrl, isSocialPlatformUrl } from '../../src/websiteOwnership';
 import { extractValidPhones, isLikelyPhoneNumber } from '../../src/phoneValidation';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -161,7 +161,7 @@ const buildInitialExtractionUrls = (websiteUrl: string, sourceUrls: string[]) =>
 
 const buildFallbackGuessUrls = (websiteUrl: string, existingUrls: string[]) => {
     const baseUrl = safeUrl(websiteUrl);
-    if (!baseUrl) return [];
+    if (!baseUrl || isSocialPlatformUrl(websiteUrl)) return [];
 
     const urls: string[] = [];
     for (const hint of fallbackPageHints) {
@@ -174,6 +174,7 @@ const buildFallbackGuessUrls = (websiteUrl: string, existingUrls: string[]) => {
 };
 
 const extractDiscoveredInternalLinks = (results: TavilyExtractResult[], baseUrl: URL, existingUrls: string[]) => {
+    if (isSocialPlatformUrl(baseUrl.toString())) return [];
     const candidates: Array<{ url: string; score: number }> = [];
     const text = results.map((result) => `${result.raw_content || ''}\n${result.content || ''}`).join('\n');
     const linkPattern = /\[[^\]]+\]\(([^)]+)\)|href=["']([^"']+)["']|https?:\/\/[^\s)"']+|\s(\/[A-Za-z0-9_./?=&%#-]+)/g;
@@ -253,6 +254,8 @@ const extractPhones = (text: string) => extractValidPhones(text);
 
 const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;
 const isNotFoundPage = (page: ExtractedPage) => notFoundPagePattern.test(`${page.title}\n${page.textPreview}`);
+const socialLoginPagePattern = /facebook|instagram|log in|přihl[aá]sit|prihlasit|sign up|vytvořit účet|create new account|browser/i;
+const isInvalidSocialPage = (page: ExtractedPage) => isSocialPlatformLoginUrl(page.url) || isSocialPlatformUrl(page.url) && socialLoginPagePattern.test(`${page.title}\n${page.textPreview}`) && !/apartm[aá]ny|ubytov[aá]n[ií]|penzion|hotel/i.test(`${page.title}\n${page.textPreview}`);
 
 const signalMatches = (content: string, matchers: Array<{ label: string; keywords: string[] }>) => matchers.filter((matcher) => includesAny(content, matcher.keywords)).map((matcher) => matcher.label);
 
@@ -265,17 +268,19 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'),
         sourceUrls: request.sourceUrls || [],
     });
-    const rawEmails = extractEmails(rawText);
-    const rawPhones = extractPhones(rawText);
-    const emails = ownership.websiteOwnershipStatus === 'official' ? rawEmails : [];
-    const phones = ownership.websiteOwnershipStatus === 'official' ? rawPhones : [];
+    const sourceText = [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n');
+    const rawEmails = extractEmails(`${rawText}\n${sourceText}`);
+    const rawPhones = extractPhones(`${rawText}\n${sourceText}`);
+    const isSocialProfile = ownership.websiteOwnershipStatus === 'social-profile';
+    const emails = ownership.websiteOwnershipStatus === 'official' || isSocialProfile ? rawEmails : [];
+    const phones = ownership.websiteOwnershipStatus === 'official' || isSocialProfile ? rawPhones : [];
     const directoryContact = ownership.websiteOwnershipStatus === 'official'
         ? { emails: [], phones: [], contactPageUrl: null }
         : { emails: rawEmails, phones: rawPhones, contactPageUrl: null };
-    const contactPage = pages.find((page) => /kontakt|contact/i.test(page.url) || /kontakt|contact/i.test(page.title))?.url || null;
+    const contactPage = isSocialProfile ? candidateWebsiteUrl(request) : pages.find((page) => /kontakt|contact/i.test(page.url) || /kontakt|contact/i.test(page.title))?.url || null;
 
     const websiteSignals = signalMatches(content, [
-        { label: 'Vlastni verejny web provozu', keywords: ['http'] },
+        { label: ownership.websiteOwnershipStatus === 'official' ? 'Vlastni verejny web provozu' : 'Veřejný sociální profil provozu', keywords: ['http'] },
         { label: 'Rezervacni nebo poptavkovy kontakt je videt', keywords: ['rezervace', 'reservation', 'book now', 'kontakt', 'contact'] },
         { label: 'Ubytovani popisuje pokoje nebo apartmany', keywords: ['pokoje', 'rooms', 'apartmany', 'apartments', 'ubytovani'] },
     ]);
@@ -369,7 +374,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         invalidPagesCount: skippedPages.length,
         contact: { emails, phones, contactPageUrl: contactPage },
         directoryContact: { ...directoryContact, contactPageUrl: ownership.websiteOwnershipStatus === 'official' ? null : contactPage },
-        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' as const : 'directory-contact' as const,
+        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' as const : isSocialProfile ? 'source-contact' as const : 'directory-contact' as const,
         websiteSignals,
         extractedPriorityPages,
         missedPriorityPages,
@@ -387,13 +392,15 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         setupOpportunitySignals: unique(setupOpportunitySignals),
         fixOpportunitySignals: unique(fixOpportunitySignals),
         evidenceLimits: unique([
-            ownership.extractionAllowed ? 'Website Extractor cetl pouze vlastni verejny web provozu.' : 'Website Extractor rozpoznal katalog/directory; kontakty z teto stranky nejsou kontakty provozu.',
+            ownership.websiteOwnershipStatus === 'social-profile' ? 'Zdroj je sociální profil; nejde o vlastní web a obsah může být omezen loginem.' : ownership.extractionAllowed ? 'Website Extractor cetl pouze vlastni verejny web provozu.' : 'Website Extractor rozpoznal katalog/directory/social zdroj; kontakty z teto stranky nejsou automaticky vlastni web provozu.',
             'OTA profily jako Booking/Airbnb/Google Maps nebyly cteny.',
             'Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci.',
             skippedPages.length > 0 ? `Preskocene nevalidni stranky: ${skippedPages.length}.` : '',
             status === 'partial' ? 'Extrakce je castecna kvuli timeoutu, nedostupnym nebo nevalidnim strankam.' : '',
         ]),
-        summary: ownership.extractionAllowed
+        summary: ownership.websiteOwnershipStatus === 'social-profile'
+            ? `${request.candidateName || 'Kandidat'}: zdroj je sociální profil, ne vlastní web. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen ze social/search evidence' : 'nenalezen'}. Website audit je omezený.`
+            : ownership.extractionAllowed
             ? `${request.candidateName || 'Kandidat'}: přečteny ${pages.length} validní stránky vlastního webu, ${skippedPages.length} neplatné/404 stránky přeskočeny. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${setupOpportunitySignals.length}. Fix signály: ${fixOpportunitySignals.length}.`
             : `${request.candidateName || 'Kandidat'}: zdroj vypadá jako katalog/directory, ne vlastní web provozu. Kontakty z katalogu nebyly použity jako kontakt leadu.`,
         debug: {
@@ -467,6 +474,16 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             });
         }
 
+        if (preflightOwnership.websiteOwnershipStatus === 'social-platform-login') {
+            return json(200, {
+                ...fallbackResult(request, debugId, startedAt, 'partial', 'social-platform-login', 'fallback', [], [{ url: websiteUrl, title: websiteUrl, reason: 'not_found_page' }], []),
+                ...preflightOwnership,
+                socialProfileStatus: 'social-platform-login',
+                evidenceLimits: ['Obecná nebo login stránka sociální platformy není veřejný web provozu.', 'Nebyly hádány interní URL typu /kontakt nebo /rekreace.php.'],
+                summary: `${request.candidateName || 'Kandidat'}: URL je obecná stránka sociální platformy, ne vlastní web provozu ani konkrétní čitelný profil.`,
+            });
+        }
+
         const apiKey = process.env.TAVILY_API_KEY;
         const initialUrls = buildInitialExtractionUrls(websiteUrl, request.sourceUrls || []).filter((url) => !isAssetUrl(url));
 
@@ -477,7 +494,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const baseUrl = safeUrl(websiteUrl);
         const initialOutcome = await tavilyExtract(apiKey, initialUrls);
         const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
-        const guessedUrlsUsed = priorityUrlGuesses(websiteUrl, [...initialUrls, ...discoveredUrls]).slice(0, Math.max(0, MAX_URLS - initialUrls.length - discoveredUrls.length));
+        const guessedUrlsUsed = isSocialPlatformUrl(websiteUrl) ? [] : priorityUrlGuesses(websiteUrl, [...initialUrls, ...discoveredUrls]).slice(0, Math.max(0, MAX_URLS - initialUrls.length - discoveredUrls.length));
         const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].filter((url) => !isAssetUrl(url)).slice(0, Math.max(0, MAX_URLS - initialUrls.length));
         const secondaryOutcome = secondaryUrls.length > 0 && elapsed(startedAt) < MAX_FUNCTION_MS - 4500
             ? await tavilyExtract(apiKey, secondaryUrls)
@@ -498,15 +515,27 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             })
             .slice(0, MAX_URLS);
         const skippedPages: SkippedPage[] = extractedPages
-            .filter((page) => !page.url || !page.textPreview || isNotFoundPage(page) || isAssetPage(page))
+            .filter((page) => !page.url || !page.textPreview || isNotFoundPage(page) || isAssetPage(page) || isInvalidSocialPage(page))
             .map((page) => ({
                 url: page.url,
                 title: page.title,
-                reason: isAssetPage(page) ? 'asset_or_binary_file' : isNotFoundPage(page) ? 'not_found_page' : 'empty_content',
+                reason: isAssetPage(page) ? 'asset_or_binary_file' : isNotFoundPage(page) || isInvalidSocialPage(page) ? 'not_found_page' : 'empty_content',
             }));
         const pages = extractedPages
-            .filter((page) => page.url && page.textPreview && !isNotFoundPage(page) && !isAssetPage(page))
+            .filter((page) => page.url && page.textPreview && !isNotFoundPage(page) && !isAssetPage(page) && !isInvalidSocialPage(page))
             .slice(0, MAX_URLS);
+
+        if (preflightOwnership.websiteOwnershipStatus === 'social-profile' && pages.length === 0) {
+            return json(200, {
+                ...fallbackResult(request, debugId, startedAt, 'partial', 'social-profile-limited', 'tavily-extract', [], skippedPages, []),
+                ...preflightOwnership,
+                socialProfileStatus: 'social-profile-limited',
+                contact: { emails: extractEmails([request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n')), phones: extractPhones([request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n')), contactPageUrl: websiteUrl },
+                contactOwnershipStatus: 'source-contact',
+                evidenceLimits: ['Zdroj je sociální profil; obsah se nepodařilo přečíst bez loginu.', 'Nebyly hádány interní URL typu /kontakt nebo /rekreace.php.'],
+                summary: `${request.candidateName || 'Kandidat'}: Facebook/social profil je omezený loginem; použij search/snippet nebo screenshot evidence.`,
+            });
+        }
 
         if (pages.length === 0) {
             return json(200, fallbackResult(request, debugId, startedAt, 'error', outcomeReason || 'no_valid_extractable_content', outcomeOk ? 'tavily-extract' : 'error', [], skippedPages, guessedUrlsUsed));

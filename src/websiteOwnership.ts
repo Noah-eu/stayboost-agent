@@ -11,6 +11,8 @@ const directoryHostPattern = /(^|\.)(katalog|catalog|directory)\.|seznam\.|firmy
 const municipalCatalogPattern = /praha\d*\.cz\/.*(?:katalog|redakce\/index\.php|hlkat)|(?:mesto|mestsk|obec|obecn)[^\n]{0,80}(?:katalog|portal)|oficialni internetove stranky mestske casti|městská část|mestska cast|hlkat|redakce\/index\.php/i;
 const directoryContentPattern = /\bkatalog\b|\bdirectory\b|hlkat|redakce\/index\.php|firemn[ií] katalog|seznam firem/i;
 const otaPattern = /booking\.com|airbnb\.|google\.|maps\.google\.|tripadvisor\.|expedia\.|agoda\.|trivago\.|slevomat\.|hotelscombined\.|hotels\.com|vrbo\.|hostelworld\.|hrs\.|ebookers\.|kayak\.|momondo\.|skyscanner\.|trip\.com/i;
+const socialHostPattern = /(^|\.)(facebook\.com|instagram\.com|linktr\.ee|business\.site)$/i;
+const socialLoginPathPattern = /^\/?$|\/login|\/privacy|\/help|\/policies|\/unsupportedbrowser|\/recover|\/kontakt\/?$|\/contact\/?$|\/rekreace\.php\/?$|\/moznosti-rekreace\/?$|\/cenik\.php\/?$|\/rezervace\.php\/?$/i;
 const binaryPreviewPattern = /^(GIF89a|GIF87a|PNG\r?\n|%PDF-|PNG)/;
 
 const safeUrl = (value = '') => {
@@ -24,6 +26,24 @@ const safeUrl = (value = '') => {
 const withProtocol = (value = '') => /^https?:\/\//i.test(value) ? value : `https://${value}`;
 
 export const isAssetUrl = (value = '') => assetExtensionPattern.test(value) || assetPathPattern.test(value);
+
+export const isSocialPlatformUrl = (value = '') => {
+    const parsed = safeUrl(value);
+    const host = parsed?.hostname.replace(/^www\./, '') || '';
+
+    return socialHostPattern.test(host) || /(^|\.)(google\.com|maps\.google\.com)$/i.test(host) && /\/maps/i.test(parsed?.pathname || value);
+};
+
+export const isSocialPlatformLoginUrl = (value = '') => {
+    const parsed = safeUrl(value);
+    if (!parsed || !isSocialPlatformUrl(value)) return false;
+    const host = parsed.hostname.replace(/^www\./, '');
+    const pathname = parsed.pathname || '/';
+
+    if (/facebook\.com$/i.test(host)) return socialLoginPathPattern.test(pathname) || /^\/(?:home|watch|marketplace|groups|events|pages)\/?$/i.test(pathname);
+    if (/instagram\.com$/i.test(host)) return socialLoginPathPattern.test(pathname) || /^\/(?:accounts|explore|reels)\b/i.test(pathname);
+    return false;
+};
 
 export const isAssetPage = (page: Pick<WebsiteExtractedPage, 'url' | 'title' | 'textPreview' | 'contentLength'>) => {
     const titleLooksLikeAsset = assetExtensionPattern.test(page.title || '') || assetPathPattern.test(page.title || '');
@@ -44,6 +64,8 @@ export const classifySourceUrl = (url = '', pageText = ''): SourceUrlClassificat
     const pathname = parsed?.pathname || '';
 
     if (isAssetUrl(url)) return 'asset-or-file';
+    if (isSocialPlatformLoginUrl(url)) return 'social-platform-login';
+    if (isSocialPlatformUrl(url)) return 'social-profile';
     if (otaPattern.test(`${host}${pathname}${url}`)) return 'ota-or-aggregator';
     if (municipalCatalogPattern.test(`${host}${pathname}`) || /praha\d*\.cz/i.test(host) && /(katalog|redakce\/index\.php|hlkat)/i.test(pathname)) return 'municipal-catalog';
     if (directoryHostPattern.test(host)) return 'directory-listing';
@@ -55,6 +77,9 @@ export const classifySourceUrl = (url = '', pageText = ''): SourceUrlClassificat
 
 export const ownershipStatusForClassification = (classification: SourceUrlClassification): WebsiteOwnershipStatus => {
     if (classification === 'official-property-website') return 'official';
+    if (classification === 'social-profile') return 'social-profile';
+    if (classification === 'social-platform-login') return 'social-platform-login';
+    if (classification === 'no-owned-website-detected') return 'no-owned-website-detected';
     if (classification === 'municipal-catalog') return 'municipal-catalog';
     if (classification === 'directory-listing') return 'directory';
     if (classification === 'ota-or-aggregator') return 'aggregator';
@@ -66,6 +91,9 @@ export const extractionAllowedForOwnership = (status: WebsiteOwnershipStatus) =>
 
 export const ownershipReason = (status: WebsiteOwnershipStatus, url = '') => {
     if (status === 'official') return 'URL nevypadá jako katalog, agregátor ani soubor; může se číst jako kandidát na vlastní web provozu.';
+    if (status === 'social-profile') return 'URL odpovídá sociálnímu profilu, ne vlastnímu webu ubytování.';
+    if (status === 'social-platform-login') return 'URL odpovídá obecné nebo login stránce sociální platformy, ne profilu provozu ani vlastnímu webu.';
+    if (status === 'no-owned-website-detected') return 'Z dostupných zdrojů není vidět vlastní web provozu.';
     if (status === 'municipal-catalog') return 'URL nebo obsah odpovídá městskému katalogu / portálu, ne vlastnímu webu ubytování.';
     if (status === 'directory') return 'URL nebo obsah odpovídá katalogu / directory listingu, ne vlastnímu webu ubytování.';
     if (status === 'aggregator') return 'URL odpovídá OTA nebo agregátoru, Website Extractor ji nečte jako vlastní web.';
@@ -142,6 +170,11 @@ export const assessWebsiteOwnership = (input: { url?: string; pageText?: string;
     return {
         sourceUrlClassification: classification,
         websiteOwnershipStatus,
+        socialProfileStatus: websiteOwnershipStatus === 'social-profile' ? 'social-profile' as const : websiteOwnershipStatus === 'social-platform-login' ? 'social-platform-login' as const : 'none' as const,
+        ownedWebsiteDetected: websiteOwnershipStatus === 'official',
+        needsOwnedWebsite: ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(websiteOwnershipStatus),
+        analysisSource: websiteOwnershipStatus === 'official' ? 'owned-website' as const : websiteOwnershipStatus === 'social-profile' ? 'social-profile' as const : websiteOwnershipStatus === 'social-platform-login' ? 'search-or-social-profile' as const : 'unknown' as const,
+        extractionAllowedForWebsiteAudit: websiteOwnershipStatus === 'official',
         websiteOwnershipReason: ownershipReason(websiteOwnershipStatus, input.url || ''),
         extractionAllowed: extractionAllowedForOwnership(websiteOwnershipStatus),
         officialWebsiteCandidateUrl,

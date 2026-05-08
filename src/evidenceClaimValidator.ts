@@ -17,6 +17,7 @@ const claimGroups = [
     { label: 'tramvaj / městská doprava', claim: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i, evidence: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i },
     { label: 'restaurace', claim: /\b(restaurace|restaurant|bistro|bar|menu)\b/i, evidence: /\b(restaurace|restaurant|bistro|bar|menu|snídaně|snidane)\b/i },
     { label: 'wellness / relax', claim: /\b(wellness|relax|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i, evidence: /\b(wellness|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|relax\s+centrum|relaxačn[ií]\s+centrum|relaxacni\s+centrum|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i },
+    { label: 'romantický pobyt', claim: /\b(romantick[yý]\s+pobyt|romantick[yý]\s+sc[eé]n[aá][řr]|romantick[yý]\s+v[ií]kend)\b/i, evidence: /\b(romantick[yý]\s+pobyt|romantick[yý]\s+v[ií]kend)\b/i },
     { label: 'parkoviště', claim: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i, evidence: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i },
     { label: 'snídaně', claim: /\b(sn[ií]daně|snidane|breakfast)\b/i, evidence: /\b(sn[ií]daně|snidane|breakfast)\b/i },
     { label: 'svatby', claim: /\b(svatba|svatby|svatebn[ií]|wedding)\b/i, evidence: /\b(svatba|svatby|svatebn[ií]|wedding)\b/i },
@@ -82,9 +83,26 @@ const unsupportedClaimsInText = (text: string, evidenceText: string) => {
         .map((group) => group.label);
 };
 
+const socialSourcePattern = /social-profile|facebook|instagram|veřejn[yý]\s+profil|verejny\s+profil/i;
+const ownedWebsiteClaimPattern = /narazil\s+jsem\s+na\s+v[aá][šs]\s+web|přečetl\s+jsem\s+v[aá][šs]\s+web|precetl\s+jsem\s+vas\s+web|vlastn[ií]\s+web\s+provozu|v[aá][šs]\s+web/i;
+const socialUnsupportedClaimsInText = (text: string, lead: Partial<Lead>) => {
+    const socialLead = socialSourcePattern.test([
+        lead.websiteExtraction?.sourceUrlClassification,
+        lead.websiteExtraction?.websiteOwnershipStatus,
+        lead.websiteExtraction?.socialProfileStatus,
+        lead.websiteExtraction?.websiteUrl,
+        lead.sourceUrlClassification,
+        lead.websiteOwnershipStatus,
+        ...(lead.publicSignals ?? []),
+    ].filter(Boolean).join('\n'));
+
+    return socialLead && ownedWebsiteClaimPattern.test(text) ? ['vlastní web / přečetl jsem váš web'] : [];
+};
+
 export const validateEvidenceClaims = (lead: Partial<Lead>): EvidenceClaimDiagnostics => {
     const evidenceText = evidenceTextForLead(lead);
-    const unsupportedClientClaims = unsupportedClaimsInText(clientClaimTextForLead(lead), evidenceText);
+    const clientText = clientClaimTextForLead(lead);
+    const unsupportedClientClaims = [...unsupportedClaimsInText(clientText, evidenceText), ...socialUnsupportedClaimsInText(clientText, lead)];
     const unsupportedSignalClaims = unsupportedClaimsInText(signalClaimTextForLead(lead), evidenceText);
 
     return {
@@ -96,12 +114,13 @@ export const validateEvidenceClaims = (lead: Partial<Lead>): EvidenceClaimDiagno
 
 export const sanitizeUnsupportedClaimsFromText = (text = '', lead: Partial<Lead>) => {
     const unsupportedClaims = unsupportedClaimsInText(text, evidenceTextForLead(lead));
-    if (unsupportedClaims.length === 0) return text;
+    const socialUnsupportedClaims = socialUnsupportedClaimsInText(text, lead);
+    if (unsupportedClaims.length === 0 && socialUnsupportedClaims.length === 0) return text;
 
     const unsupportedGroups = claimGroups.filter((group) => unsupportedClaims.includes(group.label));
     return text
         .split(/(?<=[.!?])\s+|\n+/g)
-        .filter((sentence) => !unsupportedGroups.some((group) => group.claim.test(normalize(sentence))))
+        .filter((sentence) => !unsupportedGroups.some((group) => group.claim.test(normalize(sentence))) && !socialUnsupportedClaimsInText(sentence, lead).length)
         .join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();

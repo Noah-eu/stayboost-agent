@@ -97,6 +97,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const rawText = extractionEvidenceText(lead);
     const text = normalize(rawText);
     const sources = evidenceSourceList(lead, extraction);
+    const isSocialProfile = ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(extraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? '') || lead.leadPlaybook === 'social-profile-web-presence';
     const hasParking = hasAny(text, ['parkoviste', 'parkovani', 'parking', 'nabijeci stanice', 'charging station', 'ev']);
     const hasRestaurant = hasAny(text, ['restaurace', 'restaurant', 'terasa', 'bar', 'grill']);
     const hasWellness = hasAny(text, ['wellness', 'relax', 'sauna', 'spa']);
@@ -113,6 +114,78 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const contacts = contactItems(lead, extraction);
     const sourceEvidence = sources.length ? sources : ['Draft vychází z aktuálně uložené veřejné evidence u leadu.'];
     const commonEvidence = sourceEvidence.slice(0, 6);
+    if (isSocialProfile) {
+        const socialSections: GuestGuideSection[] = [
+            section({
+                id: 'website-preview',
+                title: 'Website Preview / Landing Page Preview',
+                headline: 'Jednoduchý web i průvodce pro hosty',
+                overview: 'Z veřejného profilu může vzniknout jednoduchý web pro hosty i základ budoucího guest guide.',
+                groups: [{ title: 'Co ukázat hned nahoře', items: ['Název ubytování', 'Fotky ubytování', 'Adresa Pod Kamenem 170', 'Telefon a e-mail', 'Tlačítko zavolat / napsat'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'entry',
+                title: 'Příjezd a kontakt',
+                headline: `Příjezd do ${lead.name || 'ubytování'}`,
+                overview: 'Praktický blok pro hosta před příjezdem bez předstírání informací, které nejsou ve veřejné evidenci.',
+                groups: [{ title: 'Doplnit', items: [placeholderCheckIn, placeholderEntry, 'Kontakt v den příjezdu', 'Co čekat po příjezdu'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'photos-description',
+                title: 'Fotky a popis ubytování',
+                headline: 'Nejdřív ukázat samotné ubytování',
+                overview: 'Sekce pro lepší pořadí fotek a stručný popis apartmánu, domu, vstupu a okolí.',
+                groups: [{ title: 'Doplnit', items: ['Fotka pokoje nebo apartmánu jako první', 'Fotka koupelny', 'Fotka vstupu', 'Stručný popis vybavení'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'location-map',
+                title: 'Poloha a mapa',
+                headline: 'Kde ubytování najít',
+                overview: 'Adresa, mapa a orientační bod hostovi pomůžou víc než informace schované ve feedu.',
+                groups: [{ title: 'Doplnit', items: ['Adresa Pod Kamenem 170, Český Krumlov', 'Mapa / odkaz na navigaci', 'Orientační bod ke vstupu'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'booking-contact',
+                title: 'Jak rezervovat / kontaktovat',
+                headline: 'Jeden jasný způsob kontaktu',
+                overview: 'Host má rychle pochopit, jestli má volat, psát e-mail nebo poslat zprávu.',
+                groups: [{ title: 'Veřejně viditelné / doplnit', items: contactItems(lead, extraction).slice(0, 5) }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'prearrival-info',
+                title: 'Praktické informace před příjezdem',
+                headline: 'Základní otázky na jednom místě',
+                overview: 'Blok pro check-in, odjezd a nejčastější dotazy.',
+                groups: [{ title: 'Doplnit', items: [placeholderCheckIn, placeholderCheckout, placeholderWifi, '[DOPLNIT: nejčastější dotazy]'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'checkout',
+                title: 'Odjezd',
+                headline: 'Odjezd a poslední praktické kroky',
+                overview: 'Stručné checkout informace před koncem pobytu.',
+                groups: [{ title: 'Doplnit', items: [placeholderCheckout, '[DOPLNIT: kam odevzdat klíče]', '[DOPLNIT: co zkontrolovat před odjezdem]'] }],
+                sourceEvidence: commonEvidence,
+            }),
+        ];
+        const previewBase: Omit<GuestGuidePreview, 'configExport'> = {
+            propertyName: clean(lead.name) || 'Název ubytování',
+            city: clean(lead.city) || '[DOPLNIT: město]',
+            address: 'Pod Kamenem 170, Český Krumlov',
+            suggestedSlug: slugify(`${lead.name}-${lead.city}`),
+            language: 'cs',
+            sections: socialSections,
+            sourceEvidence,
+            limitations: unique(['Zdroj je sociální profil, ne vlastní web.', 'U sociálních profilů extractor často nepřečte obsah; pro lepší audit nahraj screenshot profilu nebo fotek.', ...(lead.sourceLimitations ?? []), ...(extraction?.evidenceLimits ?? [])]).slice(0, 12),
+        };
+
+        return { ...previewBase, configExport: buildGuestGuideConfigExport(previewBase) };
+    }
     const sections: GuestGuideSection[] = [
         section({
             id: 'entry',

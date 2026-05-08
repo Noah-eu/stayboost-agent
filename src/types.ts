@@ -17,7 +17,7 @@ export type OfferAngle =
     | 'guest-communication'
     | 'guest-guide';
 
-export type PublicProfileSourceType = 'booking' | 'airbnb' | 'google' | 'website' | 'other';
+export type PublicProfileSourceType = 'booking' | 'airbnb' | 'google' | 'facebook' | 'instagram' | 'website' | 'social-profile' | 'other';
 
 export type MainPhotoVerdict = 'strong' | 'average' | 'weak' | 'unknown';
 
@@ -31,11 +31,11 @@ export type LeadScreenshotType = 'ota-profile-screenshot' | 'photo-gallery-scree
 
 export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'needs-more-input' | 'error';
 
-export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'ops-audit' | 'skip';
+export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'simple-website-starter' | 'ops-audit' | 'skip';
 
-export type SourceUrlClassification = 'official-property-website' | 'directory-listing' | 'municipal-catalog' | 'ota-or-aggregator' | 'asset-or-file' | 'unknown';
+export type SourceUrlClassification = 'official-property-website' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory-listing' | 'municipal-catalog' | 'ota-or-aggregator' | 'asset-or-file' | 'unknown';
 
-export type WebsiteOwnershipStatus = 'official' | 'directory' | 'municipal-catalog' | 'aggregator' | 'asset' | 'unknown';
+export type WebsiteOwnershipStatus = 'official' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory' | 'municipal-catalog' | 'aggregator' | 'asset' | 'unknown';
 
 export type ContactOwnershipStatus = 'official-contact' | 'directory-contact' | 'source-contact' | 'unknown';
 
@@ -54,6 +54,7 @@ export type LeadPlaybook =
     | 'restaurant-linked-stay'
     | 'family-local-experience'
     | 'historic-local-experience-stay'
+    | 'social-profile-web-presence'
     | 'romantic-wellness-stay'
     | 'event-wedding-hotel'
     | 'basic-website-guest-guide'
@@ -89,8 +90,10 @@ export interface ContactQuality {
     validEmails: string[];
     validPhones: string[];
     rejectedPhones: string[];
-    emailSource: 'website' | 'discovery-fallback' | 'missing';
-    phoneSource: 'website' | 'website-and-discovery' | 'discovery-fallback' | 'missing';
+    address?: string;
+    emailSource: 'website' | 'search-or-social-profile' | 'discovery-fallback' | 'missing';
+    phoneSource: 'website' | 'website-and-discovery' | 'search-or-social-profile' | 'discovery-fallback' | 'missing';
+    addressSource?: 'website' | 'search-or-social-profile' | 'missing';
     contactReady: boolean;
 }
 
@@ -192,6 +195,12 @@ export interface WebsiteExtractionResult {
     status: 'completed' | 'partial' | 'unsupported' | 'error';
     websiteUrl: string;
     websiteOwnershipStatus?: WebsiteOwnershipStatus;
+    sourceUrlClassification?: SourceUrlClassification;
+    socialProfileStatus?: 'none' | 'social-profile' | 'social-profile-limited' | 'social-platform-login';
+    ownedWebsiteDetected?: boolean;
+    needsOwnedWebsite?: boolean;
+    analysisSource?: 'owned-website' | 'social-profile' | 'search-or-social-profile' | 'unknown';
+    extractionAllowedForWebsiteAudit?: boolean;
     websiteOwnershipReason?: string;
     officialWebsiteCandidateUrl?: string;
     directoryExtractedCandidates?: DirectoryCandidate[];
@@ -376,6 +385,13 @@ export interface Lead {
     guestGuideSecondEmail?: string;
     contactQuality?: ContactQuality;
     websiteOwnershipStatus?: WebsiteOwnershipStatus;
+    sourceUrlClassification?: SourceUrlClassification;
+    socialProfileStatus?: 'none' | 'social-profile' | 'social-profile-limited' | 'social-platform-login';
+    ownedWebsiteDetected?: boolean;
+    needsOwnedWebsite?: boolean;
+    needsScreenshotAnalysis?: boolean;
+    analysisSource?: 'owned-website' | 'social-profile' | 'search-or-social-profile' | 'unknown';
+    extractionAllowedForWebsiteAudit?: boolean;
     websiteOwnershipReason?: string;
     officialWebsiteCandidateUrl?: string;
     directoryExtractedCandidates?: DirectoryCandidate[];
@@ -425,7 +441,10 @@ export const publicProfileSourceLabels: Record<PublicProfileSourceType, string> 
     booking: 'Booking',
     airbnb: 'Airbnb',
     google: 'Google',
+    facebook: 'Facebook',
+    instagram: 'Instagram',
     website: 'Vlastni web',
+    'social-profile': 'Veřejný profil',
     other: 'Jine',
 };
 
