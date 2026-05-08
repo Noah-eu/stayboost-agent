@@ -5,6 +5,7 @@ import { extractAuditObservations } from './auditExtractor';
 import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, hasForbiddenOutreachLanguage, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
+import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { mockLeads } from './mockData';
 import {
     LeadAgentAnalysis,
@@ -230,6 +231,41 @@ const websiteExtractionSummary = (leadName: string, extraction: WebsiteExtractio
     return `${leadName || 'Kandidat'}: přečteny ${validCount} ${validLabel} vlastního webu, ${invalidCount} ${skippedLabel}. Kontakt: ${extraction.contact.emails.length > 0 || extraction.contact.phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${extraction.setupOpportunitySignals.length}. Fix signály: ${extraction.fixOpportunitySignals.length}.`;
 };
 
+const normalizeForSignalMatch = (value = '') => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const extractionTextForSignals = (extraction: WebsiteExtractionResult) => normalizeForSignalMatch([
+    extraction.summary,
+    ...(extraction.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
+    ...(extraction.parkingSignals ?? []),
+    ...(extraction.strengths ?? []),
+].join('\n'));
+const parkingMissingSignalPattern = /parkov[aá]n[ií]|parking/i;
+const normalizeParkingSignals = (extraction: WebsiteExtractionResult): WebsiteExtractionResult => {
+    const searchable = extractionTextForSignals(extraction);
+    const parkingSignals = uniqueStrings([
+        ...(extraction.parkingSignals ?? []),
+        /parkoviste|parkovani|parking|garage|garaz/.test(searchable) ? 'Web zmiňuje parkování' : '',
+        /nabijeci stanice|elektromobil|ev charging|charging station/.test(searchable) ? 'Web zmiňuje parkování / nabíjecí stanici' : '',
+    ]);
+    const suppressedMissingSignals = uniqueStrings([
+        ...(extraction.suppressedMissingSignals ?? []),
+        ...((parkingSignals.length > 0 ? extraction.missingPublicInfoSignals.filter((signal) => parkingMissingSignalPattern.test(signal)) : [])
+            .map((signal) => `Potlačeno: ${signal}`)),
+    ]);
+
+    return {
+        ...extraction,
+        parkingSignals,
+        missingPublicInfoSignals: parkingSignals.length > 0
+            ? extraction.missingPublicInfoSignals.filter((signal) => !parkingMissingSignalPattern.test(signal))
+            : extraction.missingPublicInfoSignals,
+        suppressedMissingSignals,
+        strengths: uniqueStrings([
+            ...(extraction.strengths ?? []),
+            parkingSignals.length > 0 ? 'Web zmiňuje parkování / nabíjecí stanici.' : '',
+        ]),
+    };
+};
+
 const hasCompletedAgentAnalysis = (lead: Lead) => lead.agentLeadStatus === 'analyzed' || (lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
 
 const sourceMaterialHasSkippedPageDump = (material: SourceMaterial, skippedPages: WebsiteExtractionResult['skippedPages']) => {
@@ -296,6 +332,8 @@ const softenQuickWinWhy = (quickWin: QuickWin): QuickWin => {
     };
 };
 
+const prepareFreeIdeas = (lead: Lead, quickWins: QuickWin[]) => buildSpecificFreeIdeas(lead, quickWins).map((win) => softenQuickWinWhy(annotateQuickWinSpecificity(win, lead)));
+
 const invalidSignalReason = (signal: string, hasWebsiteEmail: boolean) => {
     const phoneMatch = signal.match(invalidPhoneSignalPattern);
 
@@ -315,7 +353,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
 
     const validPhones = uniqueStrings((extraction.contact.phones ?? []).filter(isLikelyPhoneNumber));
     const removedInvalidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => !isLikelyPhoneNumber(phone)));
-    const normalizedExtraction: WebsiteExtractionResult = {
+    const normalizedExtraction: WebsiteExtractionResult = normalizeParkingSignals({
         ...extraction,
         contact: { ...extraction.contact, phones: validPhones },
         pagesExtracted: extraction.pagesExtracted.filter((page) => !isInvalidExtractedPage(page)).map((page) => ({
@@ -328,7 +366,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
                 .filter(isInvalidExtractedPage)
                 .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const })),
         ],
-    };
+    });
     normalizedExtraction.validPagesCount = normalizedExtraction.pagesExtracted.length;
     normalizedExtraction.invalidPagesCount = normalizedExtraction.skippedPages.length;
     normalizedExtraction.summary = websiteExtractionSummary(lead.name, normalizedExtraction);
@@ -383,14 +421,14 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         websiteExtraction: normalizedExtraction,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
-        structuredQuickWins: (lead.structuredQuickWins ?? []).map(softenQuickWinWhy),
+        structuredQuickWins: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []),
         clientMiniAudit: sanitizeClientText(lead.clientMiniAudit),
         generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit),
         generatedOutreach: sanitizeClientText(lead.generatedOutreach),
         generatedFollowUp: sanitizeClientText(lead.generatedFollowUp),
         generatedOffer: sanitizeClientText(lead.generatedOffer),
         freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
-        freeIdeas: (lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []).slice(0, 3).map(softenQuickWinWhy),
+        freeIdeas: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []),
         paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(lead)),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
@@ -424,10 +462,11 @@ const workflowNextAction = (lead: Lead) => {
     if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
     if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
     if (hasClientCopyIssue(clientOutputValues(lead))) return 'needs-copy-review';
+    if (freeIdeaSpecificityDiagnostics(lead).genericFreeIdeasCount >= 2 || freeIdeaSpecificityDiagnostics(lead).repeatedTemplateWarning) return 'needs-idea-review';
     return 'ready-to-review';
 };
 
-const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => [
+const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => buildSpecificFreeIdeas(lead, []).length >= 3 ? buildSpecificFreeIdeas(lead, []) : [
     {
         id: `quick-win-${crypto.randomUUID()}`,
         title: 'Zpřehlednit stránku před příjezdem',
@@ -455,7 +494,7 @@ const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
     const completeWins = quickWins.filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).slice(0, 3);
     const fallbackWins = fallbackWebsiteQuickWins(lead).filter((fallbackWin) => !completeWins.some((win) => win.title === fallbackWin.title));
 
-    return [...completeWins, ...fallbackWins].slice(0, 3).map((win) => softenQuickWinWhy({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` }));
+    return prepareFreeIdeas(lead, [...completeWins, ...fallbackWins].slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` })));
 };
 
 const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
@@ -494,6 +533,8 @@ const emptyQuickWin = (): QuickWin => ({
     why: '',
     action: '',
     sourceEvidence: '',
+    candidateSpecificity: 'generic',
+    uniqueBusinessAngle: '',
 });
 
 const emptySourceMaterial = (): SourceMaterial => ({
@@ -626,7 +667,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const }));
     const validPagesExtracted = rawPagesExtracted.filter((page) => !isInvalidExtractedPage(page));
     const normalizedSkippedPages = [...(lead.websiteExtraction?.skippedPages ?? []), ...invalidPagesFromExtraction];
-    const normalizedWebsiteExtraction = lead.websiteExtraction ? {
+    const normalizedWebsiteExtraction = lead.websiteExtraction ? normalizeParkingSignals({
         provider: lead.websiteExtraction.provider ?? 'fallback',
         status: lead.websiteExtraction.status ?? 'partial',
         websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
@@ -649,6 +690,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         guestGuideSignals: lead.websiteExtraction.guestGuideSignals ?? [],
         automationSignals: lead.websiteExtraction.automationSignals ?? [],
         missingPublicInfoSignals: lead.websiteExtraction.missingPublicInfoSignals ?? [],
+        suppressedMissingSignals: lead.websiteExtraction.suppressedMissingSignals ?? [],
         likelyManualProcessSignals: lead.websiteExtraction.likelyManualProcessSignals ?? [],
         strengths: lead.websiteExtraction.strengths ?? [],
         risks: lead.websiteExtraction.risks ?? [],
@@ -657,7 +699,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         evidenceLimits: lead.websiteExtraction.evidenceLimits ?? [],
         summary: lead.websiteExtraction.summary ?? '',
         debug: lead.websiteExtraction.debug ?? { debugId: '', elapsedMs: 0, partial: false, reason: null },
-    } : undefined;
+    }) : undefined;
     const sanitizedGeneratedOutreach = sanitizeClientText(lead.generatedOutreach ?? '');
     const shouldRegenerateWebsiteOutreach = normalizedWebsiteExtraction && (lead.screenshots ?? []).length === 0 && (
         websiteOnlyOutreachMismatchPattern.test(sanitizedGeneratedOutreach)
@@ -668,7 +710,8 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const normalizedGeneratedOutreach = shouldRegenerateWebsiteOutreach
         ? buildWebsiteOnlyOutreach({ leadName: normalizedName, websiteExtraction: normalizedWebsiteExtraction, signals: lead.publicSignals ?? [] })
         : sanitizedGeneratedOutreach;
-    const normalizedFreeIdeas = (lead.freeIdeas ?? migrateQuickWins(lead)).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).slice(0, 3);
+    const migratedQuickWins = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, migrateQuickWins(lead));
+    const normalizedFreeIdeas = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, lead.freeIdeas ?? migratedQuickWins);
 
     const normalizedLead: Lead = {
         ...emptyLead(),
@@ -683,7 +726,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         publicSignals: lead.publicSignals ?? [],
         quickWins: lead.quickWins ?? [],
         proposedQuickWins: lead.proposedQuickWins ?? lead.quickWins ?? [],
-        structuredQuickWins: migrateQuickWins(lead),
+        structuredQuickWins: migratedQuickWins,
         selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
         internalAgentBrief: lead.internalAgentBrief ?? '',
         clientMiniAudit: normalizedMiniAudit,
@@ -975,7 +1018,7 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         generatedFollowUp: sanitizeClientText(analysis.followUp.trim() || generateFollowUp(leadWithClientAudit)),
         generatedOffer: generateOffer(leadWithClientAudit),
         freeIdeaTeaser: generateFreeIdeaTeaser(leadWithClientAudit),
-        freeIdeas: leadWithClientAudit.structuredQuickWins.slice(0, 3),
+        freeIdeas: prepareFreeIdeas(leadWithClientAudit, leadWithClientAudit.structuredQuickWins),
         paidNextStep: generateOffer(leadWithClientAudit),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
@@ -1528,10 +1571,10 @@ function App() {
         const websiteExtraction = candidate.websiteExtraction;
         const candidateText = candidate.sourceSnippets.join('\n');
         const hasAgentAnalysis = Boolean(analysis);
-        const quickWins = (analysis?.quickWins ?? []).slice(0, 3).map((win) => ({
+        const quickWins = prepareFreeIdeas({ ...emptyLead(), websiteExtraction, strengths: analysis?.strengths.join('\n') ?? candidate.signals.join('\n'), publicSignals: candidate.signals, checkInParkingInfo: [...(websiteExtraction?.arrivalSignals ?? []), ...(websiteExtraction?.parkingSignals ?? [])].join('\n') }, (analysis?.quickWins ?? []).slice(0, 3).map((win) => ({
             ...win,
             id: win.id || `quick-win-${crypto.randomUUID()}`,
-        }));
+        })));
         const agentSourceContent = [
             `Evidence summary: ${candidate.evidenceSummary}`,
             `Qualification: ${analysis?.qualificationReason ?? candidate.qualificationReason}`,
@@ -1751,7 +1794,7 @@ function App() {
         }
 
         const analysis = response.analysis;
-        const quickWins = analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: `quick-win-${crypto.randomUUID()}` }));
+        const quickWins = prepareFreeIdeas(runningLead, analysis.quickWins.slice(0, 3).map((win) => ({ ...win, id: `quick-win-${crypto.randomUUID()}` })));
         const nextLead: Lead = {
             ...runningLead,
             screenshotAnalysis: analysis,
@@ -1827,7 +1870,7 @@ function App() {
         };
         const generatedText = generators[field](draftLead);
         const nextLead = field === 'clientMiniAudit' || field === 'generatedMiniAudit'
-            ? { ...draftLead, clientMiniAudit: generatedText, generatedMiniAudit: generatedText, freeIdeas: draftLead.structuredQuickWins.slice(0, 3) }
+            ? { ...draftLead, clientMiniAudit: generatedText, generatedMiniAudit: generatedText, freeIdeas: prepareFreeIdeas(draftLead, draftLead.structuredQuickWins) }
             : field === 'generatedOffer'
                 ? { ...draftLead, generatedOffer: generatedText, paidNextStep: generatedText }
                 : field === 'generatedOutreach'

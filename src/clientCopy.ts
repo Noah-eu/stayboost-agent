@@ -1,4 +1,5 @@
 import type { WebsiteExtractionResult } from './types';
+import { detectCandidateSpecificSignals } from './ideaSpecificity';
 
 const prefixPattern = /^(kontakt|contact|rooms|pokoje)\s*[-:|]\s*/i;
 
@@ -207,19 +208,26 @@ export const hasClientCopyIssue = (outputs: string[]) => !clientTextSanitizerDia
 
 export function buildFallbackClientMiniAudit(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
+    const practicalEvidence = signals.filter((signal) => /parkovi|nabíjecí|kontakt|recepce/i.test(signal)).join(', ') || 'kontakt a praktické informace';
+    const stayEvidence = signals.filter((signal) => /restaurace|relax|Berounka|ostrov|altán/i.test(signal)).join(', ') || 'služby a okolí';
+    const segmentEvidence = signals.filter((signal) => /romantický|konferenční|altán|Karlštejn/i.test(signal)).join(', ') || 'různé typy pobytu';
 
     return sanitizeClientText(`3 nápady zdarma pro ${displayName}
 
-Tyhle body bych poslal až po souhlasu. Jsou myšlené jako malá ukázka pohledu zvenku, ne jako hotový rozbor.
+Co už působí dobře
+${signals.length ? `Web dobře ukazuje konkrétní prvky: ${signals.slice(0, 6).join(', ')}.` : 'Web působí jako dobrý základ pro krátký předpříjezdový přehled.'}
 
-1. Příjezd na jedno místo
-Krátce soustředit adresu, čas příjezdu, check-in a kontakt pro poslední dotazy.
+3 konkrétní nápady
+1. Předpříjezdový přehled pro hosty: spojit adresu, cestu, recepci, ${practicalEvidence} a kontakt do jedné krátké zprávy.
+2. Využít silné stránky areálu před pobytem: hostovi připomenout ${stayEvidence} ještě před příjezdem.
+3. Rozdělit informace podle typu pobytu: jinak mluvit k romantickému víkendu, svatbě nebo akci, firemnímu pobytu a výletu na Karlštejn podle toho, co web ukazuje.
 
-2. Parkování bez hledání
-Doplnit jednoduchou větu, kde host zaparkuje a co udělat při příjezdu autem.
+Proč by to mohlo pomoct hostovi
+Host dostane praktické věci i důvod těšit se na pobyt na jednom místě, bez hledání v různých částech webu nebo zpráv.
 
-3. Mini FAQ před příjezdem
-Připravit pár odpovědí na příjezd, parkování, snídani, vybavení a okolí.`);
+Co by mohl být placený další krok
+Pokud by ukázka dávala smysl, navázal bych jednoduchou sadou předpříjezdových zpráv podle ${segmentEvidence}.`);
 }
 
 export function buildFreeIdeaTeaser(input: { leadName: string }) {
@@ -234,12 +242,16 @@ export function buildPaidNextStep(input: { leadName: string }) {
 
 export function buildFallbackOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
+    const examples = signals.some((signal) => /restaurace|relax|parkovi|nabíjecí/i.test(signal))
+        ? 'příjezd, parkování, restauraci, relax nebo tipy před pobytem'
+        : 'příjezd, parkování, check-in a nejčastější dotazy';
 
     return sanitizeClientText(`Dobrý den,
 
 omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.
 
-Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.
+Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například ${examples}.
 
 Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
 
@@ -250,12 +262,16 @@ David`);
 
 export function buildWebsiteOnlyOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const signals = detectCandidateSpecificSignals({ websiteExtraction: input.websiteExtraction, strengths: '', publicSignals: input.signals ?? [], checkInParkingInfo: '' }).map((signal) => signal.label);
+    const examples = signals.some((signal) => /restaurace|relax|parkovi|nabíjecí/i.test(signal))
+        ? 'příjezd, parkování, restauraci, relax nebo tipy před pobytem'
+        : 'příjezd, parkování, check-in a nejčastější dotazy';
 
     return sanitizeClientText(`Dobrý den,
 
 omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.
 
-Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.
+Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například ${examples}.
 
 Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
 

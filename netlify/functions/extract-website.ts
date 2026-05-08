@@ -86,7 +86,11 @@ const makeDebugId = () => `website-${Date.now().toString(36)}-${Math.random().to
 const elapsed = (startedAt: number) => Date.now() - startedAt;
 const unique = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 const bounded = (value: number) => Math.max(0, Math.min(100, value));
-const includesAny = (value: string, keywords: string[]) => keywords.some((keyword) => value.includes(keyword));
+const normalizeForMatch = (value = '') => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const includesAny = (value: string, keywords: string[]) => {
+    const normalizedValue = normalizeForMatch(value);
+    return keywords.some((keyword) => normalizedValue.includes(normalizeForMatch(keyword)));
+};
 const trimText = (value = '', maxLength = MAX_PREVIEW) => value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 
 const safeUrl = (value = '') => {
@@ -256,7 +260,8 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         { label: 'Web zminuje cas check-inu nebo check-outu', keywords: ['check-in', 'check in', 'check-out', 'check out'] },
     ]);
     const parkingSignals = signalMatches(content, [
-        { label: 'Web obsahuje parkovani', keywords: ['parkovani', 'parking', 'garage', 'garaz'] },
+        { label: 'Web zmiňuje parkování', keywords: ['parkoviště', 'parkoviste', 'parkování', 'parkovani', 'parking', 'garage', 'garaz'] },
+        { label: 'Web zmiňuje parkování / nabíjecí stanici', keywords: ['nabíjecí stanice', 'nabijeci stanice', 'nabíjení elektromobilů', 'nabijeni elektromobilu', 'elektromobil', 'EV charging', 'charging station'] },
     ]);
     const faqSignals = signalMatches(content, [
         { label: 'Web obsahuje FAQ nebo casto kladene dotazy', keywords: ['faq', 'casto kladene', 'často kladené', 'otazky', 'questions'] },
@@ -270,8 +275,13 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
     ]);
 
     const missingPublicInfoSignals: string[] = [];
+    const suppressedMissingSignals: string[] = [];
     if (arrivalSignals.length === 0) missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne strukturovana sekce prijezd / check-in.');
-    if (parkingSignals.length === 0) missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne videt parkovani.');
+    if (parkingSignals.length === 0) {
+        missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne videt parkovani.');
+    } else {
+        suppressedMissingSignals.push('Parkovani neni oznacene jako chybejici, protoze web zminuje parkovani nebo nabijeci stanici.');
+    }
     if (faqSignals.length === 0) missingPublicInfoSignals.push('Na prectenem verejnem webu neni videt FAQ / casto kladene dotazy.');
     if (guestGuideSignals.length === 0) missingPublicInfoSignals.push('Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci.');
 
@@ -284,7 +294,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         emails.length > 0 ? 'Na webu je dohledatelny e-mail.' : '',
         phones.length > 0 ? 'Na webu je dohledatelny telefon.' : '',
         arrivalSignals.length > 0 ? 'Prijezd/check-in je na webu alespon castecne popsany.' : '',
-        parkingSignals.length > 0 ? 'Parkovani je na webu zminene.' : '',
+        parkingSignals.length > 0 ? 'Web zmiňuje parkování / nabíjecí stanici.' : '',
         faqSignals.length > 0 ? 'FAQ nebo odpovedi hostum jsou verejne strukturovane.' : '',
     ]);
     const setupOpportunitySignals = missingPublicInfoSignals.filter((signal) => !signal.includes('guest guide')).concat(
@@ -320,6 +330,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         guestGuideSignals,
         automationSignals,
         missingPublicInfoSignals,
+        suppressedMissingSignals,
         likelyManualProcessSignals,
         strengths,
         risks,

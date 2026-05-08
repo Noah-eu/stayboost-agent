@@ -1,5 +1,6 @@
 import type { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAgentSession } from './leadAgentTypes';
 import { cleanLeadDisplayName, clientTextSanitizerDiagnostics } from './clientCopy';
+import { freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import type { Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
 
 export type DebugExportType = 'run' | 'candidate' | 'lead' | 'website-extraction';
@@ -77,6 +78,7 @@ const leadWorkflowState = (lead: Lead) => {
     const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
     const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
     const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
 
     return {
         hasWebsiteExtraction,
@@ -84,6 +86,7 @@ const leadWorkflowState = (lead: Lead) => {
         hasQuickWins,
         hasClientOutputs,
         clientTextReady: clientDiagnostics.clientTextReady,
+        freeIdeasSpecificEnough: ideaDiagnostics.genericFreeIdeasCount < 2 && !ideaDiagnostics.repeatedTemplateWarning,
         nextRecommendedAction: hasWebsiteExtraction && !hasAgentAnalysis
             ? 'analyze-from-extracted-website'
             : !hasWebsiteExtraction
@@ -94,7 +97,9 @@ const leadWorkflowState = (lead: Lead) => {
                         ? 'generate-client-outputs'
                         : !clientDiagnostics.clientTextReady
                             ? 'needs-copy-review'
-                        : 'ready-to-review',
+                            : ideaDiagnostics.genericFreeIdeasCount >= 2 || ideaDiagnostics.repeatedTemplateWarning
+                                ? 'needs-idea-review'
+                                : 'ready-to-review',
     };
 };
 
@@ -180,6 +185,7 @@ export function createCandidateDebugExport(candidate: LeadAgentCandidate, contex
 export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadAgentDiagnostic; analysis?: LeadAgentAnalysis } = {}, options: DebugExportOptions = {}) {
     const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
     const latestDiagnostic = lead.latestAnalysisDiagnostic as { fallbackReason?: string } | undefined;
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
 
     return withMetadata('lead', {
         lead,
@@ -189,6 +195,8 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         freeIdeaTeaser: lead.freeIdeaTeaser ?? '',
         freeIdeas: lead.freeIdeas ?? lead.structuredQuickWins ?? [],
         paidNextStep: lead.paidNextStep ?? lead.generatedOffer ?? '',
+        ...ideaDiagnostics,
+        suppressedMissingSignals: lead.websiteExtraction?.suppressedMissingSignals ?? [],
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),
         removedInvalidSignals: lead.evidenceCanonicalizationDiagnostic?.removedInvalidSignals ?? [],
         removedInvalidPhones: lead.evidenceCanonicalizationDiagnostic?.removedInvalidPhones ?? [],

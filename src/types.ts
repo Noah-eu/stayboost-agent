@@ -45,6 +45,8 @@ export interface QuickWin {
     why: string;
     action: string;
     sourceEvidence: string;
+    candidateSpecificity?: 'specific' | 'generic';
+    uniqueBusinessAngle?: string;
 }
 
 export interface SourceMaterial {
@@ -135,6 +137,7 @@ export interface WebsiteExtractionResult {
     guestGuideSignals: string[];
     automationSignals: string[];
     missingPublicInfoSignals: string[];
+    suppressedMissingSignals?: string[];
     likelyManualProcessSignals: string[];
     strengths: string[];
     risks: string[];

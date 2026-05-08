@@ -1,5 +1,6 @@
 import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, LeadAgentDiscoverResponse, LeadAgentHealth, LeadAgentSearchRequest } from './leadAgentTypes';
 import { buildFallbackClientMiniAudit, buildFallbackFollowUp, buildFallbackOffer, buildFallbackOutreach, cleanLeadDisplayName, sanitizeClientText } from './clientCopy';
+import { buildSpecificFreeIdeas } from './ideaSpecificity';
 import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult, WebsiteExtractionResult } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
@@ -240,7 +241,7 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
         const targetOffer = candidate.targetOffer === 'self-checkin-setup' && ![...websiteExtraction.automationSignals, ...websiteExtraction.guestGuideSignals, ...candidate.sourceSnippets].join(' ').toLowerCase().includes('self check-in')
             ? 'guest-guide'
             : candidate.targetOffer === 'skip' ? 'guest-guide' : candidate.targetOffer;
-        const quickWins = [
+        const quickWins = buildSpecificFreeIdeas({ name: candidate.name, websiteExtraction, strengths: websiteExtraction.strengths.join('\n'), publicSignals: candidate.signals, checkInParkingInfo: websiteExtraction.parkingSignals.join('\n') }, [
             {
                 id: `quick-win-${crypto.randomUUID()}`,
                 title: 'Zpřehlednit stránku „Před příjezdem“',
@@ -262,7 +263,7 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
                 action: 'Vedle kontaktu doplnit krátkou větu pro situace jako příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
                 sourceEvidence: websiteExtraction.contact.contactPageUrl || websiteExtraction.websiteUrl,
             },
-        ];
+        ]);
 
         return {
             runId: candidate.runId,
@@ -531,6 +532,7 @@ const websiteExtractionFallback = (candidate: LeadAgentCandidate, fallbackReason
     missingPublicInfoSignals: isBlockedAggregatorUrl(candidate.websiteUrl)
         ? ['Zdroj je OTA/agregátor, Website Extractor ho nečte.']
         : ['Web nebyl v lokálním režimu přečten automaticky.'],
+    suppressedMissingSignals: [],
     likelyManualProcessSignals: [],
     strengths: [],
     risks: [isBlockedAggregatorUrl(candidate.websiteUrl) ? 'unsupported_source: ota_or_aggregator' : `Website extraction neběžela: ${fallbackReason}`],
@@ -581,6 +583,7 @@ const mockWebsiteExtraction = (candidate: LeadAgentCandidate): WebsiteExtraction
         guestGuideSignals: [],
         automationSignals: [],
         missingPublicInfoSignals: ['Na přečteném veřejném webu není vidět FAQ / často kladené dotazy.', 'Z veřejného webu nelze ověřit, zda hosté dostávají neveřejný guest guide po rezervaci.'],
+        suppressedMissingSignals: [],
         likelyManualProcessSignals: ['Malý lokální provoz / penzion / apartmány', 'Rezervace nebo dotazy pravděpodobně přes telefon/e-mail'],
         strengths: ['Na webu je dohledatelný e-mail.', 'Na webu je dohledatelný telefon.', 'Vlastní web mimo OTA agregátor'],
         risks: ['Demo extraction: nejde o reálně přečtený web.'],

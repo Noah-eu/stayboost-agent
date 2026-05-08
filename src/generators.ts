@@ -1,4 +1,5 @@
 import { buildFreeIdeaTeaser, buildPaidNextStep, buildWebsiteOnlyOutreach, sanitizeClientText } from './clientCopy';
+import { detectCandidateSpecificSignals } from './ideaSpecificity';
 import { Lead } from './types';
 
 const hasText = (value = '') => value.trim().length > 0;
@@ -113,15 +114,27 @@ export function generateMiniAudit(lead: Lead) {
 
     const wins = gate.completeWins.slice(0, 3);
     const proposals = wins.map((win, index) => `${index + 1}. ${cleanSentence(win.title)}
-${cleanSentence(win.action)}.`).join('\n\n');
+${cleanSentence(win.action)}.
+Podklad: ${cleanSentence(win.sourceEvidence)}.`).join('\n\n');
+    const strengths = detectCandidateSpecificSignals(lead).map((signal) => signal.label).slice(0, 6);
+    const why = wins.map((win) => cleanSentence(win.why)).filter(Boolean).join(' ');
+    const paidStep = cleanSentence(lead.paidNextStep || generateOffer(lead));
 
     return sanitizeGeneratedText(`3 nápady zdarma pro ${leadTitle(lead)}
 
 Poslat až po souhlasu. Beru to jako malou ukázku pohledu zvenku, ne jako rozbor ani kritiku.
 
+Co už působí dobře
+${strengths.length ? strengths.join(', ') : cleanSentence(lead.strengths) || 'Web už dává dobrý základ pro předpříjezdovou komunikaci'}.
+
+3 konkrétní nápady
 ${proposals}
 
-Pokud už mají podobné informace vyřešené v komunikaci po rezervaci, tím lépe.`, 180);
+Proč by to mohlo pomoct hostovi
+${why || 'Host dostane praktické informace a důvody těšit se na pobyt přehledně před příjezdem.'}
+
+Co by mohl být placený další krok
+${paidStep}.`, 260);
 }
 
 export function generateFirstOutreach(lead: Lead) {

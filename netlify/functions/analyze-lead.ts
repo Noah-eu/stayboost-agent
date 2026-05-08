@@ -37,6 +37,7 @@ type CandidateInput = {
         guestGuideSignals?: string[];
         automationSignals?: string[];
         missingPublicInfoSignals?: string[];
+        suppressedMissingSignals?: string[];
         likelyManualProcessSignals?: string[];
         strengths?: string[];
         risks?: string[];
@@ -123,12 +124,14 @@ const analysisJsonSchema = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['title', 'why', 'action', 'sourceEvidence'],
+                required: ['title', 'why', 'action', 'sourceEvidence', 'candidateSpecificity', 'uniqueBusinessAngle'],
                 properties: {
                     title: { type: 'string' },
                     why: { type: 'string' },
                     action: { type: 'string' },
                     sourceEvidence: { type: 'string' },
+                    candidateSpecificity: { type: 'string', enum: ['specific', 'generic'] },
+                    uniqueBusinessAngle: { type: 'string' },
                 },
             },
         },
@@ -243,17 +246,97 @@ const sanitizeQuickWinWhy = (title = '', why = '') => {
     return sanitizeClientText(why);
 };
 
-const bestHumanSignals = (signals: string[]) => [...new Set(signals.map(humanizeSignal).filter(Boolean))].slice(0, 3);
+type SpecificSignalKey = 'parking' | 'ev' | 'contact' | 'restaurant' | 'terrace' | 'relax' | 'river' | 'island' | 'wedding' | 'conference' | 'romantic' | 'castle';
+const specificSignalMatchers: Array<{ key: SpecificSignalKey; label: string; keywords: string[] }> = [
+    { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
+    { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'elektromobil', 'ev charging', 'charging station'] },
+    { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email'] },
+    { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant'] },
+    { key: 'terrace', label: 'terasa', keywords: ['terasa', 'terrace'] },
+    { key: 'relax', label: 'relax centrum', keywords: ['relax centrum', 'wellness', 'spa'] },
+    { key: 'river', label: 'Berounka', keywords: ['berounka'] },
+    { key: 'island', label: 'soukromý ostrov', keywords: ['soukromy ostrov', 'ostrov'] },
+    { key: 'wedding', label: 'svatební altán', keywords: ['svatebni altan', 'svatba', 'party stan', 'gril'] },
+    { key: 'conference', label: 'konferenční prostory', keywords: ['konferencni prostory', 'konference', 'firemni akce', 'skoleni'] },
+    { key: 'romantic', label: 'romantický hotel', keywords: ['romanticky hotel', 'romanticky vikend'] },
+    { key: 'castle', label: 'Karlštejn', keywords: ['karlstejn', 'hrad karlstejn', 'pod hradem'] },
+];
+
+const candidateSpecificSignals = (candidate: CandidateInput) => {
+    const website = candidate.websiteExtraction;
+    const text = normalizeForMatch([
+        website?.summary,
+        ...(website?.pagesExtracted || []).flatMap((page) => [page.url, page.title, page.textPreview]),
+        ...(website?.websiteSignals || []),
+        ...(website?.arrivalSignals || []),
+        ...(website?.parkingSignals || []),
+        ...(website?.strengths || []),
+        ...(candidate.signals || []),
+    ].filter(Boolean).join('\n'));
+    const signals = specificSignalMatchers.filter((matcher) => matcher.keywords.some((keyword) => text.includes(normalizeForMatch(keyword))));
+    return [...new Map(signals.map((signal) => [signal.key, signal])).values()];
+};
+
+const hasSignal = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[]) => signals.some((signal) => keys.includes(signal.key));
+const labelsFor = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[]) => signals.filter((signal) => keys.includes(signal.key)).map((signal) => signal.label);
+const evidenceFor = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[], fallback: string) => labelsFor(signals, keys).join(', ') || fallback;
+
+const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
+    const signals = candidateSpecificSignals(candidate);
+    const website = candidate.websiteExtraction;
+    const pages = (website?.pagesExtracted || []).map((page) => page.url).join(', ') || website?.websiteUrl || candidate.evidenceSummary || name;
+    const wins: Array<{ title: string; why: string; action: string; sourceEvidence: string; candidateSpecificity: 'specific' | 'generic'; uniqueBusinessAngle: string }> = [];
+
+    if (hasSignal(signals, ['parking', 'ev', 'contact'])) {
+        wins.push({
+            title: 'Předpříjezdový přehled pro hosty',
+            why: `Web už zmiňuje ${evidenceFor(signals, ['parking', 'ev', 'contact'], 'praktické kontaktní informace')}; hostovi může pomoct dostat tyto body pohromadě ještě před cestou.`,
+            action: `Spojit adresu, cestu, recepci, ${hasSignal(signals, ['parking']) ? 'parkování' : 'příjezd'}, ${hasSignal(signals, ['ev']) ? 'EV nabíjení, ' : ''}kontakt a časové informace do krátkého přehledu před pobytem.`,
+            sourceEvidence: evidenceFor(signals, ['parking', 'ev', 'contact'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'praktická orientace před příjezdem navázaná na parkování, EV nabíjení a kontakt',
+        });
+    }
+
+    if (hasSignal(signals, ['restaurant', 'terrace', 'relax', 'river', 'island', 'wedding'])) {
+        wins.push({
+            title: 'Využít silné stránky areálu před pobytem',
+            why: `Web má silné pobytové motivy: ${evidenceFor(signals, ['restaurant', 'terrace', 'relax', 'river', 'island', 'wedding'], 'služby a okolí')}. Ty mohou hosta naladit ještě před příjezdem.`,
+            action: `Do zprávy před příjezdem přidat krátké připomenutí toho, co lze využít na místě: ${labelsFor(signals, ['restaurant', 'relax', 'river', 'island', 'wedding']).join(', ') || 'služby, okolí a tipy před pobytem'}.`,
+            sourceEvidence: evidenceFor(signals, ['restaurant', 'terrace', 'relax', 'river', 'island', 'wedding'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'předpobytové naladění hosta přes konkrétní služby a místo',
+        });
+    }
+
+    if (hasSignal(signals, ['romantic', 'wedding', 'conference', 'castle', 'river'])) {
+        wins.push({
+            title: 'Rozdělit informace podle typu pobytu',
+            why: `Web oslovuje více situací: ${evidenceFor(signals, ['romantic', 'wedding', 'conference', 'castle', 'river'], 'různé typy pobytu')}. Každý host může před příjezdem potřebovat trochu jiný kontext.`,
+            action: 'Připravit varianty předpříjezdového přehledu pro romantický víkend, svatbu nebo akci, firemní pobyt a výlet na Karlštejn podle toho, co si host rezervoval.',
+            sourceEvidence: evidenceFor(signals, ['romantic', 'wedding', 'conference', 'castle', 'river'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'segmentace komunikace podle motivu pobytu',
+        });
+    }
+
+    return wins;
+};
 
 const fallbackClientMiniAudit = (name: string, candidate: CandidateInput) => {
     const displayName = cleanLeadDisplayName(name);
+    const signals = candidateSpecificSignals(candidate).map((signal) => signal.label).slice(0, 6);
+    const ideas = specificFallbackQuickWins(name, candidate);
+    const ideaText = ideas.length >= 3 ? ideas.slice(0, 3).map((idea, index) => `${index + 1}. ${idea.title}: ${idea.action}`).join('\n') : '1. Předpříjezdový přehled pro hosty\n2. Využít silné stránky areálu před pobytem\n3. Rozdělit informace podle typu pobytu';
 
-    return sanitizeClientText(`3 nápady zdarma pro ${displayName}\n\nPoslat až po souhlasu. Beru to jako malou ukázku pohledu zvenku, ne jako rozbor ani kritiku.\n\n1. Příjezd na jedno místo\nKrátce soustředit adresu, čas příjezdu, check-in a kontakt pro poslední dotazy.\n\n2. Parkování bez hledání\nDoplnit jednoduchou větu, kde host zaparkuje a co udělat při příjezdu autem.\n\n3. Mini FAQ před příjezdem\nPřipravit pár odpovědí na příjezd, parkování, snídani, vybavení a okolí.`);
+    return sanitizeClientText(`3 nápady zdarma pro ${displayName}\n\nCo už působí dobře\n${signals.length ? `Web ukazuje konkrétní prvky: ${signals.join(', ')}.` : 'Web dává dobrý základ pro předpříjezdovou komunikaci.'}\n\n3 konkrétní nápady\n${ideaText}\n\nProč by to mohlo pomoct hostovi\nHost dostane praktické věci i důvody těšit se na pobyt na jednom místě.\n\nCo by mohl být placený další krok\nNavázat jednoduchou sadou předpříjezdových zpráv podle typu pobytu.`);
 };
 
 const fallbackOutreach = (name: string, candidate: CandidateInput) => {
     const displayName = cleanLeadDisplayName(name);
-    return sanitizeClientText(`Dobrý den,\n\nomlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.\n\nNevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.\n\nBeru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.\n\nMá smysl vám ty 3 body poslat?\n\nDavid`);
+    const signals = candidateSpecificSignals(candidate).map((signal) => signal.label);
+    const examples = signals.some((signal) => /restaurace|relax|parkovi|nabíjecí/i.test(signal)) ? 'příjezd, parkování, restauraci, relax nebo tipy před pobytem' : 'příjezd, parkování, check-in a nejčastější dotazy';
+    return sanitizeClientText(`Dobrý den,\n\nomlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.\n\nNevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například ${examples}.\n\nBeru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.\n\nMá smysl vám ty 3 body poslat?\n\nDavid`);
 };
 
 const websiteOnlyOutreach = (name: string, candidate: CandidateInput) => {
@@ -312,6 +395,7 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
         guestGuideSignals: trimList(candidate.websiteExtraction.guestGuideSignals, 6, 160),
         automationSignals: trimList(candidate.websiteExtraction.automationSignals, 6, 160),
         missingPublicInfoSignals: trimList(candidate.websiteExtraction.missingPublicInfoSignals, 8, 180),
+        suppressedMissingSignals: trimList(candidate.websiteExtraction.suppressedMissingSignals, 8, 180),
         likelyManualProcessSignals: trimList(candidate.websiteExtraction.likelyManualProcessSignals, 8, 160),
         strengths: trimList(candidate.websiteExtraction.strengths, 8, 160),
         risks: trimList(candidate.websiteExtraction.risks, 8, 180),
@@ -347,24 +431,30 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             strengths: [...new Set([...(websiteExtraction.strengths || []), ...contactSignals, ...(candidate.signals || [])])].slice(0, 5),
             risks: [...new Set([...(websiteExtraction.risks || []), 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
             guestFrictionSignals: (websiteExtraction.missingPublicInfoSignals || []).length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
-            quickWins: [
+            quickWins: specificFallbackQuickWins(name, candidate).length >= 3 ? specificFallbackQuickWins(name, candidate).slice(0, 3) : [
                 {
                     title: 'Zpřehlednit stránku „Před příjezdem“',
                     why: 'Z přečtených veřejných stránek není jasně vidět jeden kompaktní blok pro příjezd, check-in, parkování a první kontakt.',
                     action: 'Přidat krátkou stránku nebo sekci s tím, kdy host dostane instrukce, kde zaparkuje a koho kontaktuje v den příjezdu.',
                     sourceEvidence: websiteExtraction.summary,
+                    candidateSpecificity: 'generic' as const,
+                    uniqueBusinessAngle: 'obecné předpříjezdové informace',
                 },
                 {
                     title: 'Dodat krátkou FAQ sekci pro hosty',
                     why: 'Z přečtených veřejných stránek není jasně vidět přehled nejčastějších předpříjezdových otázek.',
                     action: 'Sepsat 5 až 7 odpovědí: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a vybavení pokoje.',
                     sourceEvidence: pages,
+                    candidateSpecificity: 'generic' as const,
+                    uniqueBusinessAngle: 'obecná FAQ orientace',
                 },
                 {
                     title: 'Zviditelnit praktické informace u kontaktu',
                     why: (websiteExtraction.contact?.emails || []).length > 0 ? 'E-mail je na vlastním webu nalezený; hostovi může pomoct vědět, kdy ho použít.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
                     action: 'Vedle kontaktu doplnit krátkou větu pro situace jako příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
                     sourceEvidence: websiteExtraction.contact?.contactPageUrl || websiteExtraction.websiteUrl,
+                    candidateSpecificity: 'generic' as const,
+                    uniqueBusinessAngle: 'kontakt pro den příjezdu',
                 },
             ],
             miniAudit: fallbackClientMiniAudit(name, candidate),
@@ -423,18 +513,24 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             why: 'Z veřejné prezentace není jasné, zda host dostává jednoduchý předpříjezdový guide; guest guide může existovat neveřejně.',
             action: 'Pokud ještě nemají host guide, nabídnout jednoduchý QR / předpříjezdový guide; pokud ho mají, zkontrolovat, zda je jasně napojený na zprávy hostům.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'ověření neveřejného předpříjezdového průvodce',
         },
         {
             title: 'Zprehlednit predprijezdove informace',
             why: 'Jasný předpříjezdový přehled může snížit nejistotu hosta a omezit opakované dotazy před příjezdem.',
             action: 'Navrhnout sablony pro prijezd, parkovani, check-in a caste dotazy.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'obecné předpříjezdové informace',
         },
         {
             title: 'Rucne overit mezeru',
             why: (candidate.missingAutomationSignals || []).join(', ') || 'Předpříjezdový guide nelze veřejně ověřit.',
             action: 'Před kontaktem ověřit dostupné veřejné podklady a formulovat to jako opatrnou setup příležitost, ne jako jistý problém.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'ruční ověření mezery před oslovením',
         },
     ] : isLowFit ? [
         {
@@ -442,18 +538,24 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             why: 'Z dostupnych snippetu nevyplyva konkretni prodejni bolest ani setup mezera.',
             action: 'Neposilat obchodni e-mail bez dalsiho verejneho nebo manualne overeneho duvodu.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'benchmark bez oslovení',
         },
         {
             title: 'Doplnit evidenci',
             why: 'Self-check-in nebo provozni komplexita sama o sobe neni problem.',
             action: 'Hledat konkrétní pain nebo veřejný důkaz, že předpříjezdové informace nejsou jasné; guest guide může existovat neveřejně.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'doplnění evidence před obchodním krokem',
         },
         {
             title: 'Neprepisovat pozitivni signal',
             why: 'Kandidat muze ukazovat dobre vyreseny proces bez verejneho guest friction.',
             action: 'Pouzit jen jako srovnani pro slabsi provozy.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'nepřepisovat pozitivně vyřešený proces',
         },
     ] : [
         {
@@ -461,18 +563,24 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             why: `Search/review snippet ukazuje: ${primaryPain}.`,
             action: practicalAction,
             sourceEvidence: evidence,
+            candidateSpecificity: 'specific' as const,
+            uniqueBusinessAngle: primaryPain,
         },
         {
             title: 'Zpresnit predprijezdove instrukce',
             why: 'Pain signal se tyka prijezdu, orientace, kodu, klicu, parkovani nebo komunikace.',
             action: 'Udelat kontrolni blok pro hosta: kde prijet, kde zaparkovat, kde je vstup, kdy dorazi kod a co delat pri problemu.',
             sourceEvidence: evidence,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'předpříjezdová instrukce podle doloženého pain signálu',
         },
         {
             title: 'Navazat nabidku na pain',
             why: 'Nabidka ma byt o odstraneni dolozeneho treni, ne o obecném self-check-inu.',
             action: `Nabidnout ${targetOffer === 'skip' ? 'manualni overeni problemu' : targetOffer} jen jako reakci na dolozeny pain signal.`,
             sourceEvidence: evidence,
+            candidateSpecificity: 'specific' as const,
+            uniqueBusinessAngle: primaryPain,
         },
     ];
 
@@ -600,7 +708,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
     const hasWebsiteContact = Boolean((website?.contact?.emails?.length || 0) + (website?.contact?.phones?.length || 0));
     const hasWebsiteOnlyEvidence = Boolean(website && ['completed', 'partial'].includes(String(website.status || '')));
     const opportunityType: OpportunityType = candidate.opportunityType && isOpportunityType(candidate.opportunityType) ? candidate.opportunityType : website ? 'setup-automation' : 'skip';
-    const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string });
+    const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string; candidateSpecificity?: string; uniqueBusinessAngle?: string });
 
     return {
         leadDisplayName: cleanLeadDisplayName(analysis.leadDisplayName),
@@ -613,6 +721,8 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
             why: trimText(sanitizeQuickWinWhy(quickWin.title, quickWin.why), 180),
             action: trimText(quickWin.action, 180),
             sourceEvidence: trimText(quickWin.sourceEvidence, 180),
+            candidateSpecificity: quickWin.candidateSpecificity === 'specific' ? 'specific' as const : 'generic' as const,
+            uniqueBusinessAngle: trimText(quickWin.uniqueBusinessAngle, 160),
         })),
         miniAudit: sanitizeClientText(String(analysis.clientMiniAudit)),
         outreachEmail: hasWebsiteOnlyEvidence ? websiteOnlyOutreach(String(analysis.leadDisplayName), candidate) : sanitizeClientText(String(analysis.outreachEmail)),
@@ -735,13 +845,15 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     Ukol: kratka obchodni analyza StayBoost z verejneho vlastniho webu. Metadata a scoring dopocita aplikace, proto nevracej zadna dalsi pole.
     Klientske texty musi byt lidske pro majitele ubytovani. Prvni outreach musi byt jemna zadost o souhlas se 3 napady zdarma, ne audit ani hodnoceni. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict, audit, kontrola, hodnoceni, chyba, problem, meli byste, doporucuji vam.
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
+    Pokud websiteExtraction.parkingSignals obsahuje parkovani nebo nabijeci stanici, nesmis tvrdit, ze parkovani neni jasne videt a nesmis delat quick win typu "doplnit parkovani". Ber parkovani/EV jako pozitivni signal a pouzij ho jako soucast konkretniho predprijezdoveho prehledu.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
+    QuickWins nesmi byt stejna sablona pro kazdy hotel. Kazdy quickWin musi mit candidateSpecificity "specific" nebo "generic", sourceEvidence s konkretnim prvkem z webu a uniqueBusinessAngle. Pokud pouzivas jen obecne tema prijezd/check-in/FAQ bez konkretni evidence z webu, oznac ho jako generic. Preferuj konkretni prvky webu jako restaurace, relax centrum, reka, ostrov, svatebni altan, konferencni prostory, romanticky hotel, lokalita pod hradem, parkoviste nebo EV nabijeni. Nepouzivej generic FAQ jako treti napad, pokud existuji konkretni hotelove signaly.
     Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze vetsi uprava muze byt za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
     Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
     Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
     leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
-    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
+    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence,candidateSpecificity,uniqueBusinessAngle}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 
