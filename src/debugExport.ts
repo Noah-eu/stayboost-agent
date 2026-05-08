@@ -265,6 +265,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         paidNextStep: lead.paidNextStep ?? lead.generatedOffer ?? '',
         recommendedProduct: lead.recommendedProduct ?? productRecommendation.recommendedProduct,
         recommendedProductReason: lead.recommendedProductReason ?? productRecommendation.recommendedProductReason,
+        productRecommendationSignals: lead.productRecommendationSignals ?? productRecommendation.productRecommendationSignals,
         paidOfferShort: lead.paidOfferShort ?? productRecommendation.paidOfferShort,
         paidOfferDetails: lead.paidOfferDetails ?? productRecommendation.paidOfferDetails,
         guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',

@@ -130,6 +130,7 @@ const emptyLead = (): Lead => ({
     paidNextStep: '',
     recommendedProduct: 'guest-guide-starter',
     recommendedProductReason: '',
+    productRecommendationSignals: [],
     freeIdeaPurpose: '',
     paidOfferShort: '',
     paidOfferDetails: '',
@@ -416,6 +417,7 @@ const withProductRecommendation = (lead: Lead): Lead => {
         ...lead,
         recommendedProduct: recommendation.recommendedProduct,
         recommendedProductReason: sanitizeClientText(recommendation.recommendedProductReason),
+        productRecommendationSignals: recommendation.productRecommendationSignals,
         freeIdeaPurpose: sanitizeClientText(recommendation.freeIdeaPurpose),
         paidOfferShort: sanitizeClientText(recommendation.paidOfferShort),
         paidOfferDetails: sanitizeClientText(recommendation.paidOfferDetails),
@@ -601,10 +603,13 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         },
     });
 
+    const staleOpsAuditPaidStep = leadWithRecommendation.recommendedProduct !== 'ops-audit' && /ops audit|rychl[yý] audit|provozn[ií] audit/i.test(`${lead.generatedOffer}\n${lead.paidNextStep}`);
+    const nextGeneratedOffer = staleOpsAuditPaidStep ? generateOffer(leadWithRecommendation) : lead.generatedOffer || generateOffer(leadWithRecommendation);
+
     return {
         ...leadWithRecommendation,
-        generatedOffer: sanitizeClientText(lead.generatedOffer || generateOffer(leadWithRecommendation)),
-        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(leadWithRecommendation)),
+        generatedOffer: sanitizeClientText(nextGeneratedOffer),
+        paidNextStep: sanitizeClientText(staleOpsAuditPaidStep ? nextGeneratedOffer : lead.paidNextStep || lead.generatedOffer || nextGeneratedOffer),
     };
 };
 
@@ -917,6 +922,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         paidNextStep: sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
         recommendedProduct: lead.recommendedProduct,
         recommendedProductReason: sanitizeClientText(lead.recommendedProductReason ?? ''),
+        productRecommendationSignals: lead.productRecommendationSignals ?? [],
         freeIdeaPurpose: sanitizeClientText(lead.freeIdeaPurpose ?? ''),
         paidOfferShort: sanitizeClientText(lead.paidOfferShort ?? ''),
         paidOfferDetails: sanitizeClientText(lead.paidOfferDetails ?? ''),

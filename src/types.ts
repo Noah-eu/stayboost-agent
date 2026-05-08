@@ -356,6 +356,7 @@ export interface Lead {
     paidNextStep?: string;
     recommendedProduct?: RecommendedProduct;
     recommendedProductReason?: string;
+    productRecommendationSignals?: string[];
     freeIdeaPurpose?: string;
     paidOfferShort?: string;
     paidOfferDetails?: string;
