@@ -124,7 +124,14 @@ const leadWorkflowState = (lead: Lead) => {
         clientTextReady: clientDiagnostics.clientTextReady,
         contactReady: contactQuality.contactReady,
         contactQuality,
-        freeIdeasSpecificEnough: ideaDiagnostics.freeIdeasReady,
+        freeIdeasSpecificEnough: ideaDiagnostics.freeIdeasReady && !ideaDiagnostics.repeatedConceptWarning,
+        leadPlaybook: ideaDiagnostics.leadPlaybook,
+        leadPlaybookReason: ideaDiagnostics.leadPlaybookReason,
+        playbookSignals: ideaDiagnostics.playbookSignals,
+        freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
+        repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
+        positiveSignalsUsedCount: ideaDiagnostics.positiveSignalsUsedCount,
+        missingSignalsUsedCount: ideaDiagnostics.missingSignalsUsedCount,
         nextRecommendedAction: hasWebsiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')
             ? contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review'
             : hasWebsiteExtraction && !contactQuality.contactReady
@@ -139,7 +146,7 @@ const leadWorkflowState = (lead: Lead) => {
                         ? 'generate-client-outputs'
                         : !clientDiagnostics.clientTextReady
                             ? 'needs-copy-review'
-                            : !ideaDiagnostics.freeIdeasReady
+                            : !ideaDiagnostics.freeIdeasReady || ideaDiagnostics.repeatedConceptWarning
                                 ? 'needs-idea-review'
                                 : 'ready-to-review',
     };

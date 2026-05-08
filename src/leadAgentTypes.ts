@@ -1,4 +1,4 @@
-import type { AccommodationType, OfferAngle, QuickWin, WebsiteExtractionResult } from './types';
+import type { AccommodationType, LeadPlaybook, OfferAngle, QuickWin, WebsiteExtractionResult } from './types';
 
 export type LeadAgentRunStatus = 'idle' | 'searching' | 'found' | 'analyzing' | 'completed' | 'error' | 'needs-config';
 export type LeadAgentConfidence = 'low' | 'medium' | 'high';
@@ -111,6 +111,11 @@ export interface LeadAgentAnalysis {
     risks: string[];
     guestFrictionSignals: string[];
     quickWins: QuickWin[];
+    leadPlaybook?: LeadPlaybook;
+    leadPlaybookReason?: string;
+    playbookSignals?: string[];
+    freeIdeasDiversityScore?: number;
+    repeatedConceptWarning?: boolean;
     miniAudit: string;
     outreachEmail: string;
     followUp: string;

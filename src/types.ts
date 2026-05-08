@@ -33,6 +33,16 @@ export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'nee
 
 export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'ops-audit' | 'skip';
 
+export type LeadPlaybook =
+    | 'city-apartment-arrival'
+    | 'restaurant-linked-stay'
+    | 'family-local-experience'
+    | 'romantic-wellness-stay'
+    | 'event-wedding-hotel'
+    | 'basic-website-guest-guide'
+    | 'ops-audit'
+    | 'skip';
+
 export type GuestGuidePreviewStatus = 'not-created' | 'created' | 'needs-review';
 
 export type GuestGuideLanguage = 'cs' | 'en';
@@ -329,6 +339,11 @@ export interface Lead {
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;
     contactQuality?: ContactQuality;
+    leadPlaybook?: LeadPlaybook;
+    leadPlaybookReason?: string;
+    playbookSignals?: string[];
+    freeIdeasDiversityScore?: number;
+    repeatedConceptWarning?: boolean;
     outreachIntent?: 'ask-permission-to-send-free-ideas';
     outreachTone?: 'humble-transparent-low-pressure';
     lastContactDate: string;

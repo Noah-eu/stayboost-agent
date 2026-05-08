@@ -105,6 +105,11 @@ const analysisJsonSchema = {
         'internalSummary',
         'clientMiniAudit',
         'quickWins',
+        'leadPlaybook',
+        'leadPlaybookReason',
+        'playbookSignals',
+        'freeIdeasDiversityScore',
+        'repeatedConceptWarning',
         'outreachEmail',
         'followUp',
         'offerRecommendation',
@@ -117,6 +122,11 @@ const analysisJsonSchema = {
         leadDisplayName: { type: 'string' },
         internalSummary: { type: 'string' },
         clientMiniAudit: { type: 'string' },
+        leadPlaybook: { type: 'string', enum: ['city-apartment-arrival', 'restaurant-linked-stay', 'family-local-experience', 'romantic-wellness-stay', 'event-wedding-hotel', 'basic-website-guest-guide', 'ops-audit', 'skip'] },
+        leadPlaybookReason: { type: 'string' },
+        playbookSignals: { type: 'array', items: { type: 'string' } },
+        freeIdeasDiversityScore: { type: 'number' },
+        repeatedConceptWarning: { type: 'boolean' },
         quickWins: {
             type: 'array',
             minItems: 3,
@@ -247,7 +257,7 @@ const sanitizeQuickWinWhy = (title = '', why = '') => {
     return sanitizeClientText(why);
 };
 
-type SpecificSignalKey = 'parking' | 'ev' | 'contact' | 'restaurant' | 'terrace' | 'relax' | 'river' | 'island' | 'wedding' | 'conference' | 'romantic' | 'castle' | 'barbora' | 'jesuitCollege' | 'kutnaHora' | 'vrchlice' | 'gardenGrill' | 'families' | 'quietPrivacy' | 'fourApartments' | 'historicHouse' | 'zizkov' | 'pragueCentre' | 'sklepRestaurant' | 'roomTypes' | 'kitchen' | 'tram' | 'cityArrival';
+type SpecificSignalKey = 'parking' | 'ev' | 'contact' | 'restaurant' | 'breakfast' | 'terrace' | 'relax' | 'river' | 'island' | 'wedding' | 'conference' | 'romantic' | 'castle' | 'barbora' | 'jesuitCollege' | 'kutnaHora' | 'vrchlice' | 'gardenGrill' | 'families' | 'quietPrivacy' | 'fourApartments' | 'historicHouse' | 'zizkov' | 'pragueCentre' | 'brnoCentre' | 'sklepRestaurant' | 'roomTypes' | 'kitchen' | 'tram' | 'cityArrival';
 const specificSignalMatchers: Array<{ key: SpecificSignalKey; label: string; keywords: string[] }> = [
     { key: 'barbora', label: 'Chrám sv. Barbory', keywords: ['chram sv barbory', 'chrám sv barbory', 'sv barbory', 'saint barbara'] },
     { key: 'jesuitCollege', label: 'Jezuitská kolej', keywords: ['jezuitska kolej', 'jesuit college'] },
@@ -260,6 +270,7 @@ const specificSignalMatchers: Array<{ key: SpecificSignalKey; label: string; key
     { key: 'historicHouse', label: 'historický dům', keywords: ['historicky dum', 'historical house', 'historic house'] },
     { key: 'zizkov', label: 'Žižkov / Praha 3', keywords: ['zizkov', 'praha 3', 'prague 3', 'seifertova'] },
     { key: 'pragueCentre', label: 'centrum Prahy', keywords: ['centrum prahy', 'centre of prague', 'city centre', 'center of prague', 'v centru prahy'] },
+    { key: 'brnoCentre', label: 'centrum Brna', keywords: ['centrum brna', 'brno centre', 'brno city centre'] },
     { key: 'sklepRestaurant', label: 'Restaurace Sklep', keywords: ['restaurace sklep', 'restaurant sklep', 'sklep restaurant'] },
     { key: 'roomTypes', label: 'více typů apartmánů a pokojů', keywords: ['apartmany a pokoje', 'apartments and rooms', 'studio', 'family room', 'typy apartmanu', 'typy pokoju'] },
     { key: 'kitchen', label: 'kuchyň v apartmánech', keywords: ['kuchyn', 'kitchen', 'kitchenette'] },
@@ -269,6 +280,7 @@ const specificSignalMatchers: Array<{ key: SpecificSignalKey; label: string; key
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email'] },
     { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant'] },
+    { key: 'breakfast', label: 'snídaně', keywords: ['snidane', 'snídaně', 'breakfast'] },
     { key: 'terrace', label: 'terasa', keywords: ['terasa', 'terrace'] },
     { key: 'relax', label: 'relax centrum', keywords: ['relax centrum', 'wellness', 'spa'] },
     { key: 'river', label: 'Berounka', keywords: ['berounka'] },
@@ -297,6 +309,25 @@ const candidateSpecificSignals = (candidate: CandidateInput) => {
 const hasSignal = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[]) => signals.some((signal) => keys.includes(signal.key));
 const labelsFor = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[]) => signals.filter((signal) => keys.includes(signal.key)).map((signal) => signal.label);
 const evidenceFor = (signals: ReturnType<typeof candidateSpecificSignals>, keys: SpecificSignalKey[], fallback: string) => labelsFor(signals, keys).join(', ') || fallback;
+type LeadPlaybookName = 'city-apartment-arrival' | 'restaurant-linked-stay' | 'family-local-experience' | 'romantic-wellness-stay' | 'event-wedding-hotel' | 'basic-website-guest-guide' | 'ops-audit' | 'skip';
+const playbookForCandidate = (candidate: CandidateInput) => {
+    const signals = candidateSpecificSignals(candidate);
+    const restaurantSignals = labelsFor(signals, ['sklepRestaurant', 'restaurant', 'breakfast']);
+    const eventSignals = labelsFor(signals, ['wedding', 'conference']);
+    const wellnessSignals = labelsFor(signals, ['romantic', 'relax', 'castle', 'terrace']);
+    const familySignals = labelsFor(signals, ['families', 'gardenGrill', 'quietPrivacy', 'barbora', 'jesuitCollege', 'kutnaHora', 'vrchlice']);
+    const citySignals = labelsFor(signals, ['zizkov', 'pragueCentre', 'brnoCentre', 'tram', 'cityArrival', 'roomTypes', 'kitchen']);
+    const opsSignals = labelsFor(signals, ['parking', 'ev', 'contact']);
+    const select = (leadPlaybook: LeadPlaybookName, playbookSignals: string[], reason: string) => ({ leadPlaybook, playbookSignals, leadPlaybookReason: reason });
+
+    if (restaurantSignals.length) return select('restaurant-linked-stay', restaurantSignals, `Web má výrazný gastro signál (${restaurantSignals.join(', ')}), proto nápady propojují ubytování s restaurací.`);
+    if (eventSignals.length) return select('event-wedding-hotel', eventSignals, `Web pracuje s eventy nebo svatbami (${eventSignals.join(', ')}).`);
+    if (wellnessSignals.length) return select('romantic-wellness-stay', wellnessSignals, `Web zmiňuje romantiku, relax nebo lokalitu pro páry (${wellnessSignals.join(', ')}).`);
+    if (familySignals.length) return select('family-local-experience', familySignals, `Web staví pobyt na rodině, okolí nebo lokálních tipech (${familySignals.join(', ')}).`);
+    if (citySignals.length) return select('city-apartment-arrival', citySignals, `Evidence ukazuje městské ubytování nebo více typů pokojů/apartmánů (${citySignals.join(', ')}).`);
+    if (opsSignals.length >= 3) return select('ops-audit', opsSignals, `Evidence ukazuje širší provozní témata (${opsSignals.join(', ')}).`);
+    return select('basic-website-guest-guide', opsSignals, 'Nejsou vidět výraznější konkrétní signály, proto zůstává základní guest-guide playbook.');
+};
 
 const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
     const signals = candidateSpecificSignals(candidate);
@@ -333,9 +364,9 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
     if (hasSignal(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival'])) {
         const usedSignals = labelsFor(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival']);
         wins.push({
-            title: 'Udělat městskou orientaci pro příjezd do Prahy',
+            title: 'První večer v Praze bez hledání',
             why: `U městského ubytování jsou klíčové signály ${usedSignals.join(', ')}. Host potřebuje rychle pochopit čtvrť, dopravu a příjezd.`,
-            action: 'Do zprávy před příjezdem přidat mini-orientaci: Žižkov/Praha 3, nejbližší tramvaj, cesta z centra a co čekat při příjezdu do ulice.',
+            action: 'Po rezervaci poslat blok: příjezd na Seifertovu, orientace v Praze 3/Žižkově, nejbližší doprava, kontakt a co udělat první večer.',
             sourceEvidence: evidenceFor(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival'], pages),
             candidateSpecificity: 'specific',
             uniqueBusinessAngle: 'městský příjezd a orientace v Praze',
@@ -359,9 +390,9 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
     if (hasSignal(signals, ['roomTypes', 'kitchen'])) {
         const usedSignals = labelsFor(signals, ['roomTypes', 'kitchen']);
         wins.push({
-            title: 'Vysvětlit rozdíl mezi pokoji a apartmány',
+            title: 'Rozdělit informace podle typu pobytu',
             why: `Web pracuje s více typy ubytování: ${usedSignals.join(', ')}. Praktické informace by měly odpovídat tomu, co si host rezervoval.`,
-            action: 'V host guide rozdělit informace pro pokoj a apartmán: kuchyň, vybavení, délka pobytu, co si host nemusí vozit a co platí jen pro apartmán.',
+            action: 'Rozdělit pokyny pro apartmán s kuchyní, rodinný apartmán a pokoj, aby host dostal jen relevantní vybavení, zázemí a pravidla.',
             sourceEvidence: evidenceFor(signals, ['roomTypes', 'kitchen'], pages),
             candidateSpecificity: 'specific',
             uniqueBusinessAngle: 'personalizace podle rezervovaného typu pokoje/apartmánu',
@@ -550,6 +581,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             : candidate.targetOffer === 'skip' || !candidate.targetOffer ? 'guest-guide' : candidate.targetOffer;
         const pages = (websiteExtraction.pagesExtracted || []).map((page) => page.url).join(', ') || websiteExtraction.websiteUrl;
         const fallbackQuickWins = specificFallbackQuickWins(name, candidate);
+        const playbook = playbookForCandidate(candidate);
         const placeholderQuickWin = {
             title: 'Ověřit jednu stránku před příjezdem',
             why: 'Z veřejné evidence zatím není dost konkrétních pozitivních signálů pro plně personalizované tři nápady.',
@@ -572,6 +604,11 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             risks: [...new Set([...(websiteExtraction.risks || []), 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
             guestFrictionSignals: (websiteExtraction.missingPublicInfoSignals || []).length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
             quickWins: [...fallbackQuickWins, ...reviewPlaceholders].slice(0, 3),
+            leadPlaybook: playbook.leadPlaybook,
+            leadPlaybookReason: playbook.leadPlaybookReason,
+            playbookSignals: playbook.playbookSignals,
+            freeIdeasDiversityScore: 100,
+            repeatedConceptWarning: false,
             miniAudit: fallbackClientMiniAudit(name, candidate),
             outreachEmail: fallbackOutreach(name, candidate),
             followUp: fallbackFollowUp(name),
@@ -714,6 +751,11 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         risks: risks.length > 0 ? risks : ['Omezeny verejny nahled, neni potvrzen detail nabidky.'],
         guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals || [] : painSignals.length > 0 ? painSignals : ['Neni dost konkretni evidence o treni hosta.'],
         quickWins,
+        leadPlaybook: isLowFit ? 'skip' as const : isSetup ? 'basic-website-guest-guide' as const : 'ops-audit' as const,
+        leadPlaybookReason: isLowFit ? 'Evidence zatím nedává dost silný důvod pro obchodní nápady.' : 'Fallback bez extrahovaného webu nemá dost konkrétních signálů pro specializovaný playbook.',
+        playbookSignals: painSignals.slice(0, 3),
+        freeIdeasDiversityScore: isSetup ? 33 : 67,
+        repeatedConceptWarning: isSetup,
         miniAudit: fallbackClientMiniAudit(name, candidate),
         outreachEmail: isBenchmarkOrSkip
             ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
@@ -806,7 +848,7 @@ const deterministicTargetOffer = (candidate: CandidateInput): TargetOffer => {
 };
 
 const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
-    const analysis = value as { leadDisplayName?: unknown; internalSummary?: unknown; clientMiniAudit?: unknown; quickWins?: unknown[]; outreachEmail?: unknown; followUp?: unknown; offerRecommendation?: unknown; confidence?: unknown; fitVerdict?: unknown; qualificationReason?: unknown; evidenceLimits?: unknown };
+    const analysis = value as { leadDisplayName?: unknown; internalSummary?: unknown; clientMiniAudit?: unknown; quickWins?: unknown[]; leadPlaybook?: unknown; leadPlaybookReason?: unknown; playbookSignals?: unknown; freeIdeasDiversityScore?: unknown; repeatedConceptWarning?: unknown; outreachEmail?: unknown; followUp?: unknown; offerRecommendation?: unknown; confidence?: unknown; fitVerdict?: unknown; qualificationReason?: unknown; evidenceLimits?: unknown };
 
     if (!analysis || typeof analysis.leadDisplayName !== 'string' || typeof analysis.internalSummary !== 'string' || typeof analysis.clientMiniAudit !== 'string' || !Array.isArray(analysis.quickWins) || analysis.quickWins.length !== 3 || typeof analysis.outreachEmail !== 'string' || typeof analysis.followUp !== 'string' || typeof analysis.offerRecommendation !== 'string') {
         throw new Error('Invalid compact analysis JSON shape.');
@@ -833,6 +875,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
     const hasWebsiteOnlyEvidence = Boolean(website && ['completed', 'partial'].includes(String(website.status || '')));
     const opportunityType: OpportunityType = candidate.opportunityType && isOpportunityType(candidate.opportunityType) ? candidate.opportunityType : website ? 'setup-automation' : 'skip';
     const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string; candidateSpecificity?: string; uniqueBusinessAngle?: string; usedSignals?: string[] });
+    const fallbackPlaybook = playbookForCandidate(candidate);
 
     return {
         leadDisplayName: cleanLeadDisplayName(analysis.leadDisplayName),
@@ -849,6 +892,11 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
             uniqueBusinessAngle: trimText(quickWin.uniqueBusinessAngle, 160),
             usedSignals: Array.isArray(quickWin.usedSignals) ? quickWin.usedSignals.map((signal) => trimText(String(signal), 80)).filter(Boolean).slice(0, 6) : [],
         })),
+        leadPlaybook: typeof analysis.leadPlaybook === 'string' ? analysis.leadPlaybook : fallbackPlaybook.leadPlaybook,
+        leadPlaybookReason: typeof analysis.leadPlaybookReason === 'string' ? trimText(analysis.leadPlaybookReason, 220) : fallbackPlaybook.leadPlaybookReason,
+        playbookSignals: Array.isArray(analysis.playbookSignals) ? analysis.playbookSignals.map((signal) => trimText(String(signal), 80)).filter(Boolean).slice(0, 8) : fallbackPlaybook.playbookSignals,
+        freeIdeasDiversityScore: typeof analysis.freeIdeasDiversityScore === 'number' ? analysis.freeIdeasDiversityScore : 0,
+        repeatedConceptWarning: Boolean(analysis.repeatedConceptWarning),
         miniAudit: sanitizeClientText(String(analysis.clientMiniAudit)),
         outreachEmail: hasWebsiteOnlyEvidence ? websiteOnlyOutreach(String(analysis.leadDisplayName), candidate) : sanitizeClientText(String(analysis.outreachEmail)),
         followUp: sanitizeClientText(String(analysis.followUp)),
@@ -972,14 +1020,16 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
     Pokud websiteExtraction.parkingSignals obsahuje parkovani nebo nabijeci stanici, nesmis tvrdit, ze parkovani neni jasne videt a nesmis delat quick win typu "doplnit parkovani". Ber parkovani/EV jako pozitivni signal a pouzij ho jako soucast konkretniho predprijezdoveho prehledu.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
+    Nejdrive urci leadPlaybook a az podle nej napis 3 quickWins. Playbooky: restaurant-linked-stay pro restauraci/bar/grill/menu/snidane/gastro provoz; city-apartment-arrival pro apartmany/pokoje v centru mesta, Prahu/Brno, dopravu, vice typu pokoju nebo vstup do domu; family-local-experience pro rodiny, deti, zahradu, gril, klid, okoli, pamatky nebo prirodu; romantic-wellness-stay pro romantiku, wellness, relax, spa, vyhledy, vino nebo pary; event-wedding-hotel pro svatby, konference, firemni akce a eventy; basic-website-guest-guide jen pokud chybi vyrazne konkretni signaly; ops-audit pro sirsi provozni chaos; skip pro slabou evidenci. Pokud existuje restauracni signal a zaroven city apartment signal, preferuj restaurant-linked-stay.
     QuickWins nesmi byt stejna sablona pro kazdy hotel. Kazdy quickWin musi mit candidateSpecificity "specific" nebo "generic", sourceEvidence s konkretnim prvkem z webu, uniqueBusinessAngle a usedSignals jako seznam konkretnich pozitivnich signalu pouzitych v napadu. Pokud pouzivas jen obecne tema prijezd/check-in/FAQ bez konkretni evidence z webu, oznac ho jako generic a usedSignals nech prazdne. Preferuj konkretni prvky webu jako Chram sv. Barbory, Jezuitska kolej, Kutna Hora, zahrada/gril, rodiny, klid, Zizkov/Praha 3, Restaurace Sklep, typy pokoju/apartmanu, kuchyn, tramvaj, restaurace, relax centrum, reka, ostrov, svatebni altan, konferencni prostory, romanticky hotel, lokalita pod hradem, parkoviste nebo EV nabijeni. Alespon 2 ze 3 quickWins maji byt specific, pokud evidence obsahuje aspon 3 konkretni signaly. Nepouzivej generic FAQ jako treti napad, pokud existuji konkretni hotelove signaly.
+    3 quickWins musi mit ruzne koncepty. Pokud vsechny tri resi jen prijezd/check-in/FAQ/kontakt, nastav repeatedConceptWarning true a freeIdeasDiversityScore nizko. Pro SKLEP REST musi jeden napad propojit ubytovani s Restauraci Sklep, jeden resit prvni vecer/orientaci v Praze 3/Zizkove a jeden rozdelit informace podle typu pokoje/apartmanu.
     Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze se pak muzeme domluvit treba na jednoduchem online pruvodci pro hosty nebo vetsi uprave komunikace za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
     OfferRecommendation ma byt nenatlakovy dalsi produkt: Guest Guide Starter, Guest Communication Setup, Ops Audit, nebo Skip/nepokracovat. Guest Guide Starter pouzij pro jednoduchy online pruvodce hosta. Guest Communication Setup pouzij pro hotely s vice provoznimi tematy a vice typy hostu. Ops Audit pouzij pro sirsi chaos/slabe oblasti. Skip pouzij, kdyz neni jasna prilezitost.
     Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
     Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
     leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
-    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence,candidateSpecificity,uniqueBusinessAngle,usedSignals}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
+    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, leadPlaybook, leadPlaybookReason, playbookSignals, freeIdeasDiversityScore, repeatedConceptWarning, quickWins[{title,why,action,sourceEvidence,candidateSpecificity,uniqueBusinessAngle,usedSignals}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 

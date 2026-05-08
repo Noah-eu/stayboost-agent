@@ -143,6 +143,11 @@ const emptyLead = (): Lead => ({
         phoneSource: 'missing',
         contactReady: false,
     },
+    leadPlaybook: 'basic-website-guest-guide',
+    leadPlaybookReason: '',
+    playbookSignals: [],
+    freeIdeasDiversityScore: 0,
+    repeatedConceptWarning: false,
     outreachIntent: 'ask-permission-to-send-free-ideas',
     outreachTone: 'humble-transparent-low-pressure',
     lastContactDate: '',
@@ -167,6 +172,17 @@ const screenIcons: Record<Screen, typeof LayoutDashboard> = {
     audit: Sparkles,
     outreach: Mail,
     offer: Send,
+};
+
+const leadPlaybookLabels = {
+    'city-apartment-arrival': 'City apartment arrival',
+    'restaurant-linked-stay': 'Restaurant-linked stay',
+    'family-local-experience': 'Family local experience',
+    'romantic-wellness-stay': 'Romantic wellness stay',
+    'event-wedding-hotel': 'Event / wedding hotel',
+    'basic-website-guest-guide': 'Basic website guest guide',
+    'ops-audit': 'Ops audit',
+    skip: 'Skip',
 };
 
 const splitLines = (value: string) =>
@@ -490,6 +506,14 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         createdAt: new Date().toISOString(),
     };
 
+    const preparedStructuredQuickWins = prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []);
+    const preparedFreeIdeas = prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []);
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({
+        ...lead,
+        websiteExtraction: normalizedExtraction,
+        structuredQuickWins: preparedStructuredQuickWins,
+        freeIdeas: preparedFreeIdeas,
+    });
     const leadWithRecommendation = withProductRecommendation({
         ...lead,
         name: displayNameFromLeadEvidence({ ...lead, websiteExtraction: normalizedExtraction }, lead.name),
@@ -498,14 +522,19 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         contactQuality,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
-        structuredQuickWins: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []),
+        structuredQuickWins: preparedStructuredQuickWins,
         clientMiniAudit: sanitizeClientText(lead.clientMiniAudit),
         generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit),
         generatedOutreach: sanitizeClientText(lead.generatedOutreach),
         generatedFollowUp: sanitizeClientText(lead.generatedFollowUp),
         generatedOffer: sanitizeClientText(lead.generatedOffer),
         freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
-        freeIdeas: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []),
+        freeIdeas: preparedFreeIdeas,
+        leadPlaybook: ideaDiagnostics.leadPlaybook,
+        leadPlaybookReason: ideaDiagnostics.leadPlaybookReason,
+        playbookSignals: ideaDiagnostics.playbookSignals,
+        freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
+        repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
         paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(withProductRecommendation({ ...lead, websiteExtraction: normalizedExtraction }))),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
@@ -550,7 +579,7 @@ const workflowNextAction = (lead: Lead) => {
     if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
     if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
     if (hasClientCopyIssue(clientOutputValues(lead))) return 'needs-copy-review';
-    if (!ideaDiagnostics.freeIdeasReady) return 'needs-idea-review';
+    if (!ideaDiagnostics.freeIdeasReady || ideaDiagnostics.repeatedConceptWarning) return 'needs-idea-review';
     return 'ready-to-review';
 };
 
@@ -779,6 +808,13 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         : sanitizedGeneratedOutreach;
     const migratedQuickWins = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, migrateQuickWins(lead));
     const normalizedFreeIdeas = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, lead.freeIdeas ?? migratedQuickWins);
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({
+        ...emptyLead(),
+        ...lead,
+        websiteExtraction: normalizedWebsiteExtraction,
+        structuredQuickWins: migratedQuickWins,
+        freeIdeas: normalizedFreeIdeas,
+    });
 
     const normalizedLead: Lead = withProductRecommendation({
         ...emptyLead(),
@@ -803,6 +839,11 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         generatedOffer: sanitizeClientText(lead.generatedOffer ?? ''),
         freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser ?? ''),
         freeIdeas: normalizedFreeIdeas,
+        leadPlaybook: ideaDiagnostics.leadPlaybook,
+        leadPlaybookReason: sanitizeClientText(ideaDiagnostics.leadPlaybookReason),
+        playbookSignals: ideaDiagnostics.playbookSignals,
+        freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
+        repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
         paidNextStep: sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
         recommendedProduct: lead.recommendedProduct,
         recommendedProductReason: sanitizeClientText(lead.recommendedProductReason ?? ''),
@@ -1044,6 +1085,7 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
     const hasWebsiteEmail = (lead.websiteExtraction?.contact.emails.length ?? 0) > 0;
     const contactSignals = hasWebsiteEmail ? [`E-mail nalezen na vlastním webu: ${lead.websiteExtraction?.contact.emails[0]}`] : [];
     const quickWins = ensureThreeQuickWins(lead, analysis.quickWins);
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({ ...lead, structuredQuickWins: quickWins, freeIdeas: quickWins });
     const cleanedDisplayName = cleanLeadDisplayName(analysis.leadDisplayName || lead.name);
     const analyzedLead: Lead = {
         ...lead,
@@ -1069,6 +1111,11 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         quickWins: quickWins.map((win) => win.title),
         proposedQuickWins: quickWins.map((win) => win.title),
         structuredQuickWins: quickWins,
+        leadPlaybook: analysis.leadPlaybook ?? ideaDiagnostics.leadPlaybook,
+        leadPlaybookReason: sanitizeClientText(analysis.leadPlaybookReason ?? ideaDiagnostics.leadPlaybookReason),
+        playbookSignals: analysis.playbookSignals ?? ideaDiagnostics.playbookSignals,
+        freeIdeasDiversityScore: analysis.freeIdeasDiversityScore ?? ideaDiagnostics.freeIdeasDiversityScore,
+        repeatedConceptWarning: analysis.repeatedConceptWarning ?? ideaDiagnostics.repeatedConceptWarning,
         firstImpression: analysis.firstImpression,
         descriptionObservation: analysis.offerHypothesis,
         checkInParkingInfo: [...analysis.missingAutomationSignals, ...analysis.likelyManualProcessSignals].join('\n'),
@@ -3066,6 +3113,14 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <span>Účel 3 nápadů zdarma: {draftLead.freeIdeaPurpose || recommendProductForLead(draftLead).freeIdeaPurpose}</span>
                     <span>Možná placená návaznost: {draftLead.paidOfferShort || recommendProductForLead(draftLead).paidOfferShort}</span>
                     <span>{draftLead.paidOfferDetails || recommendProductForLead(draftLead).paidOfferDetails}</span>
+                </div>
+
+                <div className={`scope-note ${draftLead.repeatedConceptWarning ? 'warning-note' : 'product-recommendation-note'}`}>
+                    <strong>Lead playbook: {leadPlaybookLabels[draftLead.leadPlaybook ?? 'basic-website-guest-guide']}</strong>
+                    <span>Proč tento playbook: {draftLead.leadPlaybookReason || freeIdeaSpecificityDiagnostics(draftLead).leadPlaybookReason}</span>
+                    <span>Signály: {(draftLead.playbookSignals?.length ? draftLead.playbookSignals : freeIdeaSpecificityDiagnostics(draftLead).playbookSignals).join(', ') || 'žádné výrazné signály'}</span>
+                    <span>Diverzita nápadů: {draftLead.freeIdeasDiversityScore ?? freeIdeaSpecificityDiagnostics(draftLead).freeIdeasDiversityScore}/100</span>
+                    {draftLead.repeatedConceptWarning || freeIdeaSpecificityDiagnostics(draftLead).repeatedConceptWarning ? <span>Nápady opakují stejný koncept. Další krok zůstává needs-idea-review.</span> : null}
                 </div>
 
                 <section className="nested-section guest-guide-preview-panel">
