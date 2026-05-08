@@ -281,6 +281,10 @@ export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<t
     }
 
     if (recommendation?.recommendedProduct === 'guest-communication-setup') {
+        if (input.lead?.leadPlaybook === 'multi-property-arrival-clarity') {
+            return sanitizeClientText(`Navazující placený krok může být Guest Communication Setup pro ${displayName}: předpříjezdová komunikace a jednoduchý online průvodce pro dvě propojené provozovny. Host dostane přehled pro příjezd do 18:00, pozdní příjezd po domluvě, recepci, kontakty, parkování s rezervací předem, rozdíl mezi Vila Krumlov a Pension Galko a odjezd.`);
+        }
+
         return sanitizeClientText(`Navazující placený krok může být jednoduchý online průvodce pro hosty ${displayNameForPaidStep}: ${guideSections}. Host dostane odkaz nebo QR kód s praktickými informacemi před příjezdem; u různých typů pobytu se dají sekce upravit podle hosta a navázat na zprávy po rezervaci.`);
     }
 

@@ -52,6 +52,7 @@ export interface DirectoryCandidate {
 export type LeadPlaybook =
     | 'city-apartment-arrival'
     | 'restaurant-linked-stay'
+    | 'multi-property-arrival-clarity'
     | 'family-local-experience'
     | 'historic-local-experience-stay'
     | 'social-profile-web-presence'
@@ -184,6 +185,12 @@ export interface WebsiteSkippedPage {
     reason: 'not_found_page' | 'empty_content' | 'invalid_content' | 'asset_or_binary_file';
 }
 
+export interface WebsiteNavigationLink {
+    label: string;
+    url: string;
+    text: string;
+}
+
 export interface WebsiteExtractionContact {
     emails: string[];
     phones: string[];
@@ -210,10 +217,23 @@ export interface WebsiteExtractionResult {
     contactOwnershipStatus?: ContactOwnershipStatus;
     extractionStrategy?: 'homepage-first' | 'fallback-guesses' | 'legacy';
     discoveredInternalLinksCount?: number;
+    discoveredNavigationLinks?: WebsiteNavigationLink[];
     guessedUrlsUsed?: string[];
     extractedPriorityPages?: string[];
     missedPriorityPages?: string[];
+    priorityPagesFoundButNotExtracted?: WebsiteNavigationLink[];
+    missingClaimsSuppressedByNavigation?: string[];
+    needsPriorityPageExtraction?: boolean;
     localExperienceSignals?: string[];
+    checkInWindowStart?: string;
+    checkInWindowEnd?: string;
+    lateArrivalCondition?: string;
+    receptionHours?: string;
+    checkoutTime?: string;
+    parkingReservationRequired?: boolean;
+    parkingPaid?: boolean;
+    parkingLimited?: boolean;
+    parkingDistanceMeters?: Record<string, number>;
     pagesExtracted: WebsiteExtractedPage[];
     skippedPages: WebsiteSkippedPage[];
     validPagesCount: number;

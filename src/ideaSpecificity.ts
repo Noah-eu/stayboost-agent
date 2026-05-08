@@ -54,7 +54,18 @@ type SignalKey =
     | 'babyCot'
     | 'socialProfile'
     | 'noOwnedWebsite'
-    | 'photoPresentation';
+    | 'photoPresentation'
+    | 'vilaKrumlov'
+    | 'pensionGalko'
+    | 'linkedDomains'
+    | 'sharedReception'
+    | 'checkInWindow'
+    | 'lateArrival'
+    | 'checkoutTime'
+    | 'parkingReservation'
+    | 'parkingPaid'
+    | 'parkingLimited'
+    | 'parkingDistance';
 
 interface SpecificSignal {
     key: SignalKey;
@@ -80,6 +91,15 @@ const textForExtraction = (extraction?: WebsiteExtractionResult) => [
     extraction?.websiteOwnershipStatus,
     extraction?.socialProfileStatus,
     extraction?.summary,
+    extraction?.checkInWindowStart,
+    extraction?.checkInWindowEnd,
+    extraction?.lateArrivalCondition,
+    extraction?.receptionHours,
+    extraction?.checkoutTime,
+    extraction?.parkingReservationRequired ? 'parkingReservationRequired' : '',
+    extraction?.parkingPaid ? 'parkingPaid' : '',
+    extraction?.parkingLimited ? 'parkingLimited' : '',
+    extraction?.parkingDistanceMeters ? Object.entries(extraction.parkingDistanceMeters).map(([name, meters]) => `${name} ${meters} m`).join('\n') : '',
     ...(extraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
     ...(extraction?.websiteSignals ?? []),
     ...(extraction?.arrivalSignals ?? []),
@@ -130,6 +150,17 @@ const matchers: Array<{ key: SignalKey; label: string; keywords: string[] }> = [
     { key: 'socialProfile', label: 'Facebook / veřejný profil', keywords: ['facebook', 'instagram', 'social-profile', 'veřejný sociální profil', 'verejny socialni profil', 'veřejný profil', 'verejny profil'] },
     { key: 'noOwnedWebsite', label: 'žádný vlastní web nenalezen', keywords: ['zadny vlastni web nenalezen', 'žádný vlastní web nenalezen', 'neni videt vlastni web', 'není vidět vlastní web', 'ne vlastni web'] },
     { key: 'photoPresentation', label: 'fotky ubytování', keywords: ['fotky ubytovani', 'fotky ubytování', 'cover', 'titulni fotka', 'titulní fotka', 'fotka krumlova'] },
+    { key: 'vilaKrumlov', label: 'Vila Krumlov', keywords: ['vila krumlov', 'vilakrumlov.com'] },
+    { key: 'pensionGalko', label: 'Pension Galko / Galko Široká', keywords: ['pension galko', 'galko siroka', 'galko široká', 'galko-ck.cz'] },
+    { key: 'linkedDomains', label: 'propojené weby Vila Krumlov a Pension Galko', keywords: ['vilakrumlov.com', 'galko-ck.cz'] },
+    { key: 'sharedReception', label: 'recepce / kontakt pro příjezd', keywords: ['recepce', 'kontakt', 'pracovni doba recepce', 'pracovní doba recepce'] },
+    { key: 'checkInWindow', label: 'nástup 14:00-18:00', keywords: ['14:00 18:00', '14.00 18.00', '14:00-18:00', '14.00-18.00', 'checkInWindowStart', 'checkinwindowstart'] },
+    { key: 'lateArrival', label: 'pozdější nástup jen po domluvě s recepcí', keywords: ['pozdější nástup', 'pozdejsi nastup', 'pozdni prijezd', 'late arrival'] },
+    { key: 'checkoutTime', label: 'odjezd do 10:00', keywords: ['do 10:00', 'do 10.00', 'checkouttime', 'check-out do 10'] },
+    { key: 'parkingReservation', label: 'parkování s rezervací předem', keywords: ['rezervace parkovani', 'rezervace parkování', 'parkingReservationRequired', 'parkingreservationrequired', 'rezervaci predem', 'rezervací předem'] },
+    { key: 'parkingPaid', label: 'placené parkování 240 Kč za pobytový den', keywords: ['240 kc', '240 kč', 'parkingPaid', 'parkingpaid', 'placene parkovani', 'placené parkování'] },
+    { key: 'parkingLimited', label: 'omezená kapacita parkování', keywords: ['omezena kapacita', 'omezená kapacita', 'parkingLimited', 'parkinglimited', 'pocet mist je omezen'] },
+    { key: 'parkingDistance', label: 'parkoviště 250 m / 350 m', keywords: ['250 m', '350 m', 'parkingDistanceMeters', 'parkingdistancemeters'] },
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'nabijeni elektromobilu', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
@@ -201,6 +232,7 @@ const playbookReason = (playbook: LeadPlaybook, signals: string[]) => {
     const joined = signals.slice(0, 5).join(', ') || 'omezené veřejné signály';
     const reasons: Record<LeadPlaybook, string> = {
         'restaurant-linked-stay': `Web má výrazný gastro signál (${joined}), proto nápady nemají být jen obecný guest guide.`,
+        'multi-property-arrival-clarity': `Evidence ukazuje dvě propojené provozovny a konkrétní příjezdová pravidla (${joined}).`,
         'city-apartment-arrival': `Evidence ukazuje městské ubytování nebo více typů pokojů/apartmánů (${joined}).`,
         'family-local-experience': `Web staví pobyt na rodině, okolí, zahradě nebo lokálních tipech (${joined}).`,
         'historic-local-experience-stay': `Web ukazuje historický dům, centrum nebo konkrétní lokální tipy (${joined}).`,
@@ -229,9 +261,10 @@ const socialProfileSignalsForLead = (lead: Pick<Lead, 'websiteExtraction' | 'pub
 
 export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'strengths' | 'publicSignals' | 'checkInParkingInfo'>): PlaybookAssessment => {
     const signals = detectCandidateSpecificSignals(lead);
+    const multiPropertySignals = firstSignals(signals, ['vilaKrumlov', 'pensionGalko', 'linkedDomains', 'sharedReception', 'checkInWindow', 'lateArrival', 'checkoutTime', 'parkingReservation', 'parkingPaid', 'parkingLimited', 'parkingDistance'], 10);
     const restaurantSignals = firstSignals(signals, ['sklepRestaurant', 'restaurant', 'breakfast']);
     const citySignals = firstSignals(signals, ['zizkov', 'pragueCentre', 'brnoCentre', 'tram', 'cityArrival', 'roomTypes', 'kitchen']);
-    const familySignals = firstSignals(signals, ['families', 'gardenGrill', 'quietPrivacy', 'barbora', 'jesuitCollege', 'kutnaHora', 'vrchlice', 'historicHouse']);
+    const familySignals = firstSignals(signals, ['families', 'gardenGrill', 'barbora', 'jesuitCollege', 'kutnaHora', 'vrchlice', 'historicHouse']);
     const historicLocalSignals = firstSignals(signals, ['historicCentre', 'castleView', 'krumlovCastle', 'canalGarden', 'historicElements', 'privateEntry', 'krumlovRecreation', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice', 'dlouhaAddress', 'kitchen', 'babyCot'], 8);
     const wellnessSignals = firstSignals(signals, ['relax', 'spa']);
     const eventSignals = firstSignals(signals, ['wedding', 'conference']);
@@ -239,6 +272,9 @@ export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'st
     const socialProfileSignals = socialProfileSignalsForLead(lead);
 
     if (socialProfileSignals.length > 0) return { leadPlaybook: 'social-profile-web-presence', leadPlaybookReason: playbookReason('social-profile-web-presence', socialProfileSignals), playbookSignals: socialProfileSignals };
+    if (hasSignal(signals, ['vilaKrumlov']) && hasSignal(signals, ['pensionGalko']) && (hasSignal(signals, ['checkInWindow', 'lateArrival', 'parkingReservation', 'parkingPaid', 'parkingLimited', 'parkingDistance', 'sharedReception']) || hasSignal(signals, ['linkedDomains']))) {
+        return { leadPlaybook: 'multi-property-arrival-clarity', leadPlaybookReason: playbookReason('multi-property-arrival-clarity', multiPropertySignals), playbookSignals: multiPropertySignals };
+    }
     if (restaurantSignals.length > 0) return { leadPlaybook: 'restaurant-linked-stay', leadPlaybookReason: playbookReason('restaurant-linked-stay', restaurantSignals), playbookSignals: restaurantSignals };
     if (eventSignals.length > 0) return { leadPlaybook: 'event-wedding-hotel', leadPlaybookReason: playbookReason('event-wedding-hotel', eventSignals), playbookSignals: eventSignals };
     if (historicLocalSignals.length > 0 && wellnessSignals.length === 0) return { leadPlaybook: 'historic-local-experience-stay', leadPlaybookReason: playbookReason('historic-local-experience-stay', historicLocalSignals), playbookSignals: historicLocalSignals };
@@ -298,13 +334,40 @@ const familyLocalWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: Specifi
     ),
     makeWin(
         'Připravit hosty na zahradu a gril',
-        `Zahrada, gril, klid nebo soukromí jsou pozitivní důvody pobytu: ${evidenceFor(signals, ['gardenGrill', 'quietPrivacy', 'vrchlice'], 'venkovní zázemí')}.`,
+        `Zahrada nebo gril jsou explicitní důvody pobytu: ${evidenceFor(signals, ['gardenGrill'], 'zahrada nebo gril')}.`,
         'Doplnit hostům předem, jak používat zahradu/gril, co si vzít ven a jak nejlépe využít klidnější zázemí po návratu z města.',
-        evidenceFor(signals, ['gardenGrill', 'quietPrivacy', 'vrchlice'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        evidenceFor(signals, ['gardenGrill'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
         'venkovní zázemí jako součást pobytu',
-        firstSignals(signals, ['gardenGrill', 'quietPrivacy', 'vrchlice'], 5),
+        firstSignals(signals, ['gardenGrill'], 5),
     ),
     roomTypeWin(lead, signals),
+];
+
+const multiPropertyArrivalWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
+    makeWin(
+        'Udělat jasný předpříjezdový blok kvůli příjezdu do 18:00',
+        'Na webu je uvedeno, že nástup je od 14:00 do 18:00 a pozdější příjezd je jen po domluvě.',
+        'Po rezervaci poslat hostovi krátký přehled: kdy se může ubytovat, kde je recepce, na jaký telefon volat v pracovní době a co dělat, když hrozí pozdější příjezd.',
+        evidenceFor(signals, ['checkInWindow', 'lateArrival', 'sharedReception'], lead.websiteExtraction?.summary || 'Nástup 14:00-18:00, pozdější nástup jen po domluvě, recepce/kontakt.'),
+        'předpříjezdová komunikace pro časově omezený příjezd',
+        firstSignals(signals, ['checkInWindow', 'lateArrival', 'sharedReception'], 6),
+    ),
+    makeWin(
+        'Parkování vytáhnout do samostatného předpříjezdového bodu',
+        'Parkování je placené, s omezenou kapacitou a nutnou rezervací předem.',
+        'V předpříjezdové zprávě nebo online průvodci udělat samostatnou sekci „Přijedu autem“: vzdálenost parkoviště, cena, hotovostní platba, nutnost rezervace a co dělat po příjezdu.',
+        evidenceFor(signals, ['parkingDistance', 'parkingPaid', 'parkingReservation', 'parkingLimited'], lead.websiteExtraction?.summary || 'Parkoviště 250 m / 350 m, 240 Kč za pobytový den, rezervace nutná předem, počet míst omezený.'),
+        'parkování s rezervací předem jako hlavní předpříjezdová informace',
+        firstSignals(signals, ['parkingDistance', 'parkingPaid', 'parkingReservation', 'parkingLimited'], 6),
+    ),
+    makeWin(
+        'Oddělit instrukce pro Vila Krumlov a Pension Galko',
+        'Weby a provozy jsou propojené a host může snadno zaměnit adresu, recepci nebo kontakt.',
+        'V guest guide nebo předpříjezdové zprávě mít dvě jasné varianty: „Jedu do Vila Krumlov“ a „Jedu do Pension Galko“, s adresou, recepcí, telefonem a parkováním pro konkrétní objekt.',
+        evidenceFor(signals, ['vilaKrumlov', 'pensionGalko', 'linkedDomains', 'sharedReception'], lead.websiteExtraction?.summary || 'Vila Krumlov a Pension Galko / Galko Široká jsou propojené weby s různými adresami a kontakty.'),
+        'rozlišení dvou propojených provozoven před příjezdem',
+        firstSignals(signals, ['vilaKrumlov', 'pensionGalko', 'linkedDomains', 'sharedReception'], 6),
+    ),
 ];
 
 const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
@@ -440,6 +503,7 @@ const basicGuestGuideWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: Spe
 
 const playbookWins = (playbook: LeadPlaybook, lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => {
     if (playbook === 'restaurant-linked-stay') return [cityOrientationWin(lead, signals), restaurantWin(lead, signals), roomTypeWin(lead, signals)];
+    if (playbook === 'multi-property-arrival-clarity') return multiPropertyArrivalWins(lead, signals);
     if (playbook === 'city-apartment-arrival') return [cityOrientationWin(lead, signals), roomTypeWin(lead, signals), restaurantWin(lead, signals)].filter((win) => win.usedSignals?.length);
     if (playbook === 'family-local-experience') return familyLocalWins(lead, signals);
     if (playbook === 'historic-local-experience-stay') return historicLocalExperienceWins(lead, signals);
@@ -499,6 +563,9 @@ export const buildSpecificFreeIdeas = (lead: Pick<Lead, 'name' | 'websiteExtract
 const conceptForIdea = (idea: QuickWin) => {
     const text = normalize(`${idea.title}\n${idea.why}\n${idea.action}\n${idea.uniqueBusinessAngle}\n${(idea.usedSignals ?? []).join('\n')}`);
     if (/restaur|sklep|snidan|menu|jidlo/.test(text)) return 'restaurant';
+    if (/vila krumlov|pension galko|galko siroka|dv[eě] propojen[eé]|dvou propojen/.test(text)) return 'multi-property';
+    if (/parkov|240 k|250 m|350 m|p[řr]ijedu autem/.test(text)) return 'parking';
+    if (/18:00|18 00|pozd[eě]j[šs][ií]|recepc/.test(text)) return 'arrival-deadline';
     if (/typ pobytu|typ poko|apartman|kuchyn|studio|rodinny apartman/.test(text)) return 'room-type';
     if (/zizkov|praha|brno|tram|mesto|ulice|seifertova|prvni vecer/.test(text)) return 'city-orientation';
     if (/krumlov|hrad|zamek|zahrad|kanal|muze|seidl|divadlo|vltav|lipno|klet|rozmberk|hluboka|holasovic|historick/.test(text)) return 'historic-local';

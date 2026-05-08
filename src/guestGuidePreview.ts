@@ -98,6 +98,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const text = normalize(rawText);
     const sources = evidenceSourceList(lead, extraction);
     const isSocialProfile = ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(extraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? '') || lead.leadPlaybook === 'social-profile-web-presence';
+    const isMultiPropertyArrival = lead.leadPlaybook === 'multi-property-arrival-clarity' || hasAny(text, ['vila krumlov']) && hasAny(text, ['pension galko', 'galko siroka', 'galko široká']);
     const hasParking = hasAny(text, ['parkoviste', 'parkovani', 'parking', 'nabijeci stanice', 'charging station', 'ev']);
     const hasRestaurant = hasAny(text, ['restaurace', 'restaurant', 'terasa', 'bar', 'grill']);
     const hasWellness = hasAny(text, ['wellness', 'relax', 'sauna', 'spa']);
@@ -114,6 +115,86 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const contacts = contactItems(lead, extraction);
     const sourceEvidence = sources.length ? sources : ['Draft vychází z aktuálně uložené veřejné evidence u leadu.'];
     const commonEvidence = sourceEvidence.slice(0, 6);
+    if (isMultiPropertyArrival) {
+        const multiSections: GuestGuideSection[] = [
+            section({
+                id: 'arrival-deadline',
+                title: 'Příjezd do 18:00',
+                headline: 'Kdy se host může ubytovat',
+                overview: 'Hlavní předpříjezdový blok kvůli časově omezenému nástupu na pobyt.',
+                groups: [{ title: 'Veřejná evidence', items: ['Nástup na pobyt od 14:00 do 18:00', 'Recepce / kontakt pro příjezd', 'Po rezervaci poslat krátký přehled hostovi'] }],
+                sourceEvidence: unique([...(extraction?.arrivalSignals ?? []), ...commonEvidence]),
+            }),
+            section({
+                id: 'late-arrival',
+                title: 'Přijedu později',
+                headline: 'Pozdější příjezd jen po domluvě',
+                overview: 'Host má vědět, co dělat, když hrozí příjezd po 18:00.',
+                groups: [{ title: 'Postup pro hosta', items: ['Pozdější nástup pouze po předchozí domluvě s recepcí', 'Uvést telefon nebo e-mail pro domluvu v pracovní době', 'Doplnit interní formulaci pro pozdní příjezd'] }],
+                sourceEvidence: unique([extraction?.lateArrivalCondition ?? '', ...commonEvidence]),
+            }),
+            section({
+                id: 'property-switch',
+                title: 'Jedete do Vila Krumlov / Jedete do Pension Galko',
+                headline: 'Dvě propojené provozovny bez záměny',
+                overview: 'Rozcestník pro hosta, aby nezaměnil objekt, adresu, recepci ani parkování.',
+                groups: [
+                    { title: 'Vila Krumlov', items: ['Adresa a příjezd pro Vila Krumlov', 'Parkování podle pravidel pro Vila Krumlov', 'Kontakt / recepce pro hosta'] },
+                    { title: 'Pension Galko', items: ['Adresa a příjezd pro Pension Galko / Galko Široká', 'Parkování podle pravidel pro Pension Galko', 'Kontakt / recepce pro hosta'] },
+                ],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'parking',
+                title: 'Parkování',
+                headline: 'Přijedu autem',
+                overview: 'Parkování je samostatná předpříjezdová informace, protože má cenu, kapacitu i rezervaci předem.',
+                groups: [{ title: 'Veřejná evidence', items: ['Parkování je za poplatek', 'Rezervace parkování nutná předem', 'Počet míst je omezený', 'Vila Krumlov: parkoviště cca 350 m', 'Pension Galko: parkoviště cca 250 m', 'Cena 240 Kč za pobytový den'] }],
+                sourceEvidence: unique([...(extraction?.parkingSignals ?? []), ...commonEvidence]),
+            }),
+            section({
+                id: 'contacts',
+                title: 'Recepce a kontakty',
+                headline: 'Koho kontaktovat před příjezdem',
+                overview: 'Kontakt má být vedle příjezdu a pozdního příjezdu, ne jen jako obecná stránka.',
+                groups: [{ title: 'Dostupné kontakty / doplnit', items: contacts.slice(0, 6) }],
+                sourceEvidence: unique([...(extraction?.contact.emails ?? []), ...(extraction?.contact.phones ?? []), ...commonEvidence]),
+            }),
+            section({
+                id: 'payment-cancellation-rules',
+                title: 'Platba a storno / pravidla',
+                headline: 'Podmínky na jednom místě',
+                overview: 'Web má praktické sekce, které dává smysl poslat hostovi pohromadě po rezervaci.',
+                groups: [{ title: 'Sjednotit pro hosta', items: ['Ceník', 'Platební a storno podmínky', 'Ubytovací řád', 'Rezervace'] }],
+                sourceEvidence: commonEvidence,
+            }),
+            section({
+                id: 'checkout',
+                title: 'Odjezd do 10:00',
+                headline: 'Kdy pobyt končí',
+                overview: 'Checkout informace má být součástí stejného předpříjezdového přehledu.',
+                groups: [{ title: 'Veřejná evidence', items: ['Ukončení pobytu do 10:00', 'Doplnit, kam odevzdat klíče nebo kartu', 'Doplnit poslední praktické kroky před odjezdem'] }],
+                sourceEvidence: unique([extraction?.checkoutTime ? `Odjezd do ${extraction.checkoutTime}` : '', ...commonEvidence]),
+            }),
+        ];
+        const previewBase: Omit<GuestGuidePreview, 'configExport'> = {
+            propertyName: clean(lead.name) || 'Galko / Vila Krumlov',
+            city: clean(lead.city) || 'Český Krumlov',
+            address: '[DOPLNIT: adresa podle konkrétní provozovny]',
+            suggestedSlug: slugify(`${lead.name}-${lead.city}`),
+            language: 'cs',
+            sections: multiSections,
+            sourceEvidence,
+            limitations: unique([
+                'Jde o draft ukázky pro dvě propojené provozovny, ne hotový provozní návod.',
+                'Praktické informace existují, ale pro hosta by šly sjednotit do jednoho předpříjezdového přehledu.',
+                ...(lead.sourceLimitations ?? []),
+                ...(extraction?.evidenceLimits ?? []),
+            ]).slice(0, 12),
+        };
+
+        return { ...previewBase, configExport: buildGuestGuideConfigExport(previewBase) };
+    }
     if (isSocialProfile) {
         const socialSections: GuestGuideSection[] = [
             section({
@@ -377,7 +458,26 @@ export function createGuestGuideSecondEmail(lead: Lead, preview: GuestGuidePrevi
     const sectionList = preview.sections.map((guideSection) => guideSection.title).slice(0, 8).join(', ');
     const recommendation = recommendProductForLead(lead);
     const text = normalize(extractionEvidenceText(lead));
-    const isKrumlov = hasAny(text, ['krumlov']);
+    const isKrumlov = hasAny(text, ['krumlov']) && lead.leadPlaybook === 'historic-local-experience-stay';
+
+    if (lead.leadPlaybook === 'multi-property-arrival-clarity') {
+        return sanitizeClientText(`Dobrý den,
+
+děkuji, posílám slíbené 3 krátké nápady. Berte to jen jako rychlý pohled zvenku.
+
+1. Zviditelnit příjezd do 18:00
+Na webu je uvedeno, že nástup je od 14:00 do 18:00 a pozdější příjezd je možný jen po předchozí domluvě. To je informace, kterou bych dal hostovi velmi jasně hned po rezervaci.
+
+2. Parkování dát do samostatného bloku
+Parkování je placené, v docházkové vzdálenosti, s omezenou kapacitou a nutnou rezervací předem. Host, který přijíždí autem, by měl dostat krátký přehled ještě před cestou.
+
+3. Oddělit instrukce pro Vila Krumlov a Pension Galko
+Protože jsou prezentace propojené, dávalo by smysl mít v instrukcích jasně odděleno: adresa, recepce, kontakt a parkování pro konkrétní objekt.
+
+Z toho by šel udělat jednoduchý online průvodce pro hosty nebo předpříjezdová zpráva, kterou dostanou po rezervaci.
+
+David`);
+    }
 
     if (isKrumlov) {
         return sanitizeClientText(`Dobrý den,

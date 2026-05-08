@@ -96,6 +96,8 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
             paidOfferShort: 'Guest Communication Setup',
             paidOfferDetails: leadPlaybook === 'restaurant-linked-stay'
                 ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, první večer, restaurace, Wi-Fi, kontakt a odjezd. Sekce se dají upravit podle typu pokoje/apartmánu a navázat na zprávy po rezervaci.'
+                : leadPlaybook === 'multi-property-arrival-clarity'
+                    ? 'Předpříjezdová komunikace a jednoduchý online průvodce pro dvě propojené provozovny: příjezd do 18:00, pozdní příjezd po domluvě, recepce, kontakty, parkování s rezervací předem, rozdíl mezi Vila Krumlov a Pension Galko a odjezd.'
                 : leadPlaybook === 'historic-local-experience-stay'
                     ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, konkrétní lokální tipy a odjezd. Sekce se dají upravit podle typu apartmánu a navázat na zprávy po rezervaci.'
                 : 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, vstup, Wi-Fi, vybavení, kontakt, tipy v okolí a odjezd. U různých typů pobytu se dají informace upravit podle hosta a napojit na zprávy po rezervaci.',
@@ -175,6 +177,9 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteExtraction' | '
     } else if (leadPlaybook === 'restaurant-linked-stay') {
         recommendedProduct = 'guest-communication-setup';
         recommendedProductReason = 'Playbook restaurant-linked-stay ukazuje productized příležitost: propojit ubytování, první večer a restauraci v předpříjezdové komunikaci místo širšího Ops Auditu.';
+    } else if (leadPlaybook === 'multi-property-arrival-clarity') {
+        recommendedProduct = 'guest-communication-setup';
+        recommendedProductReason = 'Playbook multi-property-arrival-clarity ukazuje dvě propojené provozovny, časově omezený příjezd a parkování s rezervací předem, takže nejlepší návaznost je předpříjezdová komunikace pro hosta, ne širší Ops Audit.';
     } else if (leadPlaybook === 'city-apartment-arrival') {
         recommendedProduct = typeCount >= 2 ? 'guest-communication-setup' : 'guest-guide-starter';
         recommendedProductReason = typeCount >= 2

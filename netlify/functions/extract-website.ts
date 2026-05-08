@@ -36,6 +36,12 @@ interface TavilyExtractResult {
     title?: string;
 }
 
+interface NavigationLink {
+    label: string;
+    url: string;
+    text: string;
+}
+
 const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -50,8 +56,13 @@ const MAX_PREVIEW = 1200;
 
 const priorityPageDefinitions = [
     { label: 'Kontakt', keywords: ['kontakt', 'contact'] },
+    { label: 'FAQ', keywords: ['faq', 'casto-kladene', 'často-kladene', 'otazky', 'otázky'] },
+    { label: 'Parkování', keywords: ['parkovani', 'parkování', 'parking', 'parkoviste', 'parkoviště'] },
+    { label: 'Jak se k nám dostanete', keywords: ['jak-se-k-nam-dostanete', 'jak-se-k-nám-dostanete', 'prijezd', 'příjezd', 'doprava', 'arrival'] },
     { label: 'Možnosti rekreace', keywords: ['moznosti-rekreace', 'možnosti-rekreace', 'moznosti_rekreace', 'možnosti_rekreace', 'rekreace', 'vylety', 'výlety', 'tipy-v-okoli', 'tipy-v-okolí'] },
     { label: 'Ceník', keywords: ['cenik', 'ceník', 'cena', 'prices', 'price-list'] },
+    { label: 'Platební a storno podmínky', keywords: ['platebni-podminky', 'platební-podmínky', 'storno', 'cancellation', 'podminky', 'podmínky'] },
+    { label: 'Ubytovací řád', keywords: ['ubytovaci-rad', 'ubytovací-řád', 'ubytovaci_rad', 'ubytovací_řád', 'rad', 'řád', 'rules'] },
     { label: 'Rezervace', keywords: ['rezervace', 'reservation', 'booking'] },
     { label: 'Pokoje / apartmány', keywords: ['pokoje', 'pokoj', 'apartmany', 'apartmány', 'ubytovani', 'ubytování', 'rooms', 'apartments', 'accommodation'] },
 ];
@@ -86,8 +97,13 @@ const fallbackPageHints = [
     'možnosti-rekreace',
     'cenik.php',
     'cenik',
+    'parkovani',
+    'jak-se-k-nam-dostanete',
+    'prijezd',
     'rezervace.php',
     'rezervace',
+    'platebni-a-storno-podminky',
+    'ubytovaci-rad',
     'pokoje',
     'ubytovani',
     'apartmany',
@@ -95,7 +111,7 @@ const fallbackPageHints = [
 ];
 
 const internalLinkKeywords = [
-    'kontakt', 'rekreace', 'možnosti rekreace', 'moznosti rekreace', 'cenik', 'ceník', 'rezervace', 'pokoje', 'ubytovani', 'ubytování', 'apartmany', 'apartmány', 'prijezd', 'příjezd', 'parkovani', 'parkování', 'sluzby', 'služby', 'wellness', 'faq',
+    'kontakt', 'rekreace', 'možnosti rekreace', 'moznosti rekreace', 'cenik', 'ceník', 'platebni', 'platební', 'storno', 'ubytovaci rad', 'ubytovací řád', 'rezervace', 'pokoje', 'ubytovani', 'ubytování', 'apartmany', 'apartmány', 'prijezd', 'příjezd', 'jak se k nam dostanete', 'jak se k nám dostanete', 'parkovani', 'parkování', 'sluzby', 'služby', 'wellness', 'faq',
     'contact', 'rooms', 'accommodation', 'apartments', 'arrival', 'parking', 'services', 'booking',
 ];
 
@@ -200,6 +216,35 @@ const priorityPageLabel = (page: Pick<ExtractedPage, 'url' | 'title'>) => {
     return priorityPageDefinitions.find((definition) => includesAny(searchable, definition.keywords))?.label ?? null;
 };
 
+const priorityLabelForText = (value = '') => priorityPageDefinitions.find((definition) => includesAny(value, definition.keywords))?.label ?? null;
+
+const extractDiscoveredNavigationLinks = (results: TavilyExtractResult[], baseUrl: URL) => {
+    if (isSocialPlatformUrl(baseUrl.toString())) return [];
+    const links: NavigationLink[] = [];
+    const text = results.map((result) => `${result.raw_content || ''}\n${result.content || ''}`).join('\n');
+    const markdownOrHrefPattern = /\[([^\]]+)\]\(([^)]+)\)|<a\s+[^>]*href=["']([^"']+)["'][^>]*>([^<]{0,120})<\/a>|href=["']([^"']+)["']/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = markdownOrHrefPattern.exec(text))) {
+        const linkText = trimText(match[1] || match[4] || match[5] || '', 140);
+        const rawUrl = (match[2] || match[3] || match[5] || '').trim();
+        const parsed = rawUrl.startsWith('/') ? new URL(rawUrl, baseUrl) : safeUrl(rawUrl);
+        if (!parsed || hostWithoutWww(parsed) !== hostWithoutWww(baseUrl) || isBlockedAggregatorUrl(parsed.toString())) continue;
+
+        const searchable = `${linkText}\n${parsed.pathname}`;
+        const label = priorityLabelForText(searchable);
+        if (!label) continue;
+        links.push({ label, url: parsed.toString().split('#')[0], text: linkText || label });
+    }
+
+    return unique(links.map((link) => `${link.label}|${link.url}|${link.text}`))
+        .map((encoded) => {
+            const [label, url, textValue] = encoded.split('|');
+            return { label, url, text: textValue };
+        })
+        .slice(0, 20);
+};
+
 const priorityUrlGuesses = (websiteUrl: string, existingUrls: string[]) => buildFallbackGuessUrls(websiteUrl, existingUrls)
     .sort((a, b) => priorityRank(a) - priorityRank(b));
 
@@ -210,6 +255,7 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
     websiteUrl: candidateWebsiteUrl(request),
     extractionStrategy: 'homepage-first' as const,
     discoveredInternalLinksCount: 0,
+    discoveredNavigationLinks: [],
     guessedUrlsUsed,
     pagesExtracted: pages,
     skippedPages,
@@ -221,6 +267,9 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
     websiteSignals: [],
     extractedPriorityPages: [],
     missedPriorityPages: priorityPageDefinitions.map((definition) => definition.label),
+    priorityPagesFoundButNotExtracted: [],
+    missingClaimsSuppressedByNavigation: [],
+    needsPriorityPageExtraction: false,
     localExperienceSignals: [],
     arrivalSignals: [],
     parkingSignals: [],
@@ -259,7 +308,30 @@ const isInvalidSocialPage = (page: ExtractedPage) => isSocialPlatformLoginUrl(pa
 
 const signalMatches = (content: string, matchers: Array<{ label: string; keywords: string[] }>) => matchers.filter((matcher) => includesAny(content, matcher.keywords)).map((matcher) => matcher.label);
 
-const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[], strategy: { discoveredInternalLinksCount: number; guessedUrlsUsed: string[] }) => {
+const firstTime = (text: string, pattern: RegExp) => text.match(pattern)?.[1]?.replace('.', ':') ?? undefined;
+const extractArrivalParkingDetails = (content: string) => {
+    const normalized = normalizeForMatch(content);
+    const timeWindow = content.match(/(?:n[aá]stup|check-?in|p[řr][ií]jezd)[^\n.]{0,80}?(\d{1,2}[:.]\d{2})\s*(?:-|–|a[zž]|do)\s*(\d{1,2}[:.]\d{2})/i);
+    const checkout = firstTime(content, /(?:ukon[cč]en[ií]\s+pobytu|odjezd|check-?out)[^\n.]{0,80}?(?:do|until)\s*(\d{1,2}[:.]\d{2})/i);
+    const parkingDistanceMeters: Record<string, number> = {};
+
+    if (/vila\s+krumlov/.test(normalized) && /350\s*m/.test(normalized)) parkingDistanceMeters['Vila Krumlov'] = 350;
+    if (/(pension\s+galko|galko\s+siroka|galko\s+široká)/.test(normalized) && /250\s*m/.test(normalized)) parkingDistanceMeters['Pension Galko'] = 250;
+
+    return {
+        checkInWindowStart: timeWindow?.[1]?.replace('.', ':'),
+        checkInWindowEnd: timeWindow?.[2]?.replace('.', ':'),
+        lateArrivalCondition: /pozd[eě]j[šs][ií]\s+n[aá]stup[^.]{0,140}(?:recepc[ií]|domluv)/i.test(content) ? 'pozdější nástup pouze po předchozí domluvě s recepcí' : undefined,
+        receptionHours: content.match(/recepce[^.\n]{0,120}(\d{1,2}[:.]\d{2}\s*(?:-|–|a[zž]|do)\s*\d{1,2}[:.]\d{2})/i)?.[1]?.replace(/\./g, ':'),
+        checkoutTime: checkout,
+        parkingReservationRequired: /parkov[aá]n[ií][^.]{0,180}(rezervac|nutn[aá]\s+p[řr]edem)|rezervac[^.]{0,120}parkov[aá]n[ií]/i.test(content),
+        parkingPaid: /parkov[aá]n[ií][^.]{0,180}(placen|k[cč]|czk|eur)|240\s*k[cč]/i.test(content),
+        parkingLimited: /parkov[aá]n[ií][^.]{0,180}(omezen|kapacit)|po[cč]et\s+m[ií]st\s+je\s+omezen/i.test(content),
+        parkingDistanceMeters,
+    };
+};
+
+const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[], strategy: { discoveredInternalLinksCount: number; guessedUrlsUsed: string[]; discoveredNavigationLinks: NavigationLink[] }) => {
     const content = pages.map((page) => `${page.url}\n${page.title}\n${page.textPreview}`).join('\n').toLowerCase();
     const rawText = pages.map((page) => page.textPreview).join('\n');
     const ownership = assessWebsiteOwnership({
@@ -321,17 +393,34 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
     ]);
     const extractedPriorityPages = unique(pages.map((page) => priorityPageLabel(page) ? page.url : '').filter(Boolean));
     const extractedPriorityLabels = unique(pages.map((page) => priorityPageLabel(page) ?? '').filter(Boolean));
-    const missedPriorityPages = priorityPageDefinitions.map((definition) => definition.label).filter((label) => !extractedPriorityLabels.includes(label));
+    const navigationPriorityLabels = unique(strategy.discoveredNavigationLinks.map((link) => link.label));
+    const priorityPagesFoundButNotExtracted = strategy.discoveredNavigationLinks.filter((link) => !extractedPriorityLabels.includes(link.label));
+    const missedPriorityPages = priorityPageDefinitions.map((definition) => definition.label).filter((label) => !extractedPriorityLabels.includes(label) && !navigationPriorityLabels.includes(label));
+    const missingClaimsSuppressedByNavigation: string[] = [];
+    const navHas = (labels: string[]) => labels.some((label) => navigationPriorityLabels.includes(label));
+    const arrivalParkingDetails = extractArrivalParkingDetails(content);
 
     const missingPublicInfoSignals: string[] = [];
     const suppressedMissingSignals: string[] = [];
-    if (arrivalSignals.length === 0) missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne strukturovana sekce prijezd / check-in.');
+    if (arrivalSignals.length === 0 && !navHas(['Jak se k nám dostanete', 'FAQ', 'Kontakt'])) {
+        missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne strukturovana sekce prijezd / check-in.');
+    } else if (arrivalSignals.length === 0) {
+        missingClaimsSuppressedByNavigation.push('Příjezd/check-in není označen jako chybějící, protože navigace odkazuje na praktické příjezdové nebo kontaktní stránky.');
+    }
     if (parkingSignals.length === 0) {
-        missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne videt parkovani.');
+        if (navHas(['Parkování', 'Jak se k nám dostanete'])) {
+            missingClaimsSuppressedByNavigation.push('Parkování není označené jako chybějící, protože navigace obsahuje stránku Parkování / Jak se k nám dostanete.');
+        } else {
+            missingPublicInfoSignals.push('Na prectenem verejnem webu neni jasne videt parkovani.');
+        }
     } else {
         suppressedMissingSignals.push('Parkovani neni oznacene jako chybejici, protoze web zminuje parkovani nebo nabijeci stanici.');
     }
-    if (faqSignals.length === 0) missingPublicInfoSignals.push('Na prectenem verejnem webu neni videt FAQ / casto kladene dotazy.');
+    if (faqSignals.length === 0 && !navHas(['FAQ'])) {
+        missingPublicInfoSignals.push('Na prectenem verejnem webu neni videt FAQ / casto kladene dotazy.');
+    } else if (faqSignals.length === 0) {
+        missingClaimsSuppressedByNavigation.push('FAQ není označené jako chybějící, protože navigace obsahuje odkaz FAQ.');
+    }
     if (guestGuideSignals.length === 0) missingPublicInfoSignals.push('Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci.');
 
     const likelyManualProcessSignals = signalMatches(content, [
@@ -367,6 +456,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         websiteUrl: candidateWebsiteUrl(request),
         extractionStrategy: 'homepage-first' as const,
         discoveredInternalLinksCount: strategy.discoveredInternalLinksCount,
+        discoveredNavigationLinks: strategy.discoveredNavigationLinks,
         guessedUrlsUsed: strategy.guessedUrlsUsed,
         pagesExtracted: pages,
         skippedPages,
@@ -378,7 +468,11 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         websiteSignals,
         extractedPriorityPages,
         missedPriorityPages,
+        priorityPagesFoundButNotExtracted,
+        missingClaimsSuppressedByNavigation,
+        needsPriorityPageExtraction: priorityPagesFoundButNotExtracted.length > 0,
         localExperienceSignals,
+        ...arrivalParkingDetails,
         arrivalSignals,
         parkingSignals,
         faqSignals,
@@ -493,6 +587,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
         const baseUrl = safeUrl(websiteUrl);
         const initialOutcome = await tavilyExtract(apiKey, initialUrls);
+        const discoveredNavigationLinks = baseUrl ? extractDiscoveredNavigationLinks(initialOutcome.results, baseUrl) : [];
         const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
         const guessedUrlsUsed = isSocialPlatformUrl(websiteUrl) ? [] : priorityUrlGuesses(websiteUrl, [...initialUrls, ...discoveredUrls]).slice(0, Math.max(0, MAX_URLS - initialUrls.length - discoveredUrls.length));
         const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].filter((url) => !isAssetUrl(url)).slice(0, Math.max(0, MAX_URLS - initialUrls.length));
@@ -542,7 +637,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         }
 
         return json(200, {
-            ...analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed }),
+            ...analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed, discoveredNavigationLinks }),
             skippedAssetUrls: skippedPages.filter((page) => page.reason === 'asset_or_binary_file').map((page) => page.url),
         });
     } catch (error) {
