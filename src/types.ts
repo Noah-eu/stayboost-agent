@@ -33,6 +33,10 @@ export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'nee
 
 export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'ops-audit' | 'skip';
 
+export type GuestGuidePreviewStatus = 'not-created' | 'created' | 'needs-review';
+
+export type GuestGuideLanguage = 'cs' | 'en';
+
 export interface PublicProfileLink {
     id: string;
     sourceType: PublicProfileSourceType;
@@ -49,6 +53,30 @@ export interface QuickWin {
     sourceEvidence: string;
     candidateSpecificity?: 'specific' | 'generic';
     uniqueBusinessAngle?: string;
+}
+
+export interface GuestGuideSection {
+    id: string;
+    title: string;
+    headline: string;
+    overview: string;
+    groups: {
+        title: string;
+        items: string[];
+    }[];
+    sourceEvidence: string[];
+}
+
+export interface GuestGuidePreview {
+    propertyName: string;
+    city: string;
+    address: string;
+    suggestedSlug: string;
+    language: GuestGuideLanguage;
+    sections: GuestGuideSection[];
+    configExport: Record<string, unknown>;
+    sourceEvidence: string[];
+    limitations: string[];
 }
 
 export interface SourceMaterial {
@@ -287,6 +315,9 @@ export interface Lead {
     freeIdeaPurpose?: string;
     paidOfferShort?: string;
     paidOfferDetails?: string;
+    guestGuidePreviewStatus?: GuestGuidePreviewStatus;
+    guestGuidePreview?: GuestGuidePreview;
+    guestGuideSecondEmail?: string;
     outreachIntent?: 'ask-permission-to-send-free-ideas';
     outreachTone?: 'humble-transparent-low-pressure';
     lastContactDate: string;

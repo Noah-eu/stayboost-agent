@@ -5,6 +5,7 @@ import { extractAuditObservations } from './auditExtractor';
 import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, hasForbiddenOutreachLanguage, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
+import { createGuestGuidePreview, createGuestGuideSecondEmail } from './guestGuidePreview';
 import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { mockLeads } from './mockData';
 import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
@@ -130,6 +131,9 @@ const emptyLead = (): Lead => ({
     freeIdeaPurpose: '',
     paidOfferShort: '',
     paidOfferDetails: '',
+    guestGuidePreviewStatus: 'not-created',
+    guestGuidePreview: undefined,
+    guestGuideSecondEmail: '',
     outreachIntent: 'ask-permission-to-send-free-ideas',
     outreachTone: 'humble-transparent-low-pressure',
     lastContactDate: '',
@@ -767,6 +771,9 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         freeIdeaPurpose: sanitizeClientText(lead.freeIdeaPurpose ?? ''),
         paidOfferShort: sanitizeClientText(lead.paidOfferShort ?? ''),
         paidOfferDetails: sanitizeClientText(lead.paidOfferDetails ?? ''),
+        guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
+        guestGuidePreview: lead.guestGuidePreview,
+        guestGuideSecondEmail: sanitizeClientText(lead.guestGuideSecondEmail ?? ''),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
@@ -1911,6 +1918,29 @@ function App() {
         persistLead(withProductRecommendation(nextLead));
     };
 
+    const createGuestGuidePreviewForDraft = () => {
+        const preview = createGuestGuidePreview(draftLead);
+        const secondEmail = draftLead.guestGuideSecondEmail || createGuestGuideSecondEmail(draftLead, preview);
+
+        persistLead({
+            ...draftLead,
+            guestGuidePreviewStatus: 'created',
+            guestGuidePreview: preview,
+            guestGuideSecondEmail: secondEmail,
+        });
+    };
+
+    const prepareGuestGuideSecondEmail = () => {
+        const preview = draftLead.guestGuidePreview ?? createGuestGuidePreview(draftLead);
+
+        persistLead({
+            ...draftLead,
+            guestGuidePreviewStatus: draftLead.guestGuidePreviewStatus === 'not-created' ? 'created' : draftLead.guestGuidePreviewStatus,
+            guestGuidePreview: preview,
+            guestGuideSecondEmail: createGuestGuideSecondEmail(draftLead, preview),
+        });
+    };
+
     const copyText = (textId: string, value: string) => {
         if (!value.trim()) {
             return;
@@ -1967,6 +1997,11 @@ function App() {
             debugFileNames.lead(lead.name || lead.id),
             createLeadDebugExport(lead, { diagnostics: leadAgentSession.diagnostic, analysis }, { includeScreenshotDataUrls: includeScreenshotDataUrlsInExport }),
         );
+    };
+
+    const exportGuestGuideConfig = (lead: Lead) => {
+        const preview = lead.guestGuidePreview ?? createGuestGuidePreview(lead);
+        downloadJsonFile(`stayboost-guest-guide-${preview.suggestedSlug}.json`, preview.configExport);
     };
 
     const renderScreen = () => {
@@ -2062,13 +2097,16 @@ function App() {
                     onAnalyzeScreenshots={analyzeLeadScreenshots}
                 onChange={updateDraft}
                 onCopyText={copyText}
+                onCreateGuestGuidePreview={createGuestGuidePreviewForDraft}
                 onDeleteLead={deleteLead}
+                onExportGuestGuideConfig={exportGuestGuideConfig}
                 onExportLead={exportLeadJson}
                 onExportWebsiteExtraction={exportWebsiteExtractionJson}
                 onGenerateText={generateText}
                 includeScreenshotDataUrlsInExport={includeScreenshotDataUrlsInExport}
                 onToggleIncludeScreenshotDataUrls={setIncludeScreenshotDataUrlsInExport}
                 onPrepareAudit={prepareAuditObservations}
+                onPrepareGuestGuideSecondEmail={prepareGuestGuideSecondEmail}
                 onSave={saveDraft}
             />
         );
@@ -2860,12 +2898,15 @@ interface LeadEditorProps {
     isCreating?: boolean;
     onChange: <Field extends keyof Lead>(field: Field, value: Lead[Field]) => void;
     onCopyText?: (textId: string, value: string) => void;
+    onCreateGuestGuidePreview?: () => void;
     onDeleteLead?: (leadId: string) => void;
     onGenerateText?: (field: 'internalAgentBrief' | 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => void;
     onPrepareAudit?: () => void;
+    onPrepareGuestGuideSecondEmail?: () => void;
     onAnalyzeLead?: (lead: Lead) => void;
     onAnalyzeScreenshots?: (lead: Lead) => void;
     onExportLead?: (lead: Lead) => void;
+    onExportGuestGuideConfig?: (lead: Lead) => void;
     onExportWebsiteExtraction?: (extraction: WebsiteExtractionResult, candidate?: LeadAgentCandidate, lead?: Lead) => void;
     includeScreenshotDataUrlsInExport?: boolean;
     onToggleIncludeScreenshotDataUrls?: (include: boolean) => void;
@@ -2873,7 +2914,7 @@ interface LeadEditorProps {
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onDeleteLead, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onCreateGuestGuidePreview, onDeleteLead, onExportGuestGuideConfig, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onPrepareGuestGuideSecondEmail, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
     const showWebsiteAnalysisPanel = needsWebsiteAnalysis(draftLead);
     const latestAnalysisDiagnostic = draftLead.latestAnalysisDiagnostic as { userMessage?: string; fallbackReason?: string; analyzeProvider?: string; debugId?: string; model?: string | null } | undefined;
     const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputValues(draftLead));
@@ -2887,6 +2928,8 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
         typeof draftLead.automationNeedScore === 'number' && draftLead.automationNeedScore > 0 ? `Automation ${draftLead.automationNeedScore}` : '',
         typeof draftLead.reviewFrictionScore === 'number' && draftLead.reviewFrictionScore > 0 ? `Review pain ${draftLead.reviewFrictionScore}` : '',
     ].filter(Boolean);
+    const guestGuideConfigText = draftLead.guestGuidePreview ? JSON.stringify(draftLead.guestGuidePreview.configExport, null, 2) : '';
+    const guestGuidePlaceholderItems = draftLead.guestGuidePreview?.sections.flatMap((guideSection) => guideSection.groups.flatMap((group) => group.items.filter((item) => item.includes('[DOPLNIT:')))) ?? [];
 
     return (
         <form className="detail-stack" onSubmit={onSave}>
@@ -2985,6 +3028,96 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <span>Možná placená návaznost: {draftLead.paidOfferShort || recommendProductForLead(draftLead).paidOfferShort}</span>
                     <span>{draftLead.paidOfferDetails || recommendProductForLead(draftLead).paidOfferDetails}</span>
                 </div>
+
+                <section className="nested-section guest-guide-preview-panel">
+                    <div className="panel-header compact-header">
+                        <div>
+                            <p className="eyebrow">Návaznost po souhlasu</p>
+                            <h2>Guest Guide Preview</h2>
+                        </div>
+                        <div className="button-group">
+                            <button className="secondary-button compact-button" disabled={!draftLead.websiteExtraction} onClick={onCreateGuestGuidePreview} type="button">
+                                <Sparkles size={16} aria-hidden="true" />
+                                Vytvořit ukázku guest guide
+                            </button>
+                            <button className="secondary-button compact-button" disabled={!draftLead.guestGuidePreview} onClick={() => onExportGuestGuideConfig?.(draftLead)} type="button">
+                                <Clipboard size={16} aria-hidden="true" />
+                                Exportovat guest guide JSON
+                            </button>
+                            <button className="secondary-button compact-button" disabled={!guestGuideConfigText} onClick={() => onCopyText?.('guest-guide-config', guestGuideConfigText)} type="button">
+                                <Clipboard size={16} aria-hidden="true" />
+                                {copiedTextId === 'guest-guide-config' ? 'Zkopírováno' : 'Zkopírovat guest guide config'}
+                            </button>
+                            <button className="secondary-button compact-button" disabled={!draftLead.websiteExtraction} onClick={onPrepareGuestGuideSecondEmail} type="button">
+                                <Mail size={16} aria-hidden="true" />
+                                Připravit druhý e-mail
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="metadata-row">
+                        <span>Status: {draftLead.guestGuidePreviewStatus ?? 'not-created'}</span>
+                        <span>Workflow: až po souhlasu s první zprávou</span>
+                        <span>{draftLead.guestGuidePreview ? `${draftLead.guestGuidePreview.sections.length} sekcí` : 'Preview zatím nevytvořeno'}</span>
+                    </div>
+
+                    {!draftLead.websiteExtraction ? <div className="scope-note warning-note compact-warning">Nejdřív přečti vlastní web kandidáta přes Website Extractor. Preview má vycházet z veřejné evidence.</div> : null}
+
+                    {draftLead.guestGuidePreview ? (
+                        <div className="guest-guide-preview-content">
+                            <div className="analysis-grid">
+                                <div>
+                                    <p className="eyebrow">Property</p>
+                                    <span>{draftLead.guestGuidePreview.propertyName}</span>
+                                    <span>{draftLead.guestGuidePreview.city}</span>
+                                    <span>{draftLead.guestGuidePreview.suggestedSlug}</span>
+                                </div>
+                                <div>
+                                    <p className="eyebrow">Limity</p>
+                                    {draftLead.guestGuidePreview.limitations.slice(0, 5).map((limitation) => <span key={limitation}>{limitation}</span>)}
+                                </div>
+                                <div>
+                                    <p className="eyebrow">Doplnit</p>
+                                    {guestGuidePlaceholderItems.length > 0 ? guestGuidePlaceholderItems.slice(0, 8).map((item) => <span key={item}>{item}</span>) : <span>Bez placeholderů.</span>}
+                                </div>
+                            </div>
+
+                            <div className="guest-guide-section-list">
+                                {draftLead.guestGuidePreview.sections.map((guideSection) => (
+                                    <div className="guest-guide-section-card" key={guideSection.id}>
+                                        <div>
+                                            <p className="eyebrow">{guideSection.id}</p>
+                                            <h2>{guideSection.title}</h2>
+                                        </div>
+                                        <strong>{guideSection.headline}</strong>
+                                        <p>{guideSection.overview}</p>
+                                        <div className="analysis-grid">
+                                            {guideSection.groups.map((group) => (
+                                                <div key={group.title}>
+                                                    <p className="eyebrow">{group.title}</p>
+                                                    {group.items.map((item) => <span key={item}>{item}</span>)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="signal-list">
+                                            {guideSection.sourceEvidence.slice(0, 4).map((evidence) => <span key={evidence}>{evidence}</span>)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <label className="stacked-label full-width">
+                                Export configu pro Guest Guide App
+                                <textarea readOnly value={guestGuideConfigText} rows={10} />
+                            </label>
+                        </div>
+                    ) : null}
+
+                    <label className="stacked-label full-width">
+                        Druhý e-mail po souhlasu
+                        <textarea value={draftLead.guestGuideSecondEmail ?? ''} onChange={(event) => onChange('guestGuideSecondEmail', event.target.value)} rows={12} />
+                    </label>
+                </section>
 
                 {draftLead.websiteExtraction ? (
                     <div className="scope-note website-lead-note">

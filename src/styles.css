@@ -971,6 +971,36 @@ textarea:focus {
     background: #f7faf9;
 }
 
+.guest-guide-preview-panel {
+    background: #fbfdfd;
+    margin-bottom: 18px;
+}
+
+.guest-guide-preview-content,
+.guest-guide-section-list {
+    display: grid;
+    gap: 14px;
+}
+
+.guest-guide-section-card {
+    background: #ffffff;
+    border: 1px solid #dce5e6;
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+}
+
+.guest-guide-section-card p {
+    color: #314147;
+    line-height: 1.5;
+    margin-bottom: 0;
+}
+
+.guest-guide-section-card strong {
+    color: #17323a;
+}
+
 .legacy-fields {
     background: #f8fbfb;
     border: 1px solid #e4ebec;
