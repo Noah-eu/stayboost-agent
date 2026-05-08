@@ -2,9 +2,9 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
-import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, sanitizeClientText } from './clientCopy';
+import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, hasForbiddenOutreachLanguage, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
-import { generateFirstOutreach, generateFollowUp, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
+import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { mockLeads } from './mockData';
 import {
     LeadAgentAnalysis,
@@ -120,6 +120,11 @@ const emptyLead = (): Lead => ({
     generatedOutreach: '',
     generatedFollowUp: '',
     generatedOffer: '',
+    freeIdeaTeaser: '',
+    freeIdeas: [],
+    paidNextStep: '',
+    outreachIntent: 'ask-permission-to-send-free-ideas',
+    outreachTone: 'humble-transparent-low-pressure',
     lastContactDate: '',
     nextFollowUpDate: '',
 });
@@ -129,9 +134,9 @@ const screenLabels: Record<Screen, string> = {
     finder: 'Lead Finder',
     leads: 'Leady',
     detail: 'Detail leadu',
-    audit: 'Mini-audit',
+    audit: '3 nápady zdarma',
     outreach: 'Osloveni',
-    offer: 'Nabidka / dalsi krok',
+    offer: 'Možná placená návaznost',
 };
 
 const screenIcons: Record<Screen, typeof LayoutDashboard> = {
@@ -384,6 +389,11 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         generatedOutreach: sanitizeClientText(lead.generatedOutreach),
         generatedFollowUp: sanitizeClientText(lead.generatedFollowUp),
         generatedOffer: sanitizeClientText(lead.generatedOffer),
+        freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
+        freeIdeas: (lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []).slice(0, 3).map(softenQuickWinWhy),
+        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(lead)),
+        outreachIntent: 'ask-permission-to-send-free-ideas',
+        outreachTone: 'humble-transparent-low-pressure',
         strengths: joinLines(removeContactContradictions(uniqueStrings([...splitLines(lead.strengths), ...normalizedExtraction.strengths]).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
         risks: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.risks)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
         guestFrictionSignals: joinLines(removeContactContradictions(uniqueStrings(splitLines(lead.guestFrictionSignals)).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
@@ -649,9 +659,16 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         debug: lead.websiteExtraction.debug ?? { debugId: '', elapsedMs: 0, partial: false, reason: null },
     } : undefined;
     const sanitizedGeneratedOutreach = sanitizeClientText(lead.generatedOutreach ?? '');
-    const normalizedGeneratedOutreach = normalizedWebsiteExtraction && (lead.screenshots ?? []).length === 0 && websiteOnlyOutreachMismatchPattern.test(sanitizedGeneratedOutreach)
+    const shouldRegenerateWebsiteOutreach = normalizedWebsiteExtraction && (lead.screenshots ?? []).length === 0 && (
+        websiteOnlyOutreachMismatchPattern.test(sanitizedGeneratedOutreach)
+        || hasForbiddenOutreachLanguage(sanitizedGeneratedOutreach)
+        || !/omlouv[aá]m se za nevy[žz][aá]danou zpr[aá]vu/i.test(sanitizedGeneratedOutreach)
+        || !/za [úu]platu/i.test(sanitizedGeneratedOutreach)
+    );
+    const normalizedGeneratedOutreach = shouldRegenerateWebsiteOutreach
         ? buildWebsiteOnlyOutreach({ leadName: normalizedName, websiteExtraction: normalizedWebsiteExtraction, signals: lead.publicSignals ?? [] })
         : sanitizedGeneratedOutreach;
+    const normalizedFreeIdeas = (lead.freeIdeas ?? migrateQuickWins(lead)).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).slice(0, 3);
 
     const normalizedLead: Lead = {
         ...emptyLead(),
@@ -674,6 +691,11 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         generatedOutreach: normalizedGeneratedOutreach,
         generatedFollowUp: sanitizeClientText(lead.generatedFollowUp ?? ''),
         generatedOffer: sanitizeClientText(lead.generatedOffer ?? ''),
+        freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser ?? ''),
+        freeIdeas: normalizedFreeIdeas,
+        paidNextStep: sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
+        outreachIntent: 'ask-permission-to-send-free-ideas',
+        outreachTone: 'humble-transparent-low-pressure',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
         addedWithoutAgentAnalysis: lead.addedWithoutAgentAnalysis ?? false,
         agentLeadStatus: inferAgentLeadStatus(lead),
@@ -951,7 +973,12 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         internalAgentBrief: generateInternalAgentBrief(leadWithClientAudit),
         generatedOutreach: hasWebsiteOnlyEvidence ? websiteOnlyOutreach : analyzedOutreach || generateFirstOutreach(leadWithClientAudit),
         generatedFollowUp: sanitizeClientText(analysis.followUp.trim() || generateFollowUp(leadWithClientAudit)),
-        generatedOffer: sanitizeClientText(analysis.offerRecommendation.trim() || generateOffer(leadWithClientAudit)),
+        generatedOffer: generateOffer(leadWithClientAudit),
+        freeIdeaTeaser: generateFreeIdeaTeaser(leadWithClientAudit),
+        freeIdeas: leadWithClientAudit.structuredQuickWins.slice(0, 3),
+        paidNextStep: generateOffer(leadWithClientAudit),
+        outreachIntent: 'ask-permission-to-send-free-ideas',
+        outreachTone: 'humble-transparent-low-pressure',
     };
 };
 
@@ -1133,8 +1160,12 @@ function App() {
     const updateDraft = <Field extends keyof Lead>(field: Field, value: Lead[Field]) => {
         setDraftLead((current) => {
             const nextLead = field === 'clientMiniAudit'
-                ? { ...current, clientMiniAudit: String(value), generatedMiniAudit: String(value) }
-                : { ...current, [field]: value };
+                ? { ...current, clientMiniAudit: String(value), generatedMiniAudit: String(value), freeIdeas: current.structuredQuickWins.slice(0, 3) }
+                : field === 'generatedOffer'
+                    ? { ...current, generatedOffer: String(value), paidNextStep: String(value) }
+                    : field === 'generatedOutreach'
+                        ? { ...current, generatedOutreach: String(value), outreachIntent: 'ask-permission-to-send-free-ideas' as const, outreachTone: 'humble-transparent-low-pressure' as const }
+                        : { ...current, [field]: value };
 
             if (!isCreating && selectedLeadId === current.id) {
                 setLeads((currentLeads) => currentLeads.map((lead) => (lead.id === current.id ? nextLead : lead)));
@@ -1796,8 +1827,12 @@ function App() {
         };
         const generatedText = generators[field](draftLead);
         const nextLead = field === 'clientMiniAudit' || field === 'generatedMiniAudit'
-            ? { ...draftLead, clientMiniAudit: generatedText, generatedMiniAudit: generatedText }
-            : { ...draftLead, [field]: generatedText };
+            ? { ...draftLead, clientMiniAudit: generatedText, generatedMiniAudit: generatedText, freeIdeas: draftLead.structuredQuickWins.slice(0, 3) }
+            : field === 'generatedOffer'
+                ? { ...draftLead, generatedOffer: generatedText, paidNextStep: generatedText }
+                : field === 'generatedOutreach'
+                    ? { ...draftLead, generatedOutreach: generatedText, outreachIntent: 'ask-permission-to-send-free-ideas' as const, outreachTone: 'humble-transparent-low-pressure' as const }
+                    : { ...draftLead, [field]: generatedText };
 
         persistLead(nextLead);
     };
@@ -3064,7 +3099,7 @@ function OfferPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
                 <div className="button-group">
                     <button className="secondary-button" onClick={() => onGenerateText?.('generatedOffer')} type="button">
                         <Sparkles size={18} aria-hidden="true" />
-                        Vygenerovat nabidku dalsiho kroku
+                        Vygenerovat možnou placenou návaznost
                     </button>
                     <button className="primary-button" type="submit">
                         <Save size={18} aria-hidden="true" />
@@ -3479,7 +3514,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                     </button>
                     <button className="secondary-button" onClick={() => onGenerateText?.('clientMiniAudit')} type="button">
                         <Sparkles size={18} aria-hidden="true" />
-                        Vygenerovat klientský mini-audit
+                        Vygenerovat 3 nápady zdarma
                     </button>
                     <button className="secondary-button" onClick={() => onGenerateText?.('generatedOutreach')} type="button">
                         <Mail size={18} aria-hidden="true" />
@@ -3491,7 +3526,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                     </button>
                     <button className="secondary-button" onClick={() => onGenerateText?.('generatedOffer')} type="button">
                         <ClipboardCheck size={18} aria-hidden="true" />
-                        Vygenerovat nabidku dalsiho kroku
+                        Vygenerovat možnou placenou návaznost
                     </button>
                 </div>
             </section>
@@ -3653,7 +3688,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
                     field="clientMiniAudit"
-                    label="Klientský mini-audit"
+                    label="3 nápady zdarma"
                     onChange={onChange}
                     onCopyText={onCopyText}
                     textId="client-mini-audit"
@@ -3680,7 +3715,7 @@ function PublicAuditWorkspace({ copiedTextId = '', draftLead, onAnalyzeScreensho
                 <GeneratedTextArea
                     copiedTextId={copiedTextId}
                     field="generatedOffer"
-                    label="Nabídka dalšího kroku"
+                    label="Možná placená návaznost"
                     onChange={onChange}
                     onCopyText={onCopyText}
                     textId="offer"

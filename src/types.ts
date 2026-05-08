@@ -274,6 +274,11 @@ export interface Lead {
     generatedOutreach: string;
     generatedFollowUp: string;
     generatedOffer: string;
+    freeIdeaTeaser?: string;
+    freeIdeas?: QuickWin[];
+    paidNextStep?: string;
+    outreachIntent?: 'ask-permission-to-send-free-ideas';
+    outreachTone?: 'humble-transparent-low-pressure';
     lastContactDate: string;
     nextFollowUpDate: string;
 }

@@ -393,14 +393,14 @@ const mockAnalysis = (candidate: LeadAgentCandidate): LeadAgentAnalysis => {
         risks: candidate.risks,
         guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals : isLowFit ? [mainFriction, 'Neni dost konkretni evidence o treni hosta.'] : [mainFriction, 'Pred rezervaci muze chybet jasny blok s prijezdem, check-inem a praktickymi instrukcemi.'],
         quickWins,
-        miniAudit: `Mini-audit veřejné nabídky: ${candidate.name}\n\nPrvní dojem: prezentace působí relevantně a má dobrý základ pro rychlé zpřesnění.\n\nCo působí dobře: ${candidate.signals.slice(0, 3).join(', ') || 'ubytování je veřejně dobře dohledatelné'}.\n\nCo bych zlepšil: vybrat nejsilnější první fotky, zpřesnit praktické informace a dát hostovi rychlejší důvod pokračovat v rezervaci.\n\nDalší krok: poslat 3 konkrétní návrhy, které jdou ověřit proti veřejné nabídce.`,
+        miniAudit: buildFallbackClientMiniAudit({ leadName: candidate.name }),
         outreachEmail: isBenchmarkOrSkip
             ? 'Interní poznámka: zatím neoslovovat, chybí dost konkrétní důvod.'
             : isSetup
-            ? `Dobrý den,\n\nnarazil jsem na veřejnou prezentaci ${candidate.name} a první dojem působí dobře. Zaujalo mě hlavně: ${candidate.signals[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si ale jedné drobnosti: první fotky a praktické informace by šly poskládat tak, aby host rychleji pochopil hlavní výhodu pobytu.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 krátké návrhy v bodech. Má smysl vám to poslat?\n\nDavid`
-            : `Dobrý den,\n\nnarazil jsem na veřejnou prezentaci ${candidate.name}. Zaujalo mě hlavně: ${candidate.signals[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si ale i tématu, které může hostovi zbytečně komplikovat první dojem: ${primaryPain}.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy, jak tenhle detail zpřehlednit v nabídce nebo komunikaci před příjezdem. Má smysl vám to poslat?\n\nDavid`,
+            ? buildFallbackOutreach({ leadName: candidate.name })
+            : buildFallbackOutreach({ leadName: candidate.name }),
         followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k prvnímu dojmu z veřejné nabídky ${candidate.name}.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
-        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : 'Začít rychlým auditem veřejné nabídky, potom případně řešit galerii, popis a předpříjezdové informace pro hosta.',
+        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : buildFallbackOffer({ leadName: candidate.name }),
         confidence: candidate.isMock ? 'medium' : 'low',
         fitVerdict: candidate.fitVerdict,
         opportunityScore: candidate.opportunityScore,

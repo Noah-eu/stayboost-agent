@@ -192,7 +192,7 @@ const humanizeSignal = (signal = '') => {
     return trimText(signal, 180);
 };
 
-const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict'];
+const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict', 'audit', 'kontrola', 'hodnocení', 'hodnoceni', 'chyba', 'problém', 'problem', 'měli byste', 'meli byste', 'doporučuji vám', 'doporucuji vam'];
 const forbiddenTermsFoundInClientOutputs = (outputs: string[]) => forbiddenClientTerms.filter((term) => outputs.join('\n').toLowerCase().includes(term.toLowerCase()));
 const sentenceBoundaryPattern = /(?<=[.!?])\s+|\n+/g;
 
@@ -214,7 +214,15 @@ const sanitizeClientText = (value = '') => {
         .replace(/host[eé] jsou zmaten[ií]/gi, 'host nemusí hned najít potřebné informace')
         .replace(/Parkov[aá]n[ií] b[yý]v[aá] [čc]ast[yý] dotaz a jeho nejasnost zvy[šs]uje stres hosta je[šs]t[eě] p[řr]ed p[řr][ií]jezdem\.?/gi, 'Jasně popsané parkování pomáhá hostovi rychleji najít praktické informace před příjezdem.')
         .replace(/Kr[aá]tk[eé] odpov[eě]di na nej[čc]ast[eě]j[šs][ií] dotazy sn[ií][žz][ií] po[čc]et opakovan[yý]ch zpr[aá]v a telefon[aá]t[ůu]\.?/gi, 'Krátké odpovědi mohou omezit opakované dotazy a pomoci hostovi rychleji se zorientovat před příjezdem.')
-        .replace(/Pro hotel tohoto typu jde o mal[yý] z[aá]sah s rychl[yý]m efektem na m[eé]n[eě] dotaz[ůu] a hlad[šs][ií] p[řr][ií]jezd host[ůu]\.?/gi, 'Pro hotel tohoto typu jde o malý zásah, který může omezit opakované dotazy a zpřehlednit příjezd hostů.');
+        .replace(/Pro hotel tohoto typu jde o mal[yý] z[aá]sah s rychl[yý]m efektem na m[eé]n[eě] dotaz[ůu] a hlad[šs][ií] p[řr][ií]jezd host[ůu]\.?/gi, 'Pro hotel tohoto typu jde o malý zásah, který může omezit opakované dotazy a zpřehlednit příjezd hostů.')
+        .replace(/V[šs]iml jsem si jedn[eé] drobnosti/gi, 'Napadlo mě')
+        .replace(/praktick[eé] informace nejsou jasn[eě]/gi, 'praktické informace by možná šly ještě lépe')
+        .replace(/m[eě]li byste/gi, 'možná by se hodilo')
+        .replace(/doporu[čc]uji v[aá]m/gi, 'možná by se hodilo')
+        .replace(/kontrola/gi, 'pohled')
+        .replace(/hodnocen[ií]/gi, 'pohled')
+        .replace(/chyba/gi, 'detail')
+        .replace(/probl[eé]m/gi, 'téma');
 
     forbiddenClientTerms.forEach((term) => {
         cleaned = cleaned.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
@@ -239,31 +247,22 @@ const bestHumanSignals = (signals: string[]) => [...new Set(signals.map(humanize
 
 const fallbackClientMiniAudit = (name: string, candidate: CandidateInput) => {
     const displayName = cleanLeadDisplayName(name);
-    const website = candidate.websiteExtraction;
-    const positives = bestHumanSignals([...(candidate.signals || []), ...(website?.strengths || []), ...(website?.websiteSignals || []), ...(website?.contact?.emails?.length ? ['Na webu je dohledatelný e-mail.'] : []), ...(website?.contact?.phones?.length ? ['Na webu je dohledatelný telefon.'] : [])]);
-    const goodList = positives.length ? positives : ['mají vlastní web', 'kontakt je snadno dohledatelný', 'web popisuje nabídku pokojů'];
 
-    return sanitizeClientText(`Mini-audit veřejného webu: ${displayName}\n\nPrvní dojem:\nWeb působí jako funkční prezentace menšího ubytování v centru Prahy. Kontakt i nabídka pokojů jsou dohledatelné.\n\nCo funguje dobře:\n${goodList.map((item) => `- ${item}`).join('\n')}\n\nCo bych zlepšil:\n- soustředit praktické informace před příjezdem na jedno místo\n- doplnit krátkou FAQ sekci\n- u kontaktu jasně říct, kdy ho host použije\n\nDalší krok:\nPoslat 3 konkrétní návrhy, jak by mohla vypadat jednoduchá předpříjezdová sekce.`);
+    return sanitizeClientText(`3 nápady zdarma pro ${displayName}\n\nPoslat až po souhlasu. Beru to jako malou ukázku pohledu zvenku, ne jako rozbor ani kritiku.\n\n1. Příjezd na jedno místo\nKrátce soustředit adresu, čas příjezdu, check-in a kontakt pro poslední dotazy.\n\n2. Parkování bez hledání\nDoplnit jednoduchou větu, kde host zaparkuje a co udělat při příjezdu autem.\n\n3. Mini FAQ před příjezdem\nPřipravit pár odpovědí na příjezd, parkování, snídani, vybavení a okolí.`);
 };
 
 const fallbackOutreach = (name: string, candidate: CandidateInput) => {
     const displayName = cleanLeadDisplayName(name);
-    const positives = bestHumanSignals([...(candidate.signals || []), ...(candidate.websiteExtraction?.strengths || [])]);
-    const positiveLine = positives.length ? positives.join(' a ') : 'web má jasně viditelný kontakt a základní informace o pokojích';
-
-    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
+    return sanitizeClientText(`Dobrý den,\n\nomlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.\n\nNevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.\n\nBeru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.\n\nMá smysl vám ty 3 body poslat?\n\nDavid`);
 };
 
 const websiteOnlyOutreach = (name: string, candidate: CandidateInput) => {
     const displayName = cleanLeadDisplayName(name);
-    const hasContact = Boolean((candidate.websiteExtraction?.contact?.emails?.length || 0) + (candidate.websiteExtraction?.contact?.phones?.length || 0));
-    const contactText = hasContact ? 'kontakt, pokoje i základní informace jsou dohledatelné' : 'pokoje a základní informace jsou dohledatelné';
-
-    return sanitizeClientText(`Dobrý den,\n\nnarazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.\n\nVšiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci. Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?\n\nDavid`);
+    return fallbackOutreach(displayName, candidate);
 };
 
 const fallbackFollowUp = (name: string) => sanitizeClientText(`Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${cleanLeadDisplayName(name)}, hlavně k příjezdu, parkování a častým otázkám hostů.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.\n\nDavid`);
-const fallbackOffer = (name: string) => sanitizeClientText(`Další krok pro ${cleanLeadDisplayName(name)}: připravit krátký audit veřejného webu a ukázat 3 konkrétní úpravy předpříjezdové sekce, FAQ a kontaktu pro hosty.`);
+const fallbackOffer = (name: string) => sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, parkování, check-in, kontakt a FAQ pro ${cleanLeadDisplayName(name)}. Když ne, vůbec se nic neděje.`);
 
 const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = []) => ({
     name: trimText(candidate.name, 160),
@@ -483,14 +482,14 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
         risks: risks.length > 0 ? risks : ['Omezeny verejny nahled, neni potvrzen detail nabidky.'],
         guestFrictionSignals: isSetup ? candidate.likelyManualProcessSignals || [] : painSignals.length > 0 ? painSignals : ['Neni dost konkretni evidence o treni hosta.'],
         quickWins,
-        miniAudit: `Mini-audit veřejné nabídky: ${name}\n\nPrvní dojem: veřejná prezentace působí relevantně, ale zaslouží si krátké zpřesnění prvního dojmu.\n\nCo působí dobře: ${signals.slice(0, 3).join(', ') || 'základní veřejná prezentace je dohledatelná'}.\n\nCo bych zlepšil: vybrat nejsilnější první fotky, zpřesnit praktické informace a dát hostovi rychlejší důvod pokračovat v rezervaci.\n\nDalší krok: poslat krátké 3 body, které půjde ověřit proti veřejné nabídce.`,
+        miniAudit: fallbackClientMiniAudit(name, candidate),
         outreachEmail: isBenchmarkOrSkip
             ? 'Interni poznamka: Neoslovovat zatim, chybi duvod. Bez verejneho pain signalu negenerovat obchodni e-mail.'
             : isSetup
-                ? `Dobrý den,\n\nnarazil jsem na veřejnou prezentaci ${name} a první dojem působí dobře. Zaujalo mě hlavně: ${signals[0] || 'ubytování je veřejně dobře dohledatelné'}.\n\nVšiml jsem si ale jedné drobnosti: první fotky a praktické informace by šly poskládat tak, aby host rychleji pochopil hlavní výhodu pobytu.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 krátké návrhy v bodech. Má smysl vám to poslat?\n\nDavid`
-            : `Dobrý den,\n\nnarazil jsem na veřejnou prezentaci ${name}. Zaujalo mě hlavně: ${signals[0] || 'ubytování je dobře dohledatelné'}.\n\nVšiml jsem si ale i tématu, které může hostovi zbytečně komplikovat první dojem: ${primaryPain}.\n\nNejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy, jak tenhle detail zpřehlednit v nabídce nebo komunikaci před příjezdem. Má smysl vám to poslat?\n\nDavid`,
+                ? fallbackOutreach(name, candidate)
+            : fallbackOutreach(name, candidate),
         followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k prvnímu dojmu z veřejné nabídky ${name}.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
-        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : 'Začít rychlým auditem veřejné nabídky, potom případně řešit galerii, popis a předpříjezdové informace pro hosta.',
+        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : fallbackOffer(name),
         confidence: candidate.confidence || 'low',
         fitVerdict,
         opportunityScore: candidate.opportunityScore || 0,
@@ -734,9 +733,10 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
         const prompt = `Vrat pouze validni JSON podle schematu. Zadny markdown, zadne uvahy.
     Ukol: kratka obchodni analyza StayBoost z verejneho vlastniho webu. Metadata a scoring dopocita aplikace, proto nevracej zadna dalsi pole.
-    Klientske texty musi byt lidske pro majitele ubytovani. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict.
+    Klientske texty musi byt lidske pro majitele ubytovani. Prvni outreach musi byt jemna zadost o souhlas se 3 napady zdarma, ne audit ani hodnoceni. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict, audit, kontrola, hodnoceni, chyba, problem, meli byste, doporucuji vam.
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
+    Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze vetsi uprava muze byt za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
     Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
     Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.

@@ -184,6 +184,11 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     return withMetadata('lead', {
         lead,
         cleanedLeadDisplayName: cleanLeadDisplayName(lead.name),
+        outreachIntent: lead.outreachIntent ?? 'ask-permission-to-send-free-ideas',
+        outreachTone: lead.outreachTone ?? 'humble-transparent-low-pressure',
+        freeIdeaTeaser: lead.freeIdeaTeaser ?? '',
+        freeIdeas: lead.freeIdeas ?? lead.structuredQuickWins ?? [],
+        paidNextStep: lead.paidNextStep ?? lead.generatedOffer ?? '',
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),
         removedInvalidSignals: lead.evidenceCanonicalizationDiagnostic?.removedInvalidSignals ?? [],
         removedInvalidPhones: lead.evidenceCanonicalizationDiagnostic?.removedInvalidPhones ?? [],

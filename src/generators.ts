@@ -1,5 +1,5 @@
-import { buildWebsiteOnlyOutreach, sanitizeClientText } from './clientCopy';
-import { Lead, QuickWin } from './types';
+import { buildFreeIdeaTeaser, buildPaidNextStep, buildWebsiteOnlyOutreach, sanitizeClientText } from './clientCopy';
+import { Lead } from './types';
 
 const hasText = (value = '') => value.trim().length > 0;
 
@@ -83,27 +83,6 @@ const sanitizeGeneratedText = (value: string, maxWords: number) => limitWords(sa
 
 const leadTitle = (lead: Lead) => lead.name.trim() || 'vaše ubytování';
 
-const firstLine = (value: string, fallback: string) => cleanSentence(value.split('\n').map((line) => line.trim()).find(Boolean) || fallback);
-
-const strongestPositive = (lead: Lead) =>
-    firstLine(
-        lead.strengths,
-        lead.screenshotAnalysis?.visibleStrengths?.[0] || lead.publicSignals[0] || 'prezentace působí na první pohled důvěryhodně',
-    );
-
-const bestProposal = (lead: Lead, wins: QuickWin[]) => {
-    const galleryObservation = firstLine(lead.photoOrderObservation, '');
-
-    if (galleryObservation) {
-        return `Zkusil bych první fotky poskládat víc jako krátký příběh hosta: nejsilnější atmosféra, pokoj, koupelna, lokalita a důkaz hodnocení.`;
-    }
-
-    const firstWin = wins[0];
-    if (firstWin) return cleanSentence(firstWin.action || firstWin.title);
-
-    return 'Zkusil bych víc zvýraznit nejsilnější důvod, proč si host má vybrat právě vás.';
-};
-
 export function generateInternalAgentBrief(lead: Lead) {
     const gate = qualityGate(lead);
 
@@ -129,35 +108,20 @@ export function generateMiniAudit(lead: Lead) {
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
-        return sanitizeGeneratedText(`Klientský mini-audit zatím negeneruji. Lead potřebuje konkrétnější veřejné podklady nebo screenshotovou analýzu, aby text nepůsobil obecně.`, 40);
+        return sanitizeGeneratedText(`3 nápady zdarma zatím negeneruji. Lead potřebuje konkrétnější veřejné podklady nebo analýzu, aby text nepůsobil obecně.`, 40);
     }
 
     const wins = gate.completeWins.slice(0, 3);
-    const proposals = wins.map((win) => `- ${cleanSentence(win.title)}: ${cleanSentence(win.action)}.`).join('\n');
-    const firstImpression = firstLine(lead.firstImpression, `${leadTitle(lead)} působí z veřejné prezentace důvěryhodně.`);
-    const strengths = strongestPositive(lead);
-    const guestBenefit = firstLine(lead.guestConfusion || lead.guestFrictionSignals || lead.businessOpportunity, 'Host se rychleji zorientuje a snáz pochopí, proč rezervovat právě tady.');
+    const proposals = wins.map((win, index) => `${index + 1}. ${cleanSentence(win.title)}
+${cleanSentence(win.action)}.`).join('\n\n');
 
-    const nextStep = lead.websiteExtraction && lead.screenshots.length === 0
-        ? 'Nejrychlejší by bylo vybrat 2 až 3 úpravy praktických informací před příjezdem: příjezd, parkování, check-in, FAQ a kontakt pro hosty.'
-        : 'Nejrychlejší by bylo vybrat 2 až 3 úpravy fotek, galerie nebo popisu a otestovat, jestli nabídka působí jasněji už v prvních sekundách.';
+    return sanitizeGeneratedText(`3 nápady zdarma pro ${leadTitle(lead)}
 
-    return sanitizeGeneratedText(`Mini-audit veřejné nabídky: ${leadTitle(lead)}
+Poslat až po souhlasu. Beru to jako malou ukázku pohledu zvenku, ne jako rozbor ani kritiku.
 
-1. První dojem
-${firstImpression}
-
-2. Co působí dobře
-${strengths}.
-
-3. Co bych zlepšil jako první
 ${proposals}
 
-4. Proč to může pomoct hostovi
-${guestBenefit}.
-
-5. Další krok
-${nextStep}`, 230);
+Pokud už mají podobné informace vyřešené v komunikaci po rezervaci, tím lépe.`, 180);
 }
 
 export function generateFirstOutreach(lead: Lead) {
@@ -171,19 +135,15 @@ export function generateFirstOutreach(lead: Lead) {
         return sanitizeGeneratedText(buildWebsiteOnlyOutreach({ leadName: lead.name, websiteExtraction: lead.websiteExtraction, signals: lead.publicSignals }), 150);
     }
 
-    const positive = strongestPositive(lead);
-    const proposal = bestProposal(lead, gate.completeWins);
     const text = `Dobrý den,
 
-narazil jsem na veřejnou prezentaci ${leadTitle(lead)} a první dojem působí dobře. Zaujalo mě hlavně: ${positive}.
+omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${leadTitle(lead)}.
 
-Všiml jsem si ale jedné drobnosti: ${proposal}
+Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.
 
-Nejde o kritiku, spíš o rychlý pohled zvenku. Pomáhám ubytováním zlepšit první dojem z veřejné nabídky a zjednodušit komunikaci s hosty.
+Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
 
-Neřešil bych velký redesign. Stačil by malý balíček úprav: pořadí prvních fotek, jedna ostřejší věta v popisu a lepší práce s hodnocením nebo recenzemi v prvních sekundách, hlavně na mobilu. To jsou věci, které host rychle pochopí ještě před otevřením detailů.
-
-Můžu vám zdarma poslat 3 krátké návrhy v bodech. Má smysl vám to poslat?
+Má smysl vám ty 3 body poslat?
 
 David`;
 
@@ -206,32 +166,12 @@ David`, 85);
 
 export function generateOffer(lead: Lead) {
     if (lead.websiteExtraction && lead.screenshots.length === 0) {
-        return sanitizeGeneratedText(`Návrh dalšího kroku pro ${leadTitle(lead)}
-
-1. Rychlý audit praktických informací
-Krátký pohled na příjezd, parkování, check-in, FAQ a kontakt pro hosty.
-
-2. Předpříjezdový přehled
-Soustředit nejdůležitější informace na jedno místo, aby host věděl, kdy dorazí instrukce a koho kontaktovat.
-
-3. Opatrné ověření guest guide
-Pokud už neveřejný průvodce pro hosty existuje, zkontrolovat, jak dobře navazuje na zprávy před příjezdem. Pokud ne, připravit jednoduchou verzi pro hosty.
-
-Doporučený začátek
-Začal bych krátkým auditem veřejného webu a 3 konkrétními návrhy v bodech.`, 180);
+        return sanitizeGeneratedText(buildPaidNextStep({ leadName: lead.name }), 80);
     }
 
-    return sanitizeGeneratedText(`Návrh dalšího kroku pro ${leadTitle(lead)}
+    return sanitizeGeneratedText(buildPaidNextStep({ leadName: lead.name }), 80);
+}
 
-1. Rychlý audit veřejné nabídky
-Krátký pohled na první dojem, fotky, popis, recenze a 3 prioritní návrhy.
-
-2. Úprava prvního dojmu
-Seřazení galerie, zpřesnění hlavních textů a zvýraznění toho, proč si host vybere právě toto ubytování.
-
-3. Online průvodce a předpříjezdové instrukce
-Pokud už průvodce pro hosty máte, dává smysl zkontrolovat, jak dobře navazuje na zprávy před příjezdem. Pokud ne, jde připravit jednoduchá verze pro příjezd, parkování, check-in a časté dotazy.
-
-Doporučený začátek
-Začal bych rychlým auditem veřejné nabídky, protože rychle ukáže, které úpravy mají největší smysl.`, 180);
+export function generateFreeIdeaTeaser(lead: Lead) {
+    return sanitizeGeneratedText(buildFreeIdeaTeaser({ leadName: lead.name }), 60);
 }

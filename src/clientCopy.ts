@@ -24,6 +24,36 @@ export const forbiddenClientTerms = [
     'skóre',
     'skore',
     'fitVerdict',
+    'audit',
+    'kontrola',
+    'hodnocení',
+    'hodnoceni',
+    'chyba',
+    'problém',
+    'problem',
+    'měli byste',
+    'meli byste',
+    'doporučuji vám',
+    'doporucuji vam',
+];
+
+const forbiddenOutreachClaims = [
+    'Všiml jsem si jedné drobnosti',
+    'vsiml jsem si jedne drobnosti',
+    'praktické informace nejsou jasně',
+    'prakticke informace nejsou jasne',
+    'To může zbytečně přidávat dotazy',
+    'To muze zbytecne pridavat dotazy',
+    'kontrola',
+    'hodnocení',
+    'hodnoceni',
+    'chyba',
+    'problém',
+    'problem',
+    'měli byste',
+    'meli byste',
+    'doporučuji vám',
+    'doporucuji vam',
 ];
 
 const normalizeForMatch = (value = '') => value
@@ -108,6 +138,20 @@ export function sanitizeClientText(text = '') {
         ['Parkování bývá častý dotaz a jeho nejasnost zvyšuje stres hosta ještě před příjezdem.', 'Jasně popsané parkování pomáhá hostovi rychleji najít praktické informace před příjezdem.'],
         ['Krátké odpovědi na nejčastější dotazy sníží počet opakovaných zpráv a telefonátů.', 'Krátké odpovědi mohou omezit opakované dotazy a pomoci hostovi rychleji se zorientovat před příjezdem.'],
         ['Pro hotel tohoto typu jde o malý zásah s rychlým efektem na méně dotazů a hladší příjezd hostů.', 'Pro hotel tohoto typu jde o malý zásah, který může omezit opakované dotazy a zpřehlednit příjezd hostů.'],
+        ['Všiml jsem si jedné drobnosti', 'Napadlo mě'],
+        ['vsiml jsem si jedne drobnosti', 'Napadlo mě'],
+        ['praktické informace nejsou jasně', 'praktické informace by možná šly ještě lépe'],
+        ['prakticke informace nejsou jasne', 'praktické informace by možná šly ještě lépe'],
+        ['měli byste', 'možná by se hodilo'],
+        ['meli byste', 'možná by se hodilo'],
+        ['doporučuji vám', 'možná by se hodilo'],
+        ['doporucuji vam', 'možná by se hodilo'],
+        ['kontrola', 'pohled'],
+        ['hodnocení', 'pohled'],
+        ['hodnoceni', 'pohled'],
+        ['chyba', 'detail'],
+        ['problém', 'téma'],
+        ['problem', 'téma'],
     ];
 
     replacements.forEach(([from, to]) => {
@@ -135,6 +179,11 @@ export function sanitizeClientText(text = '') {
         .trim();
 }
 
+export function hasForbiddenOutreachLanguage(text = '') {
+    const normalized = normalizeForMatch(text);
+    return forbiddenOutreachClaims.some((phrase) => normalized.includes(normalizeForMatch(phrase))) || /\baudit\b/i.test(text);
+}
+
 export function forbiddenTermsFoundInClientOutputs(outputs: string[]) {
     const combined = outputs.join('\n');
     return forbiddenClientTerms.filter((term) => combined.toLowerCase().includes(term.toLowerCase()));
@@ -156,71 +205,61 @@ export function clientTextSanitizerDiagnostics(outputs: string[]) {
 
 export const hasClientCopyIssue = (outputs: string[]) => !clientTextSanitizerDiagnostics(outputs).clientTextReady;
 
-const bestHumanSignals = (signals: string[], maxItems = 3) => {
-    const humanized = signals.map(humanizeSignal).filter(Boolean);
-    return [...new Set(humanized)].slice(0, maxItems);
-};
-
 export function buildFallbackClientMiniAudit(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
-    const website = input.websiteExtraction;
-    const positives = bestHumanSignals([
-        ...(input.signals ?? []),
-        ...(website?.strengths ?? []),
-        ...(website?.websiteSignals ?? []),
-        ...(website?.contact.emails.length ? ['Na webu je dohledatelný e-mail.'] : []),
-        ...(website?.contact.phones.length ? ['Na webu je dohledatelný telefon.'] : []),
-    ]);
 
-    const goodList = positives.length > 0 ? positives : ['mají vlastní web', 'kontakt je snadno dohledatelný', 'web popisuje nabídku pokojů'];
+    return sanitizeClientText(`3 nápady zdarma pro ${displayName}
 
-    return sanitizeClientText(`Mini-audit veřejného webu: ${displayName}
+Tyhle body bych poslal až po souhlasu. Jsou myšlené jako malá ukázka pohledu zvenku, ne jako hotový rozbor.
 
-První dojem:
-Web působí jako funkční prezentace menšího ubytování v centru Prahy. Kontakt i nabídka pokojů jsou dohledatelné.
+1. Příjezd na jedno místo
+Krátce soustředit adresu, čas příjezdu, check-in a kontakt pro poslední dotazy.
 
-Co funguje dobře:
-${goodList.map((item) => `- ${item}`).join('\n')}
+2. Parkování bez hledání
+Doplnit jednoduchou větu, kde host zaparkuje a co udělat při příjezdu autem.
 
-Co bych zlepšil:
-- soustředit praktické informace před příjezdem na jedno místo
-- doplnit krátkou FAQ sekci
-- u kontaktu jasně říct, kdy ho host použije
+3. Mini FAQ před příjezdem
+Připravit pár odpovědí na příjezd, parkování, snídani, vybavení a okolí.`);
+}
 
-Další krok:
-Poslat 3 konkrétní návrhy, jak by mohla vypadat jednoduchá předpříjezdová sekce.`);
+export function buildFreeIdeaTeaser(input: { leadName: string }) {
+    return sanitizeClientText(`Můžu zdarma poslat 3 krátké nápady pro ${cleanLeadDisplayName(input.leadName)}. Berte to jen jako ukázku mého pohledu; pokud už podobný přehled hostům posíláte po rezervaci, tím lépe.`);
+}
+
+export function buildPaidNextStep(input: { leadName: string }) {
+    const displayName = cleanLeadDisplayName(input.leadName);
+
+    return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, parkování, check-in, kontakt a FAQ pro ${displayName}. Když ne, vůbec se nic neděje.`);
 }
 
 export function buildFallbackOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
-    const positives = bestHumanSignals([...(input.signals ?? []), ...(input.websiteExtraction?.strengths ?? [])], 2);
-    const positiveLine = positives.length > 0 ? positives.join(' a ') : 'web má jasně viditelný kontakt a základní informace o pokojích';
 
     return sanitizeClientText(`Dobrý den,
 
-narazil jsem na web ${displayName}. První dojem působí dobře - ${positiveLine}.
+omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.
 
-Všiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.
-Taková sekce u podobných ubytování často pomáhá snížit počet opakovaných dotazů před příjezdem.
+Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.
 
-Nejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?
+Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
+
+Má smysl vám ty 3 body poslat?
 
 David`);
 }
 
 export function buildWebsiteOnlyOutreach(input: { leadName: string; websiteExtraction?: WebsiteExtractionResult; signals?: string[] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
-    const hasEmail = (input.websiteExtraction?.contact.emails.length ?? 0) > 0;
-    const hasPhone = (input.websiteExtraction?.contact.phones.length ?? 0) > 0;
-    const contactText = hasEmail || hasPhone ? 'kontakt, pokoje i základní informace jsou dohledatelné' : 'pokoje a základní informace jsou dohledatelné';
 
     return sanitizeClientText(`Dobrý den,
 
-narazil jsem na veřejný web ${displayName}. První dojem působí dobře - ${contactText}.
+omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil jsem na váš web ${displayName}.
 
-Všiml jsem si jedné drobnosti: praktické informace pro hosty před příjezdem by podle mě šly soustředit víc na jedno místo. Například příjezd, parkování, check-in a nejčastější otázky by mohly být v krátké přehledné sekci.
+Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například příjezd, parkování, check-in a nejčastější dotazy.
 
-Nejde o kritiku, spíš o rychlý pohled zvenku. Můžu vám zdarma poslat 3 konkrétní návrhy v bodech?
+Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
+
+Má smysl vám ty 3 body poslat?
 
 David`);
 }
@@ -238,7 +277,5 @@ David`);
 }
 
 export function buildFallbackOffer(input: { leadName: string }) {
-    const displayName = cleanLeadDisplayName(input.leadName);
-
-    return sanitizeClientText(`Další krok pro ${displayName}: připravit krátký audit veřejného webu a ukázat 3 konkrétní úpravy předpříjezdové sekce, FAQ a kontaktu pro hosty.`);
+    return buildPaidNextStep(input);
 }
