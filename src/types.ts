@@ -31,6 +31,8 @@ export type LeadScreenshotType = 'ota-profile-screenshot' | 'photo-gallery-scree
 
 export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'needs-more-input' | 'error';
 
+export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'ops-audit' | 'skip';
+
 export interface PublicProfileLink {
     id: string;
     sourceType: PublicProfileSourceType;
@@ -280,6 +282,11 @@ export interface Lead {
     freeIdeaTeaser?: string;
     freeIdeas?: QuickWin[];
     paidNextStep?: string;
+    recommendedProduct?: RecommendedProduct;
+    recommendedProductReason?: string;
+    freeIdeaPurpose?: string;
+    paidOfferShort?: string;
+    paidOfferDetails?: string;
     outreachIntent?: 'ask-permission-to-send-free-ideas';
     outreachTone?: 'humble-transparent-low-pressure';
     lastContactDate: string;

@@ -195,7 +195,7 @@ const humanizeSignal = (signal = '') => {
     return trimText(signal, 180);
 };
 
-const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict', 'audit', 'kontrola', 'hodnocení', 'hodnoceni', 'chyba', 'problém', 'problem', 'měli byste', 'meli byste', 'doporučuji vám', 'doporucuji vam'];
+const forbiddenClientTerms = ['Vlastni verejny web provozu', 'Vlastní veřejný web provozu', 'Rezervacni nebo poptavkovy kontakt', 'setup opportunity', 'setup automation', 'sourceEvidence', 'evidenceLimits', 'fallback', 'OpenAI', 'Tavily', 'Website Extractor', 'publicSignals', 'demo-fallback', 'function_404', 'aplikace', 'parser', 'extrakce', 'skóre', 'skore', 'fitVerdict', 'kontrola', 'hodnocení', 'hodnoceni', 'chyba', 'problém', 'problem', 'měli byste', 'meli byste', 'doporučuji vám', 'doporucuji vam'];
 const forbiddenTermsFoundInClientOutputs = (outputs: string[]) => forbiddenClientTerms.filter((term) => outputs.join('\n').toLowerCase().includes(term.toLowerCase()));
 const sentenceBoundaryPattern = /(?<=[.!?])\s+|\n+/g;
 
@@ -345,7 +345,47 @@ const websiteOnlyOutreach = (name: string, candidate: CandidateInput) => {
 };
 
 const fallbackFollowUp = (name: string) => sanitizeClientText(`Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi o pár konkrétních návrhů k webu ${cleanLeadDisplayName(name)}, hlavně k příjezdu, parkování a častým otázkám hostů.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 body zdarma.\n\nDavid`);
-const fallbackOffer = (name: string) => sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, parkování, check-in, kontakt a FAQ pro ${cleanLeadDisplayName(name)}. Když ne, vůbec se nic neděje.`);
+const recommendedProductForCandidate = (candidate: CandidateInput) => {
+    const website = candidate.websiteExtraction;
+    const text = normalizeForMatch([
+        website?.summary,
+        ...(website?.pagesExtracted || []).flatMap((page) => [page.title, page.textPreview]),
+        ...(website?.strengths || []),
+        ...(website?.risks || []),
+        ...(candidate.signals || []),
+        ...(candidate.risks || []),
+    ].filter(Boolean).join('\n'));
+    const contactFound = Boolean((website?.contact?.emails?.length || 0) + (website?.contact?.phones?.length || 0));
+    const missingArrivalStructure = (website?.arrivalSignals?.length || 0) === 0 || normalizeForMatch((website?.missingPublicInfoSignals || []).join('\n')).includes('prijezd');
+    const operations = [
+        /restaurace|restaurant|bar|terasa/.test(text),
+        /wellness|relax|sauna|spa|jacuzzi/.test(text),
+        /svatba|svatebni|wedding|altan|party stan/.test(text),
+        /konferenc|meeting|firemni|skoleni/.test(text),
+        /parkoviste|parkovani|parking|nabijeci|charging|elektromobil/.test(text),
+        /romantick|rodin|svatba|konferenc|vylet|karlstejn/.test(text),
+    ].filter(Boolean).length;
+    const weakAreas = [
+        (website?.missingPublicInfoSignals?.length || 0) >= 3,
+        (website?.risks?.length || 0) >= 2,
+        (candidate.risks?.length || 0) >= 2,
+    ].filter(Boolean).length;
+    const mature = (candidate.publicMaturityScore || 0) >= 75 && (website?.arrivalSignals?.length || 0) > 0 && (website?.parkingSignals?.length || 0) > 0 && ((website?.faqSignals?.length || 0) > 0 || (website?.guestGuideSignals?.length || 0) > 0);
+
+    if (weakAreas >= 2) return 'ops-audit';
+    if (operations >= 3) return 'guest-communication-setup';
+    if (contactFound && missingArrivalStructure) return 'guest-guide-starter';
+    if (mature) return 'skip';
+    return 'guest-guide-starter';
+};
+
+const fallbackOffer = (name: string, candidate?: CandidateInput) => {
+    const product = candidate ? recommendedProductForCandidate(candidate) : 'guest-guide-starter';
+    if (product === 'guest-communication-setup') return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být Guest Communication Setup: úprava předpříjezdové komunikace a hostovského průvodce pro různé typy hostů. Když ne, vůbec se nic neděje.`);
+    if (product === 'ops-audit') return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být Ops Audit: rychlý pohled na to, kde hosté mohou ztrácet informace nebo opakovaně psát stejné dotazy. Když ne, vůbec se nic neděje.`);
+    if (product === 'skip') return sanitizeClientText('Pokud by jim 3 nápady dávaly smysl, nechal bych to zatím bez placené nabídky; z veřejné evidence není vidět dost silný důvod pokračovat.');
+    return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být Guest Guide Starter: jednoduchý online průvodce pro hosty s příjezdem, parkováním, check-inem, kontaktem, Wi-Fi a FAQ pro ${cleanLeadDisplayName(name)}. Když ne, vůbec se nic neděje.`);
+};
 
 const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = []) => ({
     name: trimText(candidate.name, 160),
@@ -460,7 +500,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             miniAudit: fallbackClientMiniAudit(name, candidate),
             outreachEmail: fallbackOutreach(name, candidate),
             followUp: fallbackFollowUp(name),
-            offerRecommendation: fallbackOffer(name),
+            offerRecommendation: fallbackOffer(name, candidate),
             confidence: 'low' as const,
             fitVerdict: candidate.fitVerdict === 'strong-opportunity' ? 'moderate-opportunity' : candidate.fitVerdict || 'moderate-opportunity',
             opportunityScore: Math.min(candidate.opportunityScore || 58, 64),
@@ -597,7 +637,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
                 ? fallbackOutreach(name, candidate)
             : fallbackOutreach(name, candidate),
         followUp: `Dobrý den,\n\njen krátce navazuji na předchozí zprávu. Šlo mi hlavně o pár rychlých návrhů k prvnímu dojmu z veřejné nabídky ${name}.\n\nPokud to teď není aktuální, vůbec nevadí. Kdyby se vám hodilo, pošlu 3 konkrétní body zdarma.\n\nDavid`,
-        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : fallbackOffer(name),
+        offerRecommendation: isLowFit ? 'Nejdřív doplnit lepší veřejný důvod k oslovení.' : fallbackOffer(name, candidate),
         confidence: candidate.confidence || 'low',
         fitVerdict,
         opportunityScore: candidate.opportunityScore || 0,
@@ -843,12 +883,13 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const compactInput = compactCandidate(candidate, body.sourceSnippets || []);
         const prompt = `Vrat pouze validni JSON podle schematu. Zadny markdown, zadne uvahy.
     Ukol: kratka obchodni analyza StayBoost z verejneho vlastniho webu. Metadata a scoring dopocita aplikace, proto nevracej zadna dalsi pole.
-    Klientske texty musi byt lidske pro majitele ubytovani. Prvni outreach musi byt jemna zadost o souhlas se 3 napady zdarma, ne audit ani hodnoceni. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict, audit, kontrola, hodnoceni, chyba, problem, meli byste, doporucuji vam.
+    Klientske texty musi byt lidske pro majitele ubytovani. Prvni outreach musi byt jemna zadost o souhlas se 3 napady zdarma, ne audit ani hodnoceni. Slovo audit pouzij jen v nazvu produktu Ops Audit, pokud je to doporuceny dalsi produkt. Nepouzivej slova: OpenAI, Tavily, Website Extractor, fallback, evidenceLimits, sourceEvidence, setup automation, setup opportunity, publicSignals, aplikace, parser, extrakce, skore, fitVerdict, kontrola, hodnoceni, chyba, problem, meli byste, doporucuji vam.
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
     Pokud websiteExtraction.parkingSignals obsahuje parkovani nebo nabijeci stanici, nesmis tvrdit, ze parkovani neni jasne videt a nesmis delat quick win typu "doplnit parkovani". Ber parkovani/EV jako pozitivni signal a pouzij ho jako soucast konkretniho predprijezdoveho prehledu.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
     QuickWins nesmi byt stejna sablona pro kazdy hotel. Kazdy quickWin musi mit candidateSpecificity "specific" nebo "generic", sourceEvidence s konkretnim prvkem z webu a uniqueBusinessAngle. Pokud pouzivas jen obecne tema prijezd/check-in/FAQ bez konkretni evidence z webu, oznac ho jako generic. Preferuj konkretni prvky webu jako restaurace, relax centrum, reka, ostrov, svatebni altan, konferencni prostory, romanticky hotel, lokalita pod hradem, parkoviste nebo EV nabijeni. Nepouzivej generic FAQ jako treti napad, pokud existuji konkretni hotelove signaly.
-    Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze vetsi uprava muze byt za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
+    Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze se pak muzeme domluvit treba na jednoduchem online pruvodci pro hosty nebo vetsi uprave komunikace za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
+    OfferRecommendation ma byt nenatlakovy dalsi produkt: Guest Guide Starter, Guest Communication Setup, Ops Audit, nebo Skip/nepokracovat. Guest Guide Starter pouzij pro jednoduchy online pruvodce hosta. Guest Communication Setup pouzij pro hotely s vice provoznimi tematy a vice typy hostu. Ops Audit pouzij pro sirsi chaos/slabe oblasti. Skip pouzij, kdyz neni jasna prilezitost.
     Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
     Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.

@@ -1,6 +1,7 @@
 import type { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAgentSession } from './leadAgentTypes';
 import { cleanLeadDisplayName, clientTextSanitizerDiagnostics } from './clientCopy';
 import { freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
+import { recommendProductForLead } from './productRecommendation';
 import type { Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
 
 export type DebugExportType = 'run' | 'candidate' | 'lead' | 'website-extraction';
@@ -186,6 +187,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
     const latestDiagnostic = lead.latestAnalysisDiagnostic as { fallbackReason?: string } | undefined;
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
+    const productRecommendation = recommendProductForLead(lead);
 
     return withMetadata('lead', {
         lead,
@@ -195,6 +197,10 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         freeIdeaTeaser: lead.freeIdeaTeaser ?? '',
         freeIdeas: lead.freeIdeas ?? lead.structuredQuickWins ?? [],
         paidNextStep: lead.paidNextStep ?? lead.generatedOffer ?? '',
+        recommendedProduct: lead.recommendedProduct ?? productRecommendation.recommendedProduct,
+        recommendedProductReason: lead.recommendedProductReason ?? productRecommendation.recommendedProductReason,
+        paidOfferShort: lead.paidOfferShort ?? productRecommendation.paidOfferShort,
+        paidOfferDetails: lead.paidOfferDetails ?? productRecommendation.paidOfferDetails,
         ...ideaDiagnostics,
         suppressedMissingSignals: lead.websiteExtraction?.suppressedMissingSignals ?? [],
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),

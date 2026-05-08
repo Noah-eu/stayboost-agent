@@ -7,6 +7,7 @@ import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport
 import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
 import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { mockLeads } from './mockData';
+import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
 import {
     LeadAgentAnalysis,
     LeadAgentCandidate,
@@ -124,6 +125,11 @@ const emptyLead = (): Lead => ({
     freeIdeaTeaser: '',
     freeIdeas: [],
     paidNextStep: '',
+    recommendedProduct: 'guest-guide-starter',
+    recommendedProductReason: '',
+    freeIdeaPurpose: '',
+    paidOfferShort: '',
+    paidOfferDetails: '',
     outreachIntent: 'ask-permission-to-send-free-ideas',
     outreachTone: 'humble-transparent-low-pressure',
     lastContactDate: '',
@@ -334,6 +340,19 @@ const softenQuickWinWhy = (quickWin: QuickWin): QuickWin => {
 
 const prepareFreeIdeas = (lead: Lead, quickWins: QuickWin[]) => buildSpecificFreeIdeas(lead, quickWins).map((win) => softenQuickWinWhy(annotateQuickWinSpecificity(win, lead)));
 
+const withProductRecommendation = (lead: Lead): Lead => {
+    const recommendation = recommendProductForLead(lead);
+
+    return {
+        ...lead,
+        recommendedProduct: recommendation.recommendedProduct,
+        recommendedProductReason: sanitizeClientText(recommendation.recommendedProductReason),
+        freeIdeaPurpose: sanitizeClientText(recommendation.freeIdeaPurpose),
+        paidOfferShort: sanitizeClientText(recommendation.paidOfferShort),
+        paidOfferDetails: sanitizeClientText(recommendation.paidOfferDetails),
+    };
+};
+
 const invalidSignalReason = (signal: string, hasWebsiteEmail: boolean) => {
     const phoneMatch = signal.match(invalidPhoneSignalPattern);
 
@@ -415,7 +434,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         createdAt: new Date().toISOString(),
     };
 
-    return {
+    const leadWithRecommendation = withProductRecommendation({
         ...lead,
         notes: hasCompletedAgentAnalysis(lead) ? analyzedLeadNotes(lead, normalizedExtraction) : sanitizeSourceMaterialContent(lead.notes),
         websiteExtraction: normalizedExtraction,
@@ -429,7 +448,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         generatedOffer: sanitizeClientText(lead.generatedOffer),
         freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
         freeIdeas: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []),
-        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(lead)),
+        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(withProductRecommendation({ ...lead, websiteExtraction: normalizedExtraction }))),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         strengths: joinLines(removeContactContradictions(uniqueStrings([...splitLines(lead.strengths), ...normalizedExtraction.strengths]).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
@@ -443,6 +462,12 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
             removedStaleSourceMaterials,
             staleSourceMaterialTitlesRemoved,
         },
+    });
+
+    return {
+        ...leadWithRecommendation,
+        generatedOffer: sanitizeClientText(lead.generatedOffer || generateOffer(leadWithRecommendation)),
+        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(leadWithRecommendation)),
     };
 };
 
@@ -713,7 +738,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const migratedQuickWins = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, migrateQuickWins(lead));
     const normalizedFreeIdeas = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, lead.freeIdeas ?? migratedQuickWins);
 
-    const normalizedLead: Lead = {
+    const normalizedLead: Lead = withProductRecommendation({
         ...emptyLead(),
         ...lead,
         name: normalizedName,
@@ -737,6 +762,11 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser ?? ''),
         freeIdeas: normalizedFreeIdeas,
         paidNextStep: sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
+        recommendedProduct: lead.recommendedProduct,
+        recommendedProductReason: sanitizeClientText(lead.recommendedProductReason ?? ''),
+        freeIdeaPurpose: sanitizeClientText(lead.freeIdeaPurpose ?? ''),
+        paidOfferShort: sanitizeClientText(lead.paidOfferShort ?? ''),
+        paidOfferDetails: sanitizeClientText(lead.paidOfferDetails ?? ''),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
@@ -765,7 +795,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic,
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
         websiteExtraction: normalizedWebsiteExtraction,
-    };
+    });
 
     return canonicalizeLeadEvidence(normalizedLead);
 };
@@ -1006,7 +1036,7 @@ const applyAgentAnalysisToLead = (lead: Lead, analysis: LeadAgentAnalysis): Lead
         sourceLimitations: analysis.evidenceLimits,
     };
     const clientMiniAudit = sanitizeClientText(analysis.miniAudit.trim() || generateMiniAudit(analyzedLead));
-    const leadWithClientAudit = { ...analyzedLead, clientMiniAudit, generatedMiniAudit: clientMiniAudit };
+    const leadWithClientAudit = withProductRecommendation({ ...analyzedLead, clientMiniAudit, generatedMiniAudit: clientMiniAudit });
     const hasWebsiteOnlyEvidence = Boolean(leadWithClientAudit.websiteExtraction && leadWithClientAudit.screenshots.length === 0);
     const websiteOnlyOutreach = hasWebsiteOnlyEvidence ? buildWebsiteOnlyOutreach({ leadName: cleanedDisplayName, websiteExtraction: leadWithClientAudit.websiteExtraction, signals: leadWithClientAudit.publicSignals }) : '';
     const analyzedOutreach = sanitizeClientText(analysis.outreachEmail.trim());
@@ -1203,18 +1233,19 @@ function App() {
     const updateDraft = <Field extends keyof Lead>(field: Field, value: Lead[Field]) => {
         setDraftLead((current) => {
             const nextLead = field === 'clientMiniAudit'
-                ? { ...current, clientMiniAudit: String(value), generatedMiniAudit: String(value), freeIdeas: current.structuredQuickWins.slice(0, 3) }
+                ? { ...current, clientMiniAudit: String(value), generatedMiniAudit: String(value), freeIdeas: prepareFreeIdeas(current, current.structuredQuickWins) }
                 : field === 'generatedOffer'
                     ? { ...current, generatedOffer: String(value), paidNextStep: String(value) }
                     : field === 'generatedOutreach'
                         ? { ...current, generatedOutreach: String(value), outreachIntent: 'ask-permission-to-send-free-ideas' as const, outreachTone: 'humble-transparent-low-pressure' as const }
                         : { ...current, [field]: value };
+            const nextLeadWithRecommendation = withProductRecommendation(nextLead);
 
             if (!isCreating && selectedLeadId === current.id) {
-                setLeads((currentLeads) => currentLeads.map((lead) => (lead.id === current.id ? nextLead : lead)));
+                setLeads((currentLeads) => currentLeads.map((lead) => (lead.id === current.id ? nextLeadWithRecommendation : lead)));
             }
 
-            return nextLead;
+            return nextLeadWithRecommendation;
         });
     };
 
@@ -1877,7 +1908,7 @@ function App() {
                     ? { ...draftLead, generatedOutreach: generatedText, outreachIntent: 'ask-permission-to-send-free-ideas' as const, outreachTone: 'humble-transparent-low-pressure' as const }
                     : { ...draftLead, [field]: generatedText };
 
-        persistLead(nextLead);
+        persistLead(withProductRecommendation(nextLead));
     };
 
     const copyText = (textId: string, value: string) => {
@@ -2947,6 +2978,14 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                     <span>Další krok: {workflowNextAction(draftLead)}</span>
                 </div>
 
+                <div className="scope-note product-recommendation-note">
+                    <strong>Doporučený produkt: {recommendedProductLabels[draftLead.recommendedProduct ?? 'guest-guide-starter']}</strong>
+                    <span>Proč tento produkt: {draftLead.recommendedProductReason || recommendProductForLead(draftLead).recommendedProductReason}</span>
+                    <span>Účel 3 nápadů zdarma: {draftLead.freeIdeaPurpose || recommendProductForLead(draftLead).freeIdeaPurpose}</span>
+                    <span>Možná placená návaznost: {draftLead.paidOfferShort || recommendProductForLead(draftLead).paidOfferShort}</span>
+                    <span>{draftLead.paidOfferDetails || recommendProductForLead(draftLead).paidOfferDetails}</span>
+                </div>
+
                 {draftLead.websiteExtraction ? (
                     <div className="scope-note website-lead-note">
                         <strong>Web přečten</strong>
@@ -3152,6 +3191,22 @@ function OfferPanel({ copiedTextId = '', draftLead, onChange, onCopyText, onGene
             </div>
 
             <div className="form-grid">
+                <label>
+                    Doporučený produkt
+                    <input readOnly value={recommendedProductLabels[draftLead.recommendedProduct ?? 'guest-guide-starter']} />
+                </label>
+                <label>
+                    Krátký název nabídky
+                    <input readOnly value={draftLead.paidOfferShort || recommendProductForLead(draftLead).paidOfferShort} />
+                </label>
+                <label className="full-width">
+                    Proč tento produkt
+                    <textarea readOnly value={draftLead.recommendedProductReason || recommendProductForLead(draftLead).recommendedProductReason} rows={3} />
+                </label>
+                <label className="full-width">
+                    Detail placené návaznosti
+                    <textarea readOnly value={draftLead.paidOfferDetails || recommendProductForLead(draftLead).paidOfferDetails} rows={3} />
+                </label>
                 <label>
                     Datum posledniho kontaktu
                     <input type="date" value={draftLead.lastContactDate} onChange={(event) => onChange('lastContactDate', event.target.value)} />

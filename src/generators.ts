@@ -1,5 +1,6 @@
 import { buildFreeIdeaTeaser, buildPaidNextStep, buildWebsiteOnlyOutreach, sanitizeClientText } from './clientCopy';
 import { detectCandidateSpecificSignals } from './ideaSpecificity';
+import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
 import { Lead } from './types';
 
 const hasText = (value = '') => value.trim().length > 0;
@@ -94,6 +95,8 @@ Evidence level: ${lead.evidenceLevel}
 Needs agent analysis: ${lead.needsAgentAnalysis ? 'ano' : 'ne'}
 Quality gate: ${gate.isReady ? 'OK' : `chybí ${gate.missing.join(', ')}`}
 Skóre: lead ${lead.leadScore}, opportunity ${lead.opportunityScore ?? 0}, fit ${lead.fitVerdict || 'neuvedeno'}
+Doporučený produkt: ${recommendedProductLabels[lead.recommendedProduct ?? recommendProductForLead(lead).recommendedProduct]}
+Proč: ${lead.recommendedProductReason || recommendProductForLead(lead).recommendedProductReason}
 
 Co víme:
 ${[lead.firstImpression, lead.strengths, lead.reviewSignals].filter(hasText).join('\n') || 'Zatím jen omezené veřejné podklady.'}
@@ -178,11 +181,7 @@ David`, 85);
 }
 
 export function generateOffer(lead: Lead) {
-    if (lead.websiteExtraction && lead.screenshots.length === 0) {
-        return sanitizeGeneratedText(buildPaidNextStep({ leadName: lead.name }), 80);
-    }
-
-    return sanitizeGeneratedText(buildPaidNextStep({ leadName: lead.name }), 80);
+    return sanitizeGeneratedText(buildPaidNextStep({ leadName: lead.name, lead }), 90);
 }
 
 export function generateFreeIdeaTeaser(lead: Lead) {

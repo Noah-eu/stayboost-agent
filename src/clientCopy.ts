@@ -1,5 +1,6 @@
 import type { WebsiteExtractionResult } from './types';
 import { detectCandidateSpecificSignals } from './ideaSpecificity';
+import { recommendProductForLead } from './productRecommendation';
 
 const prefixPattern = /^(kontakt|contact|rooms|pokoje)\s*[-:|]\s*/i;
 
@@ -25,7 +26,6 @@ export const forbiddenClientTerms = [
     'skóre',
     'skore',
     'fitVerdict',
-    'audit',
     'kontrola',
     'hodnocení',
     'hodnoceni',
@@ -234,8 +234,17 @@ export function buildFreeIdeaTeaser(input: { leadName: string }) {
     return sanitizeClientText(`Můžu zdarma poslat 3 krátké nápady pro ${cleanLeadDisplayName(input.leadName)}. Berte to jen jako ukázku mého pohledu; pokud už podobný přehled hostům posíláte po rezervaci, tím lépe.`);
 }
 
-export function buildPaidNextStep(input: { leadName: string }) {
+export function buildPaidNextStep(input: { leadName: string; lead?: Parameters<typeof recommendProductForLead>[0] }) {
     const displayName = cleanLeadDisplayName(input.leadName);
+    const recommendation = input.lead ? recommendProductForLead(input.lead) : undefined;
+
+    if (recommendation?.recommendedProduct === 'skip') {
+        return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, nechal bych to zatím bez placené nabídky. ${recommendation.paidOfferDetails}`);
+    }
+
+    if (recommendation) {
+        return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být ${recommendation.paidOfferDetails} Pro ${displayName} bych to pojal jako ${recommendation.paidOfferShort}. Když ne, vůbec se nic neděje.`);
+    }
 
     return sanitizeClientText(`Pokud by jim 3 nápady dávaly smysl, další placený krok může být připravit jednoduchý přehled pro hosty před příjezdem: příjezd, parkování, check-in, kontakt a FAQ pro ${displayName}. Když ne, vůbec se nic neděje.`);
 }
@@ -253,7 +262,7 @@ omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil j
 
 Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například ${examples}.
 
-Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
+Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit třeba na jednoduchém online průvodci pro hosty nebo větší úpravě komunikace za úplatu. Když ne, vůbec se nic neděje.
 
 Má smysl vám ty 3 body poslat?
 
@@ -273,7 +282,7 @@ omlouvám se za nevyžádanou zprávu. Pohybuji se kolem ubytování a narazil j
 
 Nevidím samozřejmě, co hostům posíláte po rezervaci, takže nechci dělat žádné velké závěry. Jen mě napadlo, že bych vám mohl zdarma poslat 3 krátké nápady k tomu, jak hostům ještě víc zpřehlednit informace před příjezdem — například ${examples}.
 
-Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit na větší úpravě za úplatu. Když ne, vůbec se nic neděje.
+Beru to jen jako malou ukázku. Když se vám to bude zdát užitečné, můžeme se pak domluvit třeba na jednoduchém online průvodci pro hosty nebo větší úpravě komunikace za úplatu. Když ne, vůbec se nic neděje.
 
 Má smysl vám ty 3 body poslat?
 
