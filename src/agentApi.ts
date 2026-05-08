@@ -2,6 +2,7 @@ import type { LeadAgentAnalysis, LeadAgentAnalyzeResponse, LeadAgentCandidate, L
 import { buildFallbackClientMiniAudit, buildFallbackFollowUp, buildFallbackOffer, buildFallbackOutreach, cleanLeadDisplayName, sanitizeClientText } from './clientCopy';
 import { buildSpecificFreeIdeas } from './ideaSpecificity';
 import type { LeadScreenshot, PublicProfileLink, ScreenshotAnalysisDiagnostic, ScreenshotAnalysisResult, WebsiteExtractionResult } from './types';
+import { assessWebsiteOwnership } from './websiteOwnership';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -512,6 +513,7 @@ const blockedAggregatorHosts = [
 const isBlockedAggregatorUrl = (url = '') => blockedAggregatorHosts.some((host) => url.toLowerCase().includes(host));
 
 const websiteExtractionFallback = (candidate: LeadAgentCandidate, fallbackReason: string): WebsiteExtractionResult => ({
+    ...assessWebsiteOwnership({ url: candidate.websiteUrl, notes: candidate.sourceSnippets.join('\n'), sourceUrls: candidate.sourceUrls }),
     provider: fallbackReason === 'function_404' ? 'fallback' : 'error',
     status: isBlockedAggregatorUrl(candidate.websiteUrl) ? 'unsupported' : fallbackReason === 'function_404' ? 'partial' : 'error',
     websiteUrl: candidate.websiteUrl,
@@ -523,6 +525,8 @@ const websiteExtractionFallback = (candidate: LeadAgentCandidate, fallbackReason
     validPagesCount: 0,
     invalidPagesCount: 0,
     contact: { emails: [], phones: [], contactPageUrl: null },
+    directoryContact: { emails: [], phones: [], contactPageUrl: null },
+    contactOwnershipStatus: 'unknown',
     websiteSignals: [],
     arrivalSignals: [],
     parkingSignals: [],
@@ -565,6 +569,7 @@ const mockWebsiteExtraction = (candidate: LeadAgentCandidate): WebsiteExtraction
     ];
 
     return {
+        ...assessWebsiteOwnership({ url, notes: candidate.sourceSnippets.join('\n'), sourceUrls: candidate.sourceUrls }),
         provider: 'fallback',
         status: 'completed',
         websiteUrl: url,
@@ -576,6 +581,8 @@ const mockWebsiteExtraction = (candidate: LeadAgentCandidate): WebsiteExtraction
         validPagesCount: pagesExtracted.length,
         invalidPagesCount: 0,
         contact: { emails: [email], phones: ['+420 777 000 000'], contactPageUrl: `${url.replace(/\/$/, '')}/kontakt` },
+        directoryContact: { emails: [], phones: [], contactPageUrl: null },
+        contactOwnershipStatus: 'official-contact',
         websiteSignals: ['Vlastní veřejný web provozu', 'Ubytování popisuje pokoje nebo apartmány'],
         arrivalSignals: ['Web obsahuje základní informace k příjezdu'],
         parkingSignals: [],
@@ -683,6 +690,7 @@ export interface ExtractWebsiteRequest {
     location: string;
     websiteUrl: string;
     sourceUrls: string[];
+    sourceSnippets?: string[];
     notes: string;
 }
 
@@ -696,6 +704,7 @@ export async function extractWebsite(candidate: LeadAgentCandidate, notes = ''):
             location: candidate.location,
             websiteUrl: candidate.websiteUrl,
             sourceUrls: candidate.sourceUrls,
+            sourceSnippets: candidate.sourceSnippets,
             notes,
         } satisfies ExtractWebsiteRequest);
     } catch (error) {

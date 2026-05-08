@@ -89,12 +89,23 @@ const isLikelyPhoneNumber = (value: string) => {
 };
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 const contactQualityForLead = (lead: Lead): ContactQuality => {
+    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'official';
+    const allPhones = lead.websiteExtraction?.contact.phones ?? [];
+    const rejectedPhones = uniqueStrings(allPhones.filter((phone) => !isLikelyPhoneNumber(phone)));
+    if (ownershipStatus !== 'official') {
+        return {
+            validEmails: [],
+            validPhones: [],
+            rejectedPhones,
+            emailSource: 'missing',
+            phoneSource: 'missing',
+            contactReady: false,
+        };
+    }
     const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map((email) => email.trim().toLowerCase()).filter((email) => emailPattern.test(email)));
     const fallbackEmail = (lead.email || '').trim().toLowerCase();
     const validEmails = websiteEmails.length > 0 ? websiteEmails : emailPattern.test(fallbackEmail) ? [fallbackEmail] : [];
-    const allPhones = lead.websiteExtraction?.contact.phones ?? [];
     const validPhones = uniqueStrings(allPhones.filter(isLikelyPhoneNumber));
-    const rejectedPhones = uniqueStrings(allPhones.filter((phone) => !isLikelyPhoneNumber(phone)));
 
     return {
         validEmails,
@@ -115,6 +126,8 @@ const leadWorkflowState = (lead: Lead) => {
     const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
+    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
+    const needsOfficialWebsite = Boolean(lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official'));
 
     return {
         hasWebsiteExtraction,
@@ -132,7 +145,9 @@ const leadWorkflowState = (lead: Lead) => {
         repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
         positiveSignalsUsedCount: ideaDiagnostics.positiveSignalsUsedCount,
         missingSignalsUsedCount: ideaDiagnostics.missingSignalsUsedCount,
-        nextRecommendedAction: hasWebsiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')
+        nextRecommendedAction: needsOfficialWebsite
+            ? 'needs-official-website'
+            : hasWebsiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')
             ? contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review'
             : hasWebsiteExtraction && !contactQuality.contactReady
                 ? 'needs-contact-review'
@@ -157,7 +172,9 @@ const candidateWorkflowState = (candidate: LeadAgentCandidate, analysis?: LeadAg
     hasAgentAnalysis: Boolean(analysis),
     hasQuickWins: (analysis?.quickWins ?? []).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).length === 3,
     hasClientOutputs: false,
-    nextRecommendedAction: candidate.websiteExtraction && !analysis ? 'analyze-from-extracted-website' : analysis ? 'add-analyzed-lead-to-crm' : 'extract-website-or-run-analysis',
+    nextRecommendedAction: candidate.websiteExtraction && (candidate.websiteExtraction.extractionAllowed === false || candidate.websiteExtraction.websiteOwnershipStatus && candidate.websiteExtraction.websiteOwnershipStatus !== 'official')
+        ? 'needs-official-website'
+        : candidate.websiteExtraction && !analysis ? 'analyze-from-extracted-website' : analysis ? 'add-analyzed-lead-to-crm' : 'extract-website-or-run-analysis',
 });
 
 export const debugFileNames = {
@@ -254,6 +271,15 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: lead.guestGuideSecondEmail ?? '',
         contactQuality,
+        websiteOwnershipStatus: lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'unknown',
+        websiteOwnershipReason: lead.websiteExtraction?.websiteOwnershipReason ?? lead.websiteOwnershipReason ?? '',
+        extractionAllowed: lead.websiteExtraction?.extractionAllowed ?? lead.extractionAllowed ?? true,
+        officialWebsiteCandidateUrl: lead.websiteExtraction?.officialWebsiteCandidateUrl ?? lead.officialWebsiteCandidateUrl ?? '',
+        directoryExtractedCandidates: lead.websiteExtraction?.directoryExtractedCandidates ?? lead.directoryExtractedCandidates ?? [],
+        skippedAssetUrls: lead.websiteExtraction?.skippedAssetUrls ?? lead.skippedAssetUrls ?? [],
+        directoryContact: lead.websiteExtraction?.directoryContact ?? lead.directoryContact,
+        contactOwnershipStatus: lead.websiteExtraction?.contactOwnershipStatus ?? lead.contactOwnershipStatus ?? 'unknown',
+        nextRecommendedAction: leadWorkflowState(lead).nextRecommendedAction,
         ...ideaDiagnostics,
         suppressedMissingSignals: lead.websiteExtraction?.suppressedMissingSignals ?? [],
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),

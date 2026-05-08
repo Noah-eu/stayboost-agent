@@ -1,4 +1,4 @@
-import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
+import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, Plus, Save, Search, Send, Sparkles, Trash2, Users, X } from 'lucide-react';
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
@@ -9,6 +9,7 @@ import { createGuestGuidePreview, createGuestGuideSecondEmail } from './guestGui
 import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { mockLeads } from './mockData';
 import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
+import { assessWebsiteOwnership, isAssetPage, isAssetUrl } from './websiteOwnership';
 import {
     LeadAgentAnalysis,
     LeadAgentCandidate,
@@ -143,6 +144,14 @@ const emptyLead = (): Lead => ({
         phoneSource: 'missing',
         contactReady: false,
     },
+    websiteOwnershipStatus: 'unknown',
+    websiteOwnershipReason: '',
+    officialWebsiteCandidateUrl: '',
+    directoryExtractedCandidates: [],
+    extractionAllowed: true,
+    skippedAssetUrls: [],
+    directoryContact: { emails: [], phones: [], contactPageUrl: null },
+    contactOwnershipStatus: 'unknown',
     leadPlaybook: 'basic-website-guest-guide',
     leadPlaybookReason: '',
     playbookSignals: [],
@@ -194,6 +203,7 @@ const splitLines = (value: string) =>
 const joinLines = (value: string[]) => value.join('\n');
 
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+const isPresentString = (value: string | undefined | null): value is string => Boolean(value);
 const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const emailMissingSignalPattern = /(e-?mail|email).*(nen[ií]|chyb[ií]|nenalezen|nen[íi] vid[eě]t|nen[ií] vid[eě]t|neni videt|není vidět|chyb[ií] ve[řr]ejn[yý])/i;
 const removeContactContradictions = (values: string[], hasWebsiteEmail: boolean) => uniqueStrings(values.filter((value) => !(hasWebsiteEmail && emailMissingSignalPattern.test(value))));
@@ -204,7 +214,7 @@ const hasLeadQuickWins = (lead: Pick<Lead, 'structuredQuickWins'>) => (lead.stru
 const needsWebsiteAnalysis = (lead: Lead) => hasCompletedWebsiteExtraction(lead) && lead.needsAgentAnalysis && !lead.createdFromAgentAnalysis;
 const clientOutputValues = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
 const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;
-const isInvalidExtractedPage = (page: { title?: string; textPreview?: string }) => notFoundPagePattern.test(`${page.title ?? ''}\n${page.textPreview ?? ''}`);
+const isInvalidExtractedPage = (page: { url?: string; title?: string; textPreview?: string; contentLength?: number }) => notFoundPagePattern.test(`${page.title ?? ''}\n${page.textPreview ?? ''}`) || isAssetPage({ url: page.url ?? '', title: page.title ?? '', textPreview: page.textPreview ?? '', contentLength: page.contentLength ?? 0 });
 const websiteOnlyOutreachMismatchPattern = /fotk|hlavn[ií] fot|recenz|redesign|galeri/i;
 const isLikelyPhoneNumber = (value: string) => {
     const trimmed = value.trim();
@@ -224,6 +234,17 @@ const isLikelyPhoneNumber = (value: string) => {
 const validEmail = (value = '') => emailPattern.test(value.trim());
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction'>, rejectedPhones: string[] = []): ContactQuality => {
+    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? 'official';
+    if (ownershipStatus !== 'official') {
+        return {
+            validEmails: [],
+            validPhones: [],
+            rejectedPhones: uniqueStrings(rejectedPhones),
+            emailSource: 'missing',
+            phoneSource: 'missing',
+            contactReady: false,
+        };
+    }
     const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map(normalizeEmail).filter(validEmail));
     const fallbackEmail = normalizeEmail(lead.email || '');
     const validEmails = websiteEmails.length > 0 ? websiteEmails : validEmail(fallbackEmail) ? [fallbackEmail] : [];
@@ -441,12 +462,33 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     const extraction = lead.websiteExtraction;
     if (!extraction) return lead;
 
-    const validPhones = uniqueStrings((extraction.contact.phones ?? []).filter(isLikelyPhoneNumber));
+    const ownership = assessWebsiteOwnership({
+        url: extraction.websiteUrl || lead.websiteOrOtaUrl || lead.publicProfileUrl,
+        pageText: [extraction.summary, ...(extraction.pagesExtracted ?? []).flatMap((page) => [page.url, page.title, page.textPreview])].join('\n'),
+        notes: [lead.notes, lead.firstImpression, ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content])].join('\n'),
+        sourceUrls: [lead.websiteOrOtaUrl, lead.publicProfileUrl, ...(lead.publicLinks ?? []).map((link) => link.url)].filter(isPresentString),
+    });
+    const rawValidPhones = uniqueStrings((extraction.contact.phones ?? []).filter(isLikelyPhoneNumber));
     const removedInvalidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => !isLikelyPhoneNumber(phone)));
-    const contactQuality = contactQualityForLead({ ...lead, websiteExtraction: extraction }, removedInvalidPhones);
+    const directoryContact = ownership.websiteOwnershipStatus === 'official'
+        ? extraction.directoryContact ?? { emails: [], phones: [], contactPageUrl: null }
+        : {
+            emails: uniqueStrings([...(extraction.directoryContact?.emails ?? []), ...(extraction.contact.emails ?? [])]),
+            phones: uniqueStrings([...(extraction.directoryContact?.phones ?? []), ...rawValidPhones]),
+            contactPageUrl: extraction.directoryContact?.contactPageUrl ?? extraction.contact.contactPageUrl,
+        };
+    const officialContact = ownership.websiteOwnershipStatus === 'official'
+        ? { ...extraction.contact, phones: rawValidPhones }
+        : { emails: [], phones: [], contactPageUrl: null };
+    const contactQuality = contactQualityForLead({ ...lead, websiteExtraction: { ...extraction, ...ownership, contact: officialContact } }, removedInvalidPhones);
+    const assetPages = extraction.pagesExtracted.filter((page) => isAssetPage(page));
     const normalizedExtraction: WebsiteExtractionResult = normalizeParkingSignals({
         ...extraction,
-        contact: { ...extraction.contact, emails: contactQuality.validEmails, phones: validPhones },
+        ...ownership,
+        contact: { ...officialContact, emails: contactQuality.validEmails, phones: contactQuality.validPhones },
+        directoryContact,
+        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' : 'directory-contact',
+        skippedAssetUrls: uniqueStrings([...(extraction.skippedAssetUrls ?? []), ...assetPages.map((page) => page.url), ...(lead.publicLinks ?? []).map((link) => link.url).filter(isAssetUrl)]),
         pagesExtracted: extraction.pagesExtracted.filter((page) => !isInvalidExtractedPage(page)).map((page) => ({
             ...page,
             textPreview: sanitizeSourceMaterialContent(page.textPreview),
@@ -455,7 +497,7 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
             ...(extraction.skippedPages ?? []),
             ...extraction.pagesExtracted
                 .filter(isInvalidExtractedPage)
-                .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const })),
+                .map((page) => ({ url: page.url, title: page.title, reason: isAssetPage(page) ? 'asset_or_binary_file' as const : 'not_found_page' as const })),
         ],
     });
     normalizedExtraction.validPagesCount = normalizedExtraction.pagesExtracted.length;
@@ -520,6 +562,14 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         notes: hasCompletedAgentAnalysis(lead) ? analyzedLeadNotes(lead, normalizedExtraction) : sanitizeSourceMaterialContent(lead.notes),
         websiteExtraction: normalizedExtraction,
         contactQuality,
+        websiteOwnershipStatus: normalizedExtraction.websiteOwnershipStatus,
+        websiteOwnershipReason: normalizedExtraction.websiteOwnershipReason,
+        officialWebsiteCandidateUrl: normalizedExtraction.officialWebsiteCandidateUrl,
+        directoryExtractedCandidates: normalizedExtraction.directoryExtractedCandidates,
+        extractionAllowed: normalizedExtraction.extractionAllowed,
+        skippedAssetUrls: normalizedExtraction.skippedAssetUrls,
+        directoryContact: normalizedExtraction.directoryContact,
+        contactOwnershipStatus: normalizedExtraction.contactOwnershipStatus,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
         structuredQuickWins: preparedStructuredQuickWins,
@@ -571,7 +621,9 @@ const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'c
 const workflowNextAction = (lead: Lead) => {
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
+    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
 
+    if (lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official')) return 'needs-official-website';
     if (lead.websiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')) return contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review';
     if (lead.websiteExtraction && !contactQuality.contactReady) return 'needs-contact-review';
     if (needsWebsiteAnalysis(lead)) return 'analyze-from-extracted-website';
@@ -760,10 +812,25 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const rawPagesExtracted = lead.websiteExtraction?.pagesExtracted ?? [];
     const invalidPagesFromExtraction = rawPagesExtracted
         .filter(isInvalidExtractedPage)
-        .map((page) => ({ url: page.url, title: page.title, reason: 'not_found_page' as const }));
+        .map((page) => ({ url: page.url, title: page.title, reason: isAssetPage(page) ? 'asset_or_binary_file' as const : 'not_found_page' as const }));
     const validPagesExtracted = rawPagesExtracted.filter((page) => !isInvalidExtractedPage(page));
     const normalizedSkippedPages = [...(lead.websiteExtraction?.skippedPages ?? []), ...invalidPagesFromExtraction];
+    const ownership = lead.websiteExtraction ? assessWebsiteOwnership({
+        url: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
+        pageText: [lead.websiteExtraction.summary, ...rawPagesExtracted.flatMap((page) => [page.url, page.title, page.textPreview])].join('\n'),
+        notes: [lead.notes, lead.firstImpression, ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content])].join('\n'),
+        sourceUrls: [lead.websiteOrOtaUrl, lead.publicProfileUrl, ...(lead.publicLinks ?? []).map((link) => link.url)].filter(isPresentString),
+    }) : undefined;
+    const nonOfficialExtraction = ownership && ownership.websiteOwnershipStatus !== 'official';
+    const normalizedDirectoryContact = nonOfficialExtraction
+        ? {
+            emails: uniqueStrings([...(lead.websiteExtraction?.directoryContact?.emails ?? []), ...(lead.websiteExtraction?.contact?.emails ?? [])]),
+            phones: uniqueStrings([...(lead.websiteExtraction?.directoryContact?.phones ?? []), ...(lead.websiteExtraction?.contact?.phones ?? [])]),
+            contactPageUrl: lead.websiteExtraction?.directoryContact?.contactPageUrl ?? lead.websiteExtraction?.contact?.contactPageUrl ?? null,
+        }
+        : lead.websiteExtraction?.directoryContact ?? { emails: [], phones: [], contactPageUrl: null };
     const normalizedWebsiteExtraction = lead.websiteExtraction ? normalizeParkingSignals({
+        ...(ownership ?? {}),
         provider: lead.websiteExtraction.provider ?? 'fallback',
         status: lead.websiteExtraction.status ?? 'partial',
         websiteUrl: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
@@ -775,10 +842,13 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         validPagesCount: validPagesExtracted.length,
         invalidPagesCount: normalizedSkippedPages.length,
         contact: {
-            emails: lead.websiteExtraction.contact?.emails ?? [],
-            phones: lead.websiteExtraction.contact?.phones ?? [],
-            contactPageUrl: lead.websiteExtraction.contact?.contactPageUrl ?? null,
+            emails: nonOfficialExtraction ? [] : lead.websiteExtraction.contact?.emails ?? [],
+            phones: nonOfficialExtraction ? [] : lead.websiteExtraction.contact?.phones ?? [],
+            contactPageUrl: nonOfficialExtraction ? null : lead.websiteExtraction.contact?.contactPageUrl ?? null,
         },
+        directoryContact: normalizedDirectoryContact,
+        contactOwnershipStatus: nonOfficialExtraction ? 'directory-contact' : lead.websiteExtraction.contactOwnershipStatus ?? 'official-contact',
+        skippedAssetUrls: uniqueStrings([...(lead.websiteExtraction.skippedAssetUrls ?? []), ...rawPagesExtracted.filter(isAssetPage).map((page) => page.url), ...(lead.publicLinks ?? []).map((link) => link.url).filter(isAssetUrl)]),
         websiteSignals: lead.websiteExtraction.websiteSignals ?? [],
         arrivalSignals: lead.websiteExtraction.arrivalSignals ?? [],
         parkingSignals: lead.websiteExtraction.parkingSignals ?? [],
@@ -882,6 +952,14 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic,
         websiteExtractionDiagnostic: lead.websiteExtractionDiagnostic,
         websiteExtraction: normalizedWebsiteExtraction,
+        websiteOwnershipStatus: normalizedWebsiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'unknown',
+        websiteOwnershipReason: normalizedWebsiteExtraction?.websiteOwnershipReason ?? lead.websiteOwnershipReason ?? '',
+        officialWebsiteCandidateUrl: normalizedWebsiteExtraction?.officialWebsiteCandidateUrl ?? lead.officialWebsiteCandidateUrl ?? '',
+        directoryExtractedCandidates: normalizedWebsiteExtraction?.directoryExtractedCandidates ?? lead.directoryExtractedCandidates ?? [],
+        extractionAllowed: normalizedWebsiteExtraction?.extractionAllowed ?? lead.extractionAllowed ?? true,
+        skippedAssetUrls: normalizedWebsiteExtraction?.skippedAssetUrls ?? lead.skippedAssetUrls ?? [],
+        directoryContact: normalizedWebsiteExtraction?.directoryContact ?? lead.directoryContact ?? { emails: [], phones: [], contactPageUrl: null },
+        contactOwnershipStatus: normalizedWebsiteExtraction?.contactOwnershipStatus ?? lead.contactOwnershipStatus ?? 'unknown',
     });
 
     return canonicalizeLeadEvidence(normalizedLead);
@@ -3016,6 +3094,34 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
     ].filter(Boolean);
     const guestGuideConfigText = draftLead.guestGuidePreview ? JSON.stringify(draftLead.guestGuidePreview.configExport, null, 2) : '';
     const guestGuidePlaceholderItems = draftLead.guestGuidePreview?.sections.flatMap((guideSection) => guideSection.groups.flatMap((group) => group.items.filter((item) => item.includes('[DOPLNIT:')))) ?? [];
+    const ownershipStatus = draftLead.websiteExtraction?.websiteOwnershipStatus ?? draftLead.websiteOwnershipStatus;
+    const showOfficialWebsiteGate = Boolean(draftLead.websiteExtraction && ownershipStatus && ownershipStatus !== 'official');
+    const directoryCandidates = draftLead.websiteExtraction?.directoryExtractedCandidates ?? draftLead.directoryExtractedCandidates ?? [];
+    const firstDirectoryCandidate = directoryCandidates[0];
+    const officialCandidateUrl = draftLead.websiteExtraction?.officialWebsiteCandidateUrl ?? draftLead.officialWebsiteCandidateUrl ?? firstDirectoryCandidate?.websiteUrl ?? '';
+    const applyDirectoryCandidate = () => {
+        if (!firstDirectoryCandidate) return;
+        onChange('name', firstDirectoryCandidate.name);
+        if (firstDirectoryCandidate.websiteUrl) onChange('websiteOrOtaUrl', firstDirectoryCandidate.websiteUrl);
+        if (firstDirectoryCandidate.email) onChange('email', firstDirectoryCandidate.email);
+        onChange('websiteExtraction', undefined);
+        onChange('extractionStatus', 'ready');
+        onChange('needsAgentAnalysis', true);
+    };
+    const applyOfficialCandidateUrl = () => {
+        if (!officialCandidateUrl) return;
+        onChange('websiteOrOtaUrl', officialCandidateUrl);
+        onChange('publicProfileUrl', officialCandidateUrl);
+        onChange('websiteExtraction', undefined);
+        onChange('extractionStatus', 'ready');
+        onChange('needsAgentAnalysis', true);
+    };
+    const markAsUnsuitableLead = () => {
+        onChange('recommendedProduct', 'skip');
+        onChange('fitVerdict', 'skip');
+        onChange('targetOffer', 'skip');
+        onChange('qualificationReason', 'Zdroj není vlastní web ubytování; vyžaduje konkrétní provoz nebo oficiální web.');
+    };
 
     return (
         <form className="detail-stack" onSubmit={onSave}>
@@ -3094,6 +3200,35 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                             <button className="secondary-button compact-button" onClick={() => onAnalyzeScreenshots?.(draftLead)} type="button">
                                 <Image size={16} aria-hidden="true" />
                                 Analyzovat screenshoty
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {showOfficialWebsiteGate ? (
+                    <div className="scope-note warning-note website-ownership-note">
+                        <strong>{ownershipStatus === 'asset' ? 'URL je obrázek nebo soubor' : 'Toto není vlastní web ubytování'}</strong>
+                        <span>{draftLead.websiteExtraction?.websiteOwnershipReason ?? draftLead.websiteOwnershipReason}</span>
+                        {ownershipStatus === 'asset'
+                            ? <span>Soubor nebo GIF asset nelze analyzovat jako web. Další krok je doplnit oficiální web konkrétního provozu.</span>
+                            : <span>Katalog nebo městský portál může pomoct najít položku, ale jeho kontakty se nepočítají jako kontakt leadu.</span>}
+                        {directoryCandidates.length > 0 ? <span>Nalezené položky: {directoryCandidates.map((candidate) => [candidate.name, candidate.websiteUrl || candidate.email || candidate.phone].filter(Boolean).join(' - ')).join('; ')}</span> : null}
+                        {draftLead.websiteExtraction?.directoryContact && (draftLead.websiteExtraction.directoryContact.emails.length > 0 || draftLead.websiteExtraction.directoryContact.phones.length > 0)
+                            ? <span>Kontakt z katalogu odděleně: {[...draftLead.websiteExtraction.directoryContact.emails, ...draftLead.websiteExtraction.directoryContact.phones].join(', ')}</span>
+                            : null}
+                        {draftLead.websiteExtraction?.skippedAssetUrls?.length ? <span>Přeskočené asset URL: {draftLead.websiteExtraction.skippedAssetUrls.join(', ')}</span> : null}
+                        <div className="button-group inline-actions">
+                            <button className="secondary-button compact-button" disabled={!firstDirectoryCandidate} onClick={applyDirectoryCandidate} type="button">
+                                <Plus size={16} aria-hidden="true" />
+                                Vytvořit kandidáta z položky
+                            </button>
+                            <button className="secondary-button compact-button" disabled={!officialCandidateUrl} onClick={applyOfficialCandidateUrl} type="button">
+                                <ExternalLink size={16} aria-hidden="true" />
+                                Použít oficiální web
+                            </button>
+                            <button className="secondary-button compact-button" onClick={markAsUnsuitableLead} type="button">
+                                <X size={16} aria-hidden="true" />
+                                Označit jako nevhodný lead
                             </button>
                         </div>
                     </div>

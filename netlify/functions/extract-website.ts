@@ -1,3 +1,5 @@
+import { assessWebsiteOwnership, isAssetPage, isAssetUrl } from '../../src/websiteOwnership';
+
 declare const process: { env: Record<string, string | undefined> };
 
 type ExtractionStatus = 'completed' | 'partial' | 'unsupported' | 'error';
@@ -9,6 +11,7 @@ interface ExtractWebsiteRequest {
     location?: string;
     websiteUrl?: string;
     sourceUrls?: string[];
+    sourceSnippets?: string[];
     notes?: string;
 }
 
@@ -22,7 +25,7 @@ interface ExtractedPage {
 interface SkippedPage {
     url: string;
     title: string;
-    reason: 'not_found_page' | 'empty_content' | 'invalid_content';
+    reason: 'not_found_page' | 'empty_content' | 'invalid_content' | 'asset_or_binary_file';
 }
 
 interface TavilyExtractResult {
@@ -118,7 +121,7 @@ const sameHostUrl = (baseUrl: URL, rawUrl: string) => {
 
 const candidateWebsiteUrl = (request: ExtractWebsiteRequest) => {
     const candidates = [request.websiteUrl, ...(request.sourceUrls || [])].filter(Boolean) as string[];
-    return candidates.find((url) => !isBlockedAggregatorUrl(url)) || candidates[0] || '';
+    return candidates.find((url) => !isBlockedAggregatorUrl(url) && !isAssetUrl(url)) || candidates[0] || '';
 };
 
 const originUrl = (url: URL) => `${url.protocol}//${url.host}/`;
@@ -171,6 +174,7 @@ const extractDiscoveredInternalLinks = (results: TavilyExtractResult[], baseUrl:
 };
 
 const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, status: ExtractionStatus, reason: string, provider: ExtractionProvider = 'fallback', pages: ExtractedPage[] = [], skippedPages: SkippedPage[] = [], guessedUrlsUsed: string[] = []) => ({
+    ...assessWebsiteOwnership({ url: candidateWebsiteUrl(request), notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'), sourceUrls: request.sourceUrls || [] }),
     provider,
     status,
     websiteUrl: candidateWebsiteUrl(request),
@@ -182,6 +186,8 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
     validPagesCount: pages.length,
     invalidPagesCount: skippedPages.length,
     contact: { emails: [], phones: [], contactPageUrl: null },
+    directoryContact: { emails: [], phones: [], contactPageUrl: null },
+    contactOwnershipStatus: 'unknown' as const,
     websiteSignals: [],
     arrivalSignals: [],
     parkingSignals: [],
@@ -250,8 +256,19 @@ const signalMatches = (content: string, matchers: Array<{ label: string; keyword
 const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt: number, pages: ExtractedPage[], failedCount: number, skippedPages: SkippedPage[], strategy: { discoveredInternalLinksCount: number; guessedUrlsUsed: string[] }) => {
     const content = pages.map((page) => `${page.url}\n${page.title}\n${page.textPreview}`).join('\n').toLowerCase();
     const rawText = pages.map((page) => page.textPreview).join('\n');
-    const emails = extractEmails(rawText);
-    const phones = extractPhones(rawText);
+    const ownership = assessWebsiteOwnership({
+        url: candidateWebsiteUrl(request),
+        pageText: content,
+        notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'),
+        sourceUrls: request.sourceUrls || [],
+    });
+    const rawEmails = extractEmails(rawText);
+    const rawPhones = extractPhones(rawText);
+    const emails = ownership.websiteOwnershipStatus === 'official' ? rawEmails : [];
+    const phones = ownership.websiteOwnershipStatus === 'official' ? rawPhones : [];
+    const directoryContact = ownership.websiteOwnershipStatus === 'official'
+        ? { emails: [], phones: [], contactPageUrl: null }
+        : { emails: rawEmails, phones: rawPhones, contactPageUrl: null };
     const contactPage = pages.find((page) => /kontakt|contact/i.test(page.url) || /kontakt|contact/i.test(page.title))?.url || null;
 
     const websiteSignals = signalMatches(content, [
@@ -316,6 +333,7 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
     const status: ExtractionStatus = pages.length > 0 && (failedCount > 0 || elapsed(startedAt) > MAX_FUNCTION_MS - 2500) ? 'partial' : 'completed';
 
     return {
+        ...ownership,
         provider: 'tavily-extract' as const,
         status,
         websiteUrl: candidateWebsiteUrl(request),
@@ -327,6 +345,8 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         validPagesCount: pages.length,
         invalidPagesCount: skippedPages.length,
         contact: { emails, phones, contactPageUrl: contactPage },
+        directoryContact: { ...directoryContact, contactPageUrl: ownership.websiteOwnershipStatus === 'official' ? null : contactPage },
+        contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' as const : 'directory-contact' as const,
         websiteSignals,
         arrivalSignals,
         parkingSignals,
@@ -341,13 +361,15 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         setupOpportunitySignals: unique(setupOpportunitySignals),
         fixOpportunitySignals: unique(fixOpportunitySignals),
         evidenceLimits: unique([
-            'Website Extractor cetl pouze vlastni verejny web provozu.',
+            ownership.extractionAllowed ? 'Website Extractor cetl pouze vlastni verejny web provozu.' : 'Website Extractor rozpoznal katalog/directory; kontakty z teto stranky nejsou kontakty provozu.',
             'OTA profily jako Booking/Airbnb/Google Maps nebyly cteny.',
             'Z verejneho webu nelze overit, zda hoste dostavaji neverejny guest guide po rezervaci.',
             skippedPages.length > 0 ? `Preskocene nevalidni stranky: ${skippedPages.length}.` : '',
             status === 'partial' ? 'Extrakce je castecna kvuli timeoutu, nedostupnym nebo nevalidnim strankam.' : '',
         ]),
-        summary: `${request.candidateName || 'Kandidat'}: přečteny ${pages.length} validní stránky vlastního webu, ${skippedPages.length} neplatné/404 stránky přeskočeny. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${setupOpportunitySignals.length}. Fix signály: ${fixOpportunitySignals.length}.`,
+        summary: ownership.extractionAllowed
+            ? `${request.candidateName || 'Kandidat'}: přečteny ${pages.length} validní stránky vlastního webu, ${skippedPages.length} neplatné/404 stránky přeskočeny. Kontakt: ${emails.length > 0 || phones.length > 0 ? 'nalezen' : 'nenalezen'}. Setup signály: ${setupOpportunitySignals.length}. Fix signály: ${fixOpportunitySignals.length}.`
+            : `${request.candidateName || 'Kandidat'}: zdroj vypadá jako katalog/directory, ne vlastní web provozu. Kontakty z katalogu nebyly použity jako kontakt leadu.`,
         debug: {
             debugId,
             elapsedMs: elapsed(startedAt),
@@ -409,8 +431,18 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             });
         }
 
+        const preflightOwnership = assessWebsiteOwnership({ url: websiteUrl, notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'), sourceUrls: request.sourceUrls || [] });
+        if (preflightOwnership.websiteOwnershipStatus === 'asset') {
+            return json(200, {
+                ...fallbackResult(request, debugId, startedAt, 'unsupported', 'unsupported_source: asset_or_file', 'error', [], [{ url: websiteUrl, title: websiteUrl, reason: 'asset_or_binary_file' }]),
+                ...preflightOwnership,
+                skippedAssetUrls: [websiteUrl],
+                contactOwnershipStatus: 'unknown',
+            });
+        }
+
         const apiKey = process.env.TAVILY_API_KEY;
-        const initialUrls = buildInitialExtractionUrls(websiteUrl, request.sourceUrls || []);
+        const initialUrls = buildInitialExtractionUrls(websiteUrl, request.sourceUrls || []).filter((url) => !isAssetUrl(url));
 
         if (!apiKey) {
             return json(200, fallbackResult(request, debugId, startedAt, 'partial', 'missing_tavily_api_key'));
@@ -420,7 +452,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
         const initialOutcome = await tavilyExtract(apiKey, initialUrls);
         const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
         const guessedUrlsUsed = discoveredUrls.length === 0 ? buildFallbackGuessUrls(websiteUrl, initialUrls) : [];
-        const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].slice(0, Math.max(0, MAX_URLS - initialUrls.length));
+        const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].filter((url) => !isAssetUrl(url)).slice(0, Math.max(0, MAX_URLS - initialUrls.length));
         const secondaryOutcome = secondaryUrls.length > 0 && elapsed(startedAt) < MAX_FUNCTION_MS - 4500
             ? await tavilyExtract(apiKey, secondaryUrls)
             : { ok: true, results: [] as TavilyExtractResult[], failedCount: 0, reason: null };
@@ -440,21 +472,24 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             })
             .slice(0, MAX_URLS);
         const skippedPages: SkippedPage[] = extractedPages
-            .filter((page) => !page.url || !page.textPreview || isNotFoundPage(page))
+            .filter((page) => !page.url || !page.textPreview || isNotFoundPage(page) || isAssetPage(page))
             .map((page) => ({
                 url: page.url,
                 title: page.title,
-                reason: isNotFoundPage(page) ? 'not_found_page' : 'empty_content',
+                reason: isAssetPage(page) ? 'asset_or_binary_file' : isNotFoundPage(page) ? 'not_found_page' : 'empty_content',
             }));
         const pages = extractedPages
-            .filter((page) => page.url && page.textPreview && !isNotFoundPage(page))
+            .filter((page) => page.url && page.textPreview && !isNotFoundPage(page) && !isAssetPage(page))
             .slice(0, MAX_URLS);
 
         if (pages.length === 0) {
             return json(200, fallbackResult(request, debugId, startedAt, 'error', outcomeReason || 'no_valid_extractable_content', outcomeOk ? 'tavily-extract' : 'error', [], skippedPages, guessedUrlsUsed));
         }
 
-        return json(200, analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed }));
+        return json(200, {
+            ...analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed }),
+            skippedAssetUrls: skippedPages.filter((page) => page.reason === 'asset_or_binary_file').map((page) => page.url),
+        });
     } catch (error) {
         return json(500, fallbackResult({}, debugId, startedAt, 'error', error instanceof Error ? error.message : 'function_runtime_error', 'error'));
     }

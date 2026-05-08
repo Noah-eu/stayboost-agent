@@ -28,6 +28,14 @@ type CandidateInput = {
     websiteExtraction?: {
         status?: string;
         websiteUrl?: string;
+        websiteOwnershipStatus?: string;
+        websiteOwnershipReason?: string;
+        extractionAllowed?: boolean;
+        officialWebsiteCandidateUrl?: string;
+        directoryExtractedCandidates?: unknown[];
+        skippedAssetUrls?: string[];
+        directoryContact?: { emails?: string[]; phones?: string[]; contactPageUrl?: string | null };
+        contactOwnershipStatus?: string;
         pagesExtracted?: Array<{ url?: string; title?: string; textPreview?: string; contentLength?: number }>;
         contact?: { emails?: string[]; phones?: string[]; contactPageUrl?: string | null };
         websiteSignals?: string[];
@@ -532,6 +540,12 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
     websiteExtraction: candidate.websiteExtraction ? {
         status: trimText(candidate.websiteExtraction.status, 60),
         websiteUrl: trimText(candidate.websiteExtraction.websiteUrl, 220),
+        websiteOwnershipStatus: trimText(candidate.websiteExtraction.websiteOwnershipStatus || 'unknown', 80),
+        websiteOwnershipReason: trimText(candidate.websiteExtraction.websiteOwnershipReason || '', 240),
+        extractionAllowed: candidate.websiteExtraction.extractionAllowed ?? true,
+        officialWebsiteCandidateUrl: trimText(candidate.websiteExtraction.officialWebsiteCandidateUrl || '', 220),
+        directoryExtractedCandidates: candidate.websiteExtraction.directoryExtractedCandidates || [],
+        skippedAssetUrls: trimList(candidate.websiteExtraction.skippedAssetUrls, 8, 220),
         summary: trimText(candidate.websiteExtraction.summary, 700),
         pagesExtracted: (candidate.websiteExtraction.pagesExtracted || []).slice(0, 6).map((page) => ({
             url: trimText(page.url, 220),
@@ -544,6 +558,12 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
             phones: trimList(candidate.websiteExtraction.contact?.phones, 6, 80),
             contactPageUrl: trimText(candidate.websiteExtraction.contact?.contactPageUrl || '', 220),
         },
+        directoryContact: {
+            emails: trimList(candidate.websiteExtraction.directoryContact?.emails, 6, 120),
+            phones: trimList(candidate.websiteExtraction.directoryContact?.phones, 6, 80),
+            contactPageUrl: trimText(candidate.websiteExtraction.directoryContact?.contactPageUrl || '', 220),
+        },
+        contactOwnershipStatus: trimText(candidate.websiteExtraction.contactOwnershipStatus || 'unknown', 80),
         websiteSignals: trimList(candidate.websiteExtraction.websiteSignals, 8, 160),
         arrivalSignals: trimList(candidate.websiteExtraction.arrivalSignals, 8, 160),
         parkingSignals: trimList(candidate.websiteExtraction.parkingSignals, 6, 160),
@@ -564,7 +584,48 @@ const compactCandidate = (candidate: CandidateInput, sourceSnippets: string[] = 
 const fallbackAnalysis = (candidate: CandidateInput) => {
     const name = candidate.name || 'Vybrany kandidat';
     const websiteExtraction = candidate.websiteExtraction;
+    const nonOfficialWebsiteExtraction = Boolean(websiteExtraction && (websiteExtraction.extractionAllowed === false || websiteExtraction.websiteOwnershipStatus && websiteExtraction.websiteOwnershipStatus !== 'official'));
     if (websiteExtraction && ['completed', 'partial'].includes(websiteExtraction.status)) {
+        if (nonOfficialWebsiteExtraction) {
+            const reason = websiteExtraction.websiteOwnershipReason || 'Zdroj není vlastní web ubytování; nejdřív je potřeba vybrat konkrétní provoz nebo jeho oficiální web.';
+            return {
+                firstImpression: `${name}: ${reason}`,
+                strengths: [],
+                risks: [reason, 'Kontakty z katalogu/directory nejsou použité jako kontakt leadu.'],
+                guestFrictionSignals: [],
+                quickWins: [],
+                leadPlaybook: 'skip' as const,
+                leadPlaybookReason: 'Pipeline zastavena před obchodní analýzou, protože zdroj není oficiální web provozu.',
+                playbookSignals: [],
+                freeIdeasDiversityScore: 0,
+                repeatedConceptWarning: true,
+                miniAudit: `Interní poznámka: ${reason}`,
+                outreachEmail: 'Interni poznamka: Neoslovovat. Nejdriv doplnit oficialni web konkretniho provozu.',
+                followUp: '',
+                offerRecommendation: 'Nejdřív doplnit oficiální web konkrétního provozu.',
+                confidence: 'low' as const,
+                fitVerdict: 'skip' as const,
+                opportunityScore: 0,
+                opportunityType: 'skip' as const,
+                automationNeedScore: 0,
+                publicMaturityScore: 0,
+                reviewFrictionScore: 0,
+                painSignals: [],
+                positiveSolvedSignals: [],
+                noPainReason: reason,
+                targetOffer: 'skip' as const,
+                offerHypothesis: '',
+                websiteSignals: [],
+                contactSignals: [],
+                missingAutomationSignals: [],
+                likelyManualProcessSignals: [],
+                qualificationReason: reason,
+                alreadySolvedSignals: [],
+                missingEvidence: [reason],
+                contradictionWarnings: ['non_official_website_source'],
+                evidenceLimits: [reason, 'E-maily se automaticky neposílají.'],
+            };
+        }
         const displayName = cleanLeadDisplayName(name);
         const contactSignals = [
             ...(websiteExtraction.contact?.emails || []).map((email) => `E-mail nalezen na vlastním webu: ${email}`),

@@ -33,6 +33,22 @@ export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'nee
 
 export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'ops-audit' | 'skip';
 
+export type SourceUrlClassification = 'official-property-website' | 'directory-listing' | 'municipal-catalog' | 'ota-or-aggregator' | 'asset-or-file' | 'unknown';
+
+export type WebsiteOwnershipStatus = 'official' | 'directory' | 'municipal-catalog' | 'aggregator' | 'asset' | 'unknown';
+
+export type ContactOwnershipStatus = 'official-contact' | 'directory-contact' | 'source-contact' | 'unknown';
+
+export interface DirectoryCandidate {
+    name: string;
+    websiteUrl?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    sourceUrl: string;
+    confidence: 'low' | 'medium' | 'high';
+}
+
 export type LeadPlaybook =
     | 'city-apartment-arrival'
     | 'restaurant-linked-stay'
@@ -159,7 +175,7 @@ export interface WebsiteExtractedPage {
 export interface WebsiteSkippedPage {
     url: string;
     title: string;
-    reason: 'not_found_page' | 'empty_content' | 'invalid_content';
+    reason: 'not_found_page' | 'empty_content' | 'invalid_content' | 'asset_or_binary_file';
 }
 
 export interface WebsiteExtractionContact {
@@ -172,6 +188,14 @@ export interface WebsiteExtractionResult {
     provider: 'tavily-extract' | 'fallback' | 'error';
     status: 'completed' | 'partial' | 'unsupported' | 'error';
     websiteUrl: string;
+    websiteOwnershipStatus?: WebsiteOwnershipStatus;
+    websiteOwnershipReason?: string;
+    officialWebsiteCandidateUrl?: string;
+    directoryExtractedCandidates?: DirectoryCandidate[];
+    extractionAllowed?: boolean;
+    skippedAssetUrls?: string[];
+    directoryContact?: WebsiteExtractionContact;
+    contactOwnershipStatus?: ContactOwnershipStatus;
     extractionStrategy?: 'homepage-first' | 'fallback-guesses' | 'legacy';
     discoveredInternalLinksCount?: number;
     guessedUrlsUsed?: string[];
@@ -339,6 +363,14 @@ export interface Lead {
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;
     contactQuality?: ContactQuality;
+    websiteOwnershipStatus?: WebsiteOwnershipStatus;
+    websiteOwnershipReason?: string;
+    officialWebsiteCandidateUrl?: string;
+    directoryExtractedCandidates?: DirectoryCandidate[];
+    extractionAllowed?: boolean;
+    skippedAssetUrls?: string[];
+    directoryContact?: WebsiteExtractionContact;
+    contactOwnershipStatus?: ContactOwnershipStatus;
     leadPlaybook?: LeadPlaybook;
     leadPlaybookReason?: string;
     playbookSignals?: string[];
