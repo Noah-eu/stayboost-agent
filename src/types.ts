@@ -53,6 +53,16 @@ export interface QuickWin {
     sourceEvidence: string;
     candidateSpecificity?: 'specific' | 'generic';
     uniqueBusinessAngle?: string;
+    usedSignals?: string[];
+}
+
+export interface ContactQuality {
+    validEmails: string[];
+    validPhones: string[];
+    rejectedPhones: string[];
+    emailSource: 'website' | 'discovery-fallback' | 'missing';
+    phoneSource: 'website' | 'missing';
+    contactReady: boolean;
 }
 
 export interface GuestGuideSection {
@@ -318,6 +328,7 @@ export interface Lead {
     guestGuidePreviewStatus?: GuestGuidePreviewStatus;
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;
+    contactQuality?: ContactQuality;
     outreachIntent?: 'ask-permission-to-send-free-ideas';
     outreachTone?: 'humble-transparent-low-pressure';
     lastContactDate: string;

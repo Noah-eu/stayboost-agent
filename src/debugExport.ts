@@ -2,7 +2,7 @@ import type { LeadAgentAnalysis, LeadAgentCandidate, LeadAgentDiagnostic, LeadAg
 import { cleanLeadDisplayName, clientTextSanitizerDiagnostics } from './clientCopy';
 import { freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { recommendProductForLead } from './productRecommendation';
-import type { Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
+import type { ContactQuality, Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
 
 export type DebugExportType = 'run' | 'candidate' | 'lead' | 'website-extraction';
 
@@ -71,6 +71,40 @@ export function slugifyForFileName(value = 'export') {
 }
 
 const dateStamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+const isLikelyPhoneNumber = (value: string) => {
+    const trimmed = value.trim();
+    const digits = trimmed.replace(/\D/g, '');
+
+    if (!trimmed || digits.length < 7) return false;
+    if (/\d+\.\d+/.test(trimmed)) return false;
+    if (/^2000000\d{2,3}$/.test(digits)) return false;
+    if (/\b(cz)?\d{8}\b/i.test(trimmed) && !/[+\s()-]/.test(trimmed)) return false;
+    if (/latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b/i.test(trimmed)) return false;
+    if (trimmed.startsWith('+420')) return digits.length === 12;
+    if (trimmed.startsWith('+')) return digits.length >= 10 && digits.length <= 15;
+    if (!/[\s()-]/.test(trimmed) && digits.length !== 9) return false;
+
+    return digits.length >= 7 && digits.length <= 15;
+};
+const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+const contactQualityForLead = (lead: Lead): ContactQuality => {
+    const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map((email) => email.trim().toLowerCase()).filter((email) => emailPattern.test(email)));
+    const fallbackEmail = (lead.email || '').trim().toLowerCase();
+    const validEmails = websiteEmails.length > 0 ? websiteEmails : emailPattern.test(fallbackEmail) ? [fallbackEmail] : [];
+    const allPhones = lead.websiteExtraction?.contact.phones ?? [];
+    const validPhones = uniqueStrings(allPhones.filter(isLikelyPhoneNumber));
+    const rejectedPhones = uniqueStrings(allPhones.filter((phone) => !isLikelyPhoneNumber(phone)));
+
+    return {
+        validEmails,
+        validPhones,
+        rejectedPhones,
+        emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
+        phoneSource: validPhones.length > 0 ? 'website' : 'missing',
+        contactReady: validEmails.length > 0 || validPhones.length > 0,
+    };
+};
 
 const leadWorkflowState = (lead: Lead) => {
     const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
@@ -80,6 +114,7 @@ const leadWorkflowState = (lead: Lead) => {
     const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
     const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
+    const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
 
     return {
         hasWebsiteExtraction,
@@ -87,8 +122,14 @@ const leadWorkflowState = (lead: Lead) => {
         hasQuickWins,
         hasClientOutputs,
         clientTextReady: clientDiagnostics.clientTextReady,
-        freeIdeasSpecificEnough: ideaDiagnostics.genericFreeIdeasCount < 2 && !ideaDiagnostics.repeatedTemplateWarning,
-        nextRecommendedAction: hasWebsiteExtraction && !hasAgentAnalysis
+        contactReady: contactQuality.contactReady,
+        contactQuality,
+        freeIdeasSpecificEnough: ideaDiagnostics.freeIdeasReady,
+        nextRecommendedAction: hasWebsiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')
+            ? contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review'
+            : hasWebsiteExtraction && !contactQuality.contactReady
+                ? 'needs-contact-review'
+                : hasWebsiteExtraction && !hasAgentAnalysis
             ? 'analyze-from-extracted-website'
             : !hasWebsiteExtraction
                 ? 'extract-website-or-add-evidence'
@@ -98,7 +139,7 @@ const leadWorkflowState = (lead: Lead) => {
                         ? 'generate-client-outputs'
                         : !clientDiagnostics.clientTextReady
                             ? 'needs-copy-review'
-                            : ideaDiagnostics.genericFreeIdeasCount >= 2 || ideaDiagnostics.repeatedTemplateWarning
+                            : !ideaDiagnostics.freeIdeasReady
                                 ? 'needs-idea-review'
                                 : 'ready-to-review',
     };
@@ -188,6 +229,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     const latestDiagnostic = lead.latestAnalysisDiagnostic as { fallbackReason?: string } | undefined;
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const productRecommendation = recommendProductForLead(lead);
+    const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
 
     return withMetadata('lead', {
         lead,
@@ -204,6 +246,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: lead.guestGuideSecondEmail ?? '',
+        contactQuality,
         ...ideaDiagnostics,
         suppressedMissingSignals: lead.websiteExtraction?.suppressedMissingSignals ?? [],
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),

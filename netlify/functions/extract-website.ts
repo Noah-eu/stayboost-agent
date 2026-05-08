@@ -213,6 +213,7 @@ export const isLikelyPhoneNumber = (value: string) => {
 
     if (!trimmed || digits.length < 7) return false;
     if (/\d+\.\d+/.test(trimmed)) return false;
+    if (/^2000000\d{2,3}$/.test(digits)) return false;
     if (/\b(cz)?\d{8}\b/i.test(trimmed) && !/[+\s()-]/.test(trimmed)) return false;
     if (normalized.includes('ičo') || normalized.includes('ico') || normalized.includes('dič') || normalized.includes('dic') || normalized.includes('vat')) return false;
     if (normalized.includes('latitude') || normalized.includes('longitude') || normalized.includes('gps') || normalized.includes('maps.google.com')) return false;
@@ -225,17 +226,20 @@ export const isLikelyPhoneNumber = (value: string) => {
 
 export const phoneExtractionDeterministicChecks = {
     valid: ['+420 311 600 900', '+420311600900', '224920604'].map((value) => ({ value, accepted: isLikelyPhoneNumber(value) })),
-    invalid: ['49.937910833333', '14.188455555556', '27156460', 'CZ27156460'].map((value) => ({ value, accepted: isLikelyPhoneNumber(value) })),
+    invalid: ['49.937910833333', '14.188455555556', '27156460', 'CZ27156460', '200000005', '200000012-0', '200000019'].map((value) => ({ value, accepted: isLikelyPhoneNumber(value) })),
 };
 
-const contextHasNonPhoneLabel = (context: string) => /latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b/i.test(context);
+const contextHasNonPhoneLabel = (context: string) => /latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b|booking|roomid|hotelid|propertyid|data-|href=|src=/i.test(context);
+const contextHasPhoneLabel = (context: string) => /telefon|tel\.|phone|call|mobil|mobile|kontakt|contact|recepce|reservation/i.test(context);
 
 const extractPhones = (text: string) => unique((text.match(/(?:\+\d{1,3}[\s()-]?)?(?:\d[\s()-]?){6,14}\d/g) || [])
     .map((phone) => phone.replace(/\s+/g, ' ').trim())
     .filter((phone) => {
         const index = text.indexOf(phone);
         const context = index >= 0 ? text.slice(Math.max(0, index - 45), Math.min(text.length, index + phone.length + 45)) : phone;
-        return isLikelyPhoneNumber(phone) && !contextHasNonPhoneLabel(context);
+        const digits = phone.replace(/\D/g, '');
+        const suspiciousPlainNumber = !/[+\s()-]/.test(phone) && digits.length === 9;
+        return isLikelyPhoneNumber(phone) && !contextHasNonPhoneLabel(context) && (!suspiciousPlainNumber || contextHasPhoneLabel(context));
     })).slice(0, 8);
 
 const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;

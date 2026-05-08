@@ -22,6 +22,7 @@ import {
 } from './leadAgentTypes';
 import {
     accommodationTypes,
+    ContactQuality,
     Lead,
     agentLeadStatusLabels,
     evidenceLevelLabels,
@@ -134,6 +135,14 @@ const emptyLead = (): Lead => ({
     guestGuidePreviewStatus: 'not-created',
     guestGuidePreview: undefined,
     guestGuideSecondEmail: '',
+    contactQuality: {
+        validEmails: [],
+        validPhones: [],
+        rejectedPhones: [],
+        emailSource: 'missing',
+        phoneSource: 'missing',
+        contactReady: false,
+    },
     outreachIntent: 'ask-permission-to-send-free-ideas',
     outreachTone: 'humble-transparent-low-pressure',
     lastContactDate: '',
@@ -169,6 +178,7 @@ const splitLines = (value: string) =>
 const joinLines = (value: string[]) => value.join('\n');
 
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const emailMissingSignalPattern = /(e-?mail|email).*(nen[ií]|chyb[ií]|nenalezen|nen[íi] vid[eě]t|nen[ií] vid[eě]t|neni videt|není vidět|chyb[ií] ve[řr]ejn[yý])/i;
 const removeContactContradictions = (values: string[], hasWebsiteEmail: boolean) => uniqueStrings(values.filter((value) => !(hasWebsiteEmail && emailMissingSignalPattern.test(value))));
 
@@ -186,6 +196,7 @@ const isLikelyPhoneNumber = (value: string) => {
 
     if (!trimmed || digits.length < 7) return false;
     if (/\d+\.\d+/.test(trimmed)) return false;
+    if (/^2000000\d{2,3}$/.test(digits)) return false;
     if (/\b(cz)?\d{8}\b/i.test(trimmed) && !/[+\s()-]/.test(trimmed)) return false;
     if (/latitude|longitude|gps|maps\.google\.com|\bi[čc]o\b|\bdi[čc]\b|\bvat\b/i.test(trimmed)) return false;
     if (trimmed.startsWith('+420')) return digits.length === 12;
@@ -193,6 +204,23 @@ const isLikelyPhoneNumber = (value: string) => {
     if (!/[\s()-]/.test(trimmed) && digits.length !== 9) return false;
 
     return digits.length >= 7 && digits.length <= 15;
+};
+const validEmail = (value = '') => emailPattern.test(value.trim());
+const normalizeEmail = (value = '') => value.trim().toLowerCase();
+const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction'>, rejectedPhones: string[] = []): ContactQuality => {
+    const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map(normalizeEmail).filter(validEmail));
+    const fallbackEmail = normalizeEmail(lead.email || '');
+    const validEmails = websiteEmails.length > 0 ? websiteEmails : validEmail(fallbackEmail) ? [fallbackEmail] : [];
+    const validPhones = uniqueStrings((lead.websiteExtraction?.contact.phones ?? []).filter(isLikelyPhoneNumber));
+
+    return {
+        validEmails,
+        validPhones,
+        rejectedPhones: uniqueStrings(rejectedPhones),
+        emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
+        phoneSource: validPhones.length > 0 ? 'website' : 'missing',
+        contactReady: validEmails.length > 0 || validPhones.length > 0,
+    };
 };
 const decimalCoordinatePattern = /\b\d{1,3}\.\d{5,}\b/g;
 const dataUrlPattern = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/gi;
@@ -370,15 +398,39 @@ const invalidSignalReason = (signal: string, hasWebsiteEmail: boolean) => {
     return '';
 };
 
+const humanizeSlugName = (value = '') => value
+    .replace(/^https?:\/\/[^/]+\//i, '')
+    .replace(/\.[a-z]{2,}(?:\/.*)?$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase('cs-CZ'));
+
+const displayNameFromLeadEvidence = (lead: Partial<Lead>, fallbackName = '') => {
+    const pageTitle = lead.websiteExtraction?.pagesExtracted?.[0]?.title?.trim() || '';
+    const normalizedFallback = cleanLeadDisplayName(fallbackName || lead.name || '');
+    const normalizedSlug = normalizeForSignalMatch(normalizedFallback);
+    const titleCandidate = cleanLeadDisplayName(pageTitle);
+
+    if (/apartmany[-\s]+pod[-\s]+barborou/i.test(fallbackName || '') || /apartmany pod barborou/i.test(normalizedSlug)) {
+        return /apartm[aá]ny pod barborou/i.test(titleCandidate) ? titleCandidate : 'Apartmány Pod Barborou';
+    }
+
+    if (/sklep[-\s]*rest/i.test(fallbackName || pageTitle)) return 'SKLEP REST';
+    if (/[-_]/.test(fallbackName || '') && normalizedFallback === fallbackName) return humanizeSlugName(fallbackName);
+    return normalizedFallback;
+};
+
 const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     const extraction = lead.websiteExtraction;
     if (!extraction) return lead;
 
     const validPhones = uniqueStrings((extraction.contact.phones ?? []).filter(isLikelyPhoneNumber));
     const removedInvalidPhones = uniqueStrings((extraction.contact.phones ?? []).filter((phone) => !isLikelyPhoneNumber(phone)));
+    const contactQuality = contactQualityForLead({ ...lead, websiteExtraction: extraction }, removedInvalidPhones);
     const normalizedExtraction: WebsiteExtractionResult = normalizeParkingSignals({
         ...extraction,
-        contact: { ...extraction.contact, phones: validPhones },
+        contact: { ...extraction.contact, emails: contactQuality.validEmails, phones: validPhones },
         pagesExtracted: extraction.pagesExtracted.filter((page) => !isInvalidExtractedPage(page)).map((page) => ({
             ...page,
             textPreview: sanitizeSourceMaterialContent(page.textPreview),
@@ -440,8 +492,10 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
 
     const leadWithRecommendation = withProductRecommendation({
         ...lead,
+        name: displayNameFromLeadEvidence({ ...lead, websiteExtraction: normalizedExtraction }, lead.name),
         notes: hasCompletedAgentAnalysis(lead) ? analyzedLeadNotes(lead, normalizedExtraction) : sanitizeSourceMaterialContent(lead.notes),
         websiteExtraction: normalizedExtraction,
+        contactQuality,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
         structuredQuickWins: prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []),
@@ -486,38 +540,21 @@ const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'c
 };
 
 const workflowNextAction = (lead: Lead) => {
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
+    const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
+
+    if (lead.websiteExtraction && (contactQuality.rejectedPhones.length > 0 || contactQuality.emailSource === 'discovery-fallback')) return contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review';
+    if (lead.websiteExtraction && !contactQuality.contactReady) return 'needs-contact-review';
     if (needsWebsiteAnalysis(lead)) return 'analyze-from-extracted-website';
     if (!hasCompletedWebsiteExtraction(lead)) return 'extract-website-or-add-evidence';
     if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
     if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
     if (hasClientCopyIssue(clientOutputValues(lead))) return 'needs-copy-review';
-    if (freeIdeaSpecificityDiagnostics(lead).genericFreeIdeasCount >= 2 || freeIdeaSpecificityDiagnostics(lead).repeatedTemplateWarning) return 'needs-idea-review';
+    if (!ideaDiagnostics.freeIdeasReady) return 'needs-idea-review';
     return 'ready-to-review';
 };
 
-const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => buildSpecificFreeIdeas(lead, []).length >= 3 ? buildSpecificFreeIdeas(lead, []) : [
-    {
-        id: `quick-win-${crypto.randomUUID()}`,
-        title: 'Zpřehlednit stránku před příjezdem',
-        why: 'Z přečtených veřejných stránek není jasně vidět jeden samostatný blok pro příjezd, check-in a první orientaci hosta.',
-        action: 'Přidat krátkou stránku nebo sekci s tím, kdy dorazí instrukce, kde host zaparkuje, kudy přijde a koho kontaktuje v den příjezdu.',
-        sourceEvidence: lead.websiteExtraction?.summary || lead.firstImpression || 'Website Extractor evidence.',
-    },
-    {
-        id: `quick-win-${crypto.randomUUID()}`,
-        title: 'Dodat krátkou FAQ sekci pro hosty',
-        why: 'Z přečtených veřejných stránek není jasně vidět kompaktní odpověď na nejčastější předpříjezdové otázky.',
-        action: 'Sepsat 5 až 7 otázek: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a základní vybavení.',
-        sourceEvidence: lead.websiteExtraction?.pagesExtracted.map((page) => page.url).join(', ') || 'Přečtené veřejné stránky.',
-    },
-    {
-        id: `quick-win-${crypto.randomUUID()}`,
-        title: 'Zviditelnit praktický kontakt',
-        why: lead.websiteExtraction?.contact.emails.length ? 'E-mail je na vlastním webu nalezený; dává smysl ho doplnit kontextem, kdy a proč ho host použije.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
-        action: 'Vedle kontaktu doplnit krátkou větu, pro jaké situace je určený: příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
-        sourceEvidence: lead.websiteExtraction?.contact.contactPageUrl || lead.websiteExtraction?.websiteUrl || 'Kontaktní část veřejného webu.',
-    },
-];
+const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => buildSpecificFreeIdeas(lead, []);
 
 const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
     const completeWins = quickWins.filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).slice(0, 3);
@@ -564,6 +601,7 @@ const emptyQuickWin = (): QuickWin => ({
     sourceEvidence: '',
     candidateSpecificity: 'generic',
     uniqueBusinessAngle: '',
+    usedSignals: [],
 });
 
 const emptySourceMaterial = (): SourceMaterial => ({
@@ -688,7 +726,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const guardedOpportunityScore = hasUnanalyzedWebsiteExtraction ? Math.min(lead.opportunityScore ?? 0, 64) : lead.opportunityScore ?? 0;
     const sourceText = [lead.notes, lead.firstImpression, lead.websiteExtraction?.summary, ...(lead.sourceMaterials ?? []).map((material) => material.content)].join(' ').toLowerCase();
     const guardedTargetOffer = hasUnanalyzedWebsiteExtraction && lead.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in') ? 'guest-guide' : lead.targetOffer ?? '';
-    const normalizedName = (lead.createdFromAgentAnalysis || lead.websiteExtraction) && lead.name ? cleanLeadDisplayName(lead.name) : lead.name ?? '';
+    const normalizedName = (lead.createdFromAgentAnalysis || lead.websiteExtraction) && lead.name ? displayNameFromLeadEvidence(lead, lead.name) : lead.name ?? '';
     const normalizedMiniAudit = sanitizeClientText(lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '');
     const rawPagesExtracted = lead.websiteExtraction?.pagesExtracted ?? [];
     const invalidPagesFromExtraction = rawPagesExtracted
@@ -774,6 +812,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: sanitizeClientText(lead.guestGuideSecondEmail ?? ''),
+        contactQuality: lead.contactQuality,
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,

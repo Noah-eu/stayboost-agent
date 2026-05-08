@@ -124,7 +124,7 @@ const analysisJsonSchema = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['title', 'why', 'action', 'sourceEvidence', 'candidateSpecificity', 'uniqueBusinessAngle'],
+                required: ['title', 'why', 'action', 'sourceEvidence', 'candidateSpecificity', 'uniqueBusinessAngle', 'usedSignals'],
                 properties: {
                     title: { type: 'string' },
                     why: { type: 'string' },
@@ -132,6 +132,7 @@ const analysisJsonSchema = {
                     sourceEvidence: { type: 'string' },
                     candidateSpecificity: { type: 'string', enum: ['specific', 'generic'] },
                     uniqueBusinessAngle: { type: 'string' },
+                    usedSignals: { type: 'array', items: { type: 'string' } },
                 },
             },
         },
@@ -246,8 +247,24 @@ const sanitizeQuickWinWhy = (title = '', why = '') => {
     return sanitizeClientText(why);
 };
 
-type SpecificSignalKey = 'parking' | 'ev' | 'contact' | 'restaurant' | 'terrace' | 'relax' | 'river' | 'island' | 'wedding' | 'conference' | 'romantic' | 'castle';
+type SpecificSignalKey = 'parking' | 'ev' | 'contact' | 'restaurant' | 'terrace' | 'relax' | 'river' | 'island' | 'wedding' | 'conference' | 'romantic' | 'castle' | 'barbora' | 'jesuitCollege' | 'kutnaHora' | 'vrchlice' | 'gardenGrill' | 'families' | 'quietPrivacy' | 'fourApartments' | 'historicHouse' | 'zizkov' | 'pragueCentre' | 'sklepRestaurant' | 'roomTypes' | 'kitchen' | 'tram' | 'cityArrival';
 const specificSignalMatchers: Array<{ key: SpecificSignalKey; label: string; keywords: string[] }> = [
+    { key: 'barbora', label: 'Chrám sv. Barbory', keywords: ['chram sv barbory', 'chrám sv barbory', 'sv barbory', 'saint barbara'] },
+    { key: 'jesuitCollege', label: 'Jezuitská kolej', keywords: ['jezuitska kolej', 'jesuit college'] },
+    { key: 'kutnaHora', label: 'Kutná Hora / 5 minut od památek', keywords: ['kutna hora', 'kutne hory', '5 minut chuze', 'pamatky kutne hory', 'unesco'] },
+    { key: 'vrchlice', label: 'říčka Vrchlice', keywords: ['vrchlice', 'ricka vrchlice'] },
+    { key: 'gardenGrill', label: 'zahrádka s grilem', keywords: ['zahradka s grilem', 'zahrada s grilem', 'zahradka', 'zahrada', 'gril', 'grill'] },
+    { key: 'families', label: 'rodiny s dětmi', keywords: ['rodiny s detmi', 'rodina s detmi', 'deti', 'children', 'families'] },
+    { key: 'quietPrivacy', label: 'klid a soukromí', keywords: ['klid a soukromi', 'soukromi', 'klid', 'privacy', 'quiet'] },
+    { key: 'fourApartments', label: 'čtyři apartmány', keywords: ['ctyri apartmany', '4 apartmany', 'four apartments'] },
+    { key: 'historicHouse', label: 'historický dům', keywords: ['historicky dum', 'historical house', 'historic house'] },
+    { key: 'zizkov', label: 'Žižkov / Praha 3', keywords: ['zizkov', 'praha 3', 'prague 3', 'seifertova'] },
+    { key: 'pragueCentre', label: 'centrum Prahy', keywords: ['centrum prahy', 'centre of prague', 'city centre', 'center of prague', 'v centru prahy'] },
+    { key: 'sklepRestaurant', label: 'Restaurace Sklep', keywords: ['restaurace sklep', 'restaurant sklep', 'sklep restaurant'] },
+    { key: 'roomTypes', label: 'více typů apartmánů a pokojů', keywords: ['apartmany a pokoje', 'apartments and rooms', 'studio', 'family room', 'typy apartmanu', 'typy pokoju'] },
+    { key: 'kitchen', label: 'kuchyň v apartmánech', keywords: ['kuchyn', 'kitchen', 'kitchenette'] },
+    { key: 'tram', label: 'tramvaj / městská doprava', keywords: ['tramvaj', 'tram', 'public transport', 'mhd'] },
+    { key: 'cityArrival', label: 'městský příjezd', keywords: ['city centre', 'centrum prahy', 'seifertova', 'praha 3', 'zizkov'] },
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email'] },
@@ -285,7 +302,72 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
     const signals = candidateSpecificSignals(candidate);
     const website = candidate.websiteExtraction;
     const pages = (website?.pagesExtracted || []).map((page) => page.url).join(', ') || website?.websiteUrl || candidate.evidenceSummary || name;
-    const wins: Array<{ title: string; why: string; action: string; sourceEvidence: string; candidateSpecificity: 'specific' | 'generic'; uniqueBusinessAngle: string }> = [];
+    const wins: Array<{ title: string; why: string; action: string; sourceEvidence: string; candidateSpecificity: 'specific' | 'generic'; uniqueBusinessAngle: string; usedSignals: string[] }> = [];
+
+    if (hasSignal(signals, ['barbora', 'jesuitCollege', 'kutnaHora'])) {
+        const usedSignals = labelsFor(signals, ['barbora', 'jesuitCollege', 'kutnaHora']);
+        wins.push({
+            title: 'Postavit průvodce kolem památek Kutné Hory',
+            why: `Web staví pobyt na konkrétní lokalitě: ${usedSignals.join(', ')}. To je silnější motiv než obecná informace o příjezdu.`,
+            action: 'V předpříjezdové zprávě přidat krátký blok „co stihnout pěšky“: Chrám sv. Barbory, Jezuitská kolej a rychlá orientace po Kutné Hoře.',
+            sourceEvidence: evidenceFor(signals, ['barbora', 'jesuitCollege', 'kutnaHora'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'pobyt jako klidná základna u památek Kutné Hory',
+            usedSignals,
+        });
+    }
+
+    if (hasSignal(signals, ['gardenGrill', 'families', 'quietPrivacy', 'vrchlice'])) {
+        const usedSignals = labelsFor(signals, ['gardenGrill', 'families', 'quietPrivacy', 'vrchlice']);
+        wins.push({
+            title: 'Předem naladit rodiny na zahradu a klid',
+            why: `Konkrétní signály jako ${usedSignals.join(', ')} pomáhají ukázat, proč je pobyt vhodný pro rodiny a klidnější návštěvu.`,
+            action: 'Do průvodce přidat sekci „po příjezdu“: kde je zahrada/gril, jak ji mohou hosté používat a co je dobré vzít dětem ven.',
+            sourceEvidence: evidenceFor(signals, ['gardenGrill', 'families', 'quietPrivacy', 'vrchlice'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'rodinný pobyt s venkovním zázemím a klidem',
+            usedSignals,
+        });
+    }
+
+    if (hasSignal(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival'])) {
+        const usedSignals = labelsFor(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival']);
+        wins.push({
+            title: 'Udělat městskou orientaci pro příjezd do Prahy',
+            why: `U městského ubytování jsou klíčové signály ${usedSignals.join(', ')}. Host potřebuje rychle pochopit čtvrť, dopravu a příjezd.`,
+            action: 'Do zprávy před příjezdem přidat mini-orientaci: Žižkov/Praha 3, nejbližší tramvaj, cesta z centra a co čekat při příjezdu do ulice.',
+            sourceEvidence: evidenceFor(signals, ['zizkov', 'pragueCentre', 'tram', 'cityArrival'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'městský příjezd a orientace v Praze',
+            usedSignals,
+        });
+    }
+
+    if (hasSignal(signals, ['sklepRestaurant', 'restaurant'])) {
+        const usedSignals = labelsFor(signals, ['sklepRestaurant', 'restaurant']);
+        wins.push({
+            title: 'Propojit ubytování s Restaurací Sklep',
+            why: `Restaurace je konkrétní výhoda webu: ${usedSignals.join(', ')}. Může být součástí předpobytového naladění, ne jen samostatná informace.`,
+            action: 'Přidat blok „jídlo po příjezdu“: kdy se hodí Restaurace Sklep, jestli je potřeba rezervace a jak ji host najde z pokoje/apartmánu.',
+            sourceEvidence: evidenceFor(signals, ['sklepRestaurant', 'restaurant'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'ubytování spojené s konkrétní restaurací v místě',
+            usedSignals,
+        });
+    }
+
+    if (hasSignal(signals, ['roomTypes', 'kitchen'])) {
+        const usedSignals = labelsFor(signals, ['roomTypes', 'kitchen']);
+        wins.push({
+            title: 'Vysvětlit rozdíl mezi pokoji a apartmány',
+            why: `Web pracuje s více typy ubytování: ${usedSignals.join(', ')}. Praktické informace by měly odpovídat tomu, co si host rezervoval.`,
+            action: 'V host guide rozdělit informace pro pokoj a apartmán: kuchyň, vybavení, délka pobytu, co si host nemusí vozit a co platí jen pro apartmán.',
+            sourceEvidence: evidenceFor(signals, ['roomTypes', 'kitchen'], pages),
+            candidateSpecificity: 'specific',
+            uniqueBusinessAngle: 'personalizace podle rezervovaného typu pokoje/apartmánu',
+            usedSignals,
+        });
+    }
 
     if (hasSignal(signals, ['parking', 'ev', 'contact'])) {
         wins.push({
@@ -295,6 +377,7 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
             sourceEvidence: evidenceFor(signals, ['parking', 'ev', 'contact'], pages),
             candidateSpecificity: 'specific',
             uniqueBusinessAngle: 'praktická orientace před příjezdem navázaná na parkování, EV nabíjení a kontakt',
+            usedSignals: labelsFor(signals, ['parking', 'ev', 'contact']),
         });
     }
 
@@ -306,6 +389,7 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
             sourceEvidence: evidenceFor(signals, ['restaurant', 'terrace', 'relax', 'river', 'island', 'wedding'], pages),
             candidateSpecificity: 'specific',
             uniqueBusinessAngle: 'předpobytové naladění hosta přes konkrétní služby a místo',
+            usedSignals: labelsFor(signals, ['restaurant', 'terrace', 'relax', 'river', 'island', 'wedding']),
         });
     }
 
@@ -317,10 +401,11 @@ const specificFallbackQuickWins = (name: string, candidate: CandidateInput) => {
             sourceEvidence: evidenceFor(signals, ['romantic', 'wedding', 'conference', 'castle', 'river'], pages),
             candidateSpecificity: 'specific',
             uniqueBusinessAngle: 'segmentace komunikace podle motivu pobytu',
+            usedSignals: labelsFor(signals, ['romantic', 'wedding', 'conference', 'castle', 'river']),
         });
     }
 
-    return wins;
+    return wins.slice(0, 3);
 };
 
 const fallbackClientMiniAudit = (name: string, candidate: CandidateInput) => {
@@ -464,6 +549,21 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             ? 'guest-guide'
             : candidate.targetOffer === 'skip' || !candidate.targetOffer ? 'guest-guide' : candidate.targetOffer;
         const pages = (websiteExtraction.pagesExtracted || []).map((page) => page.url).join(', ') || websiteExtraction.websiteUrl;
+        const fallbackQuickWins = specificFallbackQuickWins(name, candidate);
+        const placeholderQuickWin = {
+            title: 'Ověřit jednu stránku před příjezdem',
+            why: 'Z veřejné evidence zatím není dost konkrétních pozitivních signálů pro plně personalizované tři nápady.',
+            action: 'Použít jen jako pracovní placeholder a před odesláním doplnit konkrétní signály z webu nebo ruční kontroly.',
+            sourceEvidence: websiteExtraction.summary || pages,
+            candidateSpecificity: 'generic' as const,
+            uniqueBusinessAngle: 'placeholder pro ruční doplnění evidence',
+            usedSignals: [],
+        };
+        const reviewPlaceholders = [
+            placeholderQuickWin,
+            { ...placeholderQuickWin, title: 'Doplnit pozitivní signály z webu', action: 'Před odesláním dohledat konkrétní služby, lokalitu, typy pokojů nebo provozní výhody a navázat nápad přímo na ně.' },
+            { ...placeholderQuickWin, title: 'Neposílat obecné FAQ jako hotový nápad', action: 'Pokud konkrétní signály chybí, nechat lead ve stavu k ruční kontrole místo generování hotových šablon.' },
+        ];
 
         return {
             leadDisplayName: displayName,
@@ -471,32 +571,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             strengths: [...new Set([...(websiteExtraction.strengths || []), ...contactSignals, ...(candidate.signals || [])])].slice(0, 5),
             risks: [...new Set([...(websiteExtraction.risks || []), 'Fallback analýza: OpenAI nebylo dostupné, výstup je interní návrh s nízkou jistotou.'])],
             guestFrictionSignals: (websiteExtraction.missingPublicInfoSignals || []).length > 0 ? websiteExtraction.missingPublicInfoSignals : ['Z přečtených veřejných stránek není jasně vidět kompletní předpříjezdová orientace hosta.'],
-            quickWins: specificFallbackQuickWins(name, candidate).length >= 3 ? specificFallbackQuickWins(name, candidate).slice(0, 3) : [
-                {
-                    title: 'Zpřehlednit stránku „Před příjezdem“',
-                    why: 'Z přečtených veřejných stránek není jasně vidět jeden kompaktní blok pro příjezd, check-in, parkování a první kontakt.',
-                    action: 'Přidat krátkou stránku nebo sekci s tím, kdy host dostane instrukce, kde zaparkuje a koho kontaktuje v den příjezdu.',
-                    sourceEvidence: websiteExtraction.summary,
-                    candidateSpecificity: 'generic' as const,
-                    uniqueBusinessAngle: 'obecné předpříjezdové informace',
-                },
-                {
-                    title: 'Dodat krátkou FAQ sekci pro hosty',
-                    why: 'Z přečtených veřejných stránek není jasně vidět přehled nejčastějších předpříjezdových otázek.',
-                    action: 'Sepsat 5 až 7 odpovědí: příjezd, parkování, check-in, pozdní příjezd, kontakt, platba a vybavení pokoje.',
-                    sourceEvidence: pages,
-                    candidateSpecificity: 'generic' as const,
-                    uniqueBusinessAngle: 'obecná FAQ orientace',
-                },
-                {
-                    title: 'Zviditelnit praktické informace u kontaktu',
-                    why: (websiteExtraction.contact?.emails || []).length > 0 ? 'E-mail je na vlastním webu nalezený; hostovi může pomoct vědět, kdy ho použít.' : 'Z přečtených veřejných stránek není jasně vidět praktický kontakt pro den příjezdu.',
-                    action: 'Vedle kontaktu doplnit krátkou větu pro situace jako příjezd, parkování, změna času příjezdu nebo dotaz k rezervaci.',
-                    sourceEvidence: websiteExtraction.contact?.contactPageUrl || websiteExtraction.websiteUrl,
-                    candidateSpecificity: 'generic' as const,
-                    uniqueBusinessAngle: 'kontakt pro den příjezdu',
-                },
-            ],
+            quickWins: [...fallbackQuickWins, ...reviewPlaceholders].slice(0, 3),
             miniAudit: fallbackClientMiniAudit(name, candidate),
             outreachEmail: fallbackOutreach(name, candidate),
             followUp: fallbackFollowUp(name),
@@ -555,6 +630,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'ověření neveřejného předpříjezdového průvodce',
+            usedSignals: [],
         },
         {
             title: 'Zprehlednit predprijezdove informace',
@@ -563,6 +639,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'obecné předpříjezdové informace',
+            usedSignals: [],
         },
         {
             title: 'Rucne overit mezeru',
@@ -571,6 +648,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'ruční ověření mezery před oslovením',
+            usedSignals: [],
         },
     ] : isLowFit ? [
         {
@@ -580,6 +658,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'benchmark bez oslovení',
+            usedSignals: [],
         },
         {
             title: 'Doplnit evidenci',
@@ -588,6 +667,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'doplnění evidence před obchodním krokem',
+            usedSignals: [],
         },
         {
             title: 'Neprepisovat pozitivni signal',
@@ -596,6 +676,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'nepřepisovat pozitivně vyřešený proces',
+            usedSignals: [],
         },
     ] : [
         {
@@ -605,6 +686,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'specific' as const,
             uniqueBusinessAngle: primaryPain,
+            usedSignals: [primaryPain],
         },
         {
             title: 'Zpresnit predprijezdove instrukce',
@@ -613,6 +695,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'generic' as const,
             uniqueBusinessAngle: 'předpříjezdová instrukce podle doloženého pain signálu',
+            usedSignals: painSignals.slice(0, 2),
         },
         {
             title: 'Navazat nabidku na pain',
@@ -621,6 +704,7 @@ const fallbackAnalysis = (candidate: CandidateInput) => {
             sourceEvidence: evidence,
             candidateSpecificity: 'specific' as const,
             uniqueBusinessAngle: primaryPain,
+            usedSignals: [primaryPain],
         },
     ];
 
@@ -748,7 +832,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
     const hasWebsiteContact = Boolean((website?.contact?.emails?.length || 0) + (website?.contact?.phones?.length || 0));
     const hasWebsiteOnlyEvidence = Boolean(website && ['completed', 'partial'].includes(String(website.status || '')));
     const opportunityType: OpportunityType = candidate.opportunityType && isOpportunityType(candidate.opportunityType) ? candidate.opportunityType : website ? 'setup-automation' : 'skip';
-    const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string; candidateSpecificity?: string; uniqueBusinessAngle?: string });
+    const quickWins = analysis.quickWins.map((quickWin) => quickWin as { title?: string; why?: string; action?: string; sourceEvidence?: string; candidateSpecificity?: string; uniqueBusinessAngle?: string; usedSignals?: string[] });
 
     return {
         leadDisplayName: cleanLeadDisplayName(analysis.leadDisplayName),
@@ -763,6 +847,7 @@ const expandCompactAnalysis = (value: unknown, candidate: CandidateInput) => {
             sourceEvidence: trimText(quickWin.sourceEvidence, 180),
             candidateSpecificity: quickWin.candidateSpecificity === 'specific' ? 'specific' as const : 'generic' as const,
             uniqueBusinessAngle: trimText(quickWin.uniqueBusinessAngle, 160),
+            usedSignals: Array.isArray(quickWin.usedSignals) ? quickWin.usedSignals.map((signal) => trimText(String(signal), 80)).filter(Boolean).slice(0, 6) : [],
         })),
         miniAudit: sanitizeClientText(String(analysis.clientMiniAudit)),
         outreachEmail: hasWebsiteOnlyEvidence ? websiteOnlyOutreach(String(analysis.leadDisplayName), candidate) : sanitizeClientText(String(analysis.outreachEmail)),
@@ -887,14 +972,14 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
     Pokud web nasel e-mail/telefon, netvrd, ze kontakt chybi. Pokud neni videt guest guide, pis opatrne: muze existovat neverejne po rezervaci.
     Pokud websiteExtraction.parkingSignals obsahuje parkovani nebo nabijeci stanici, nesmis tvrdit, ze parkovani neni jasne videt a nesmis delat quick win typu "doplnit parkovani". Ber parkovani/EV jako pozitivni signal a pouzij ho jako soucast konkretniho predprijezdoveho prehledu.
     Pokud evidence obsahuje websiteExtraction a neobsahuje screenshoty/fotky, outreach a quick wins nesmi mluvit o poradi fotek, hlavni fotce, mobilni galerii, redesignu ani recenzich v prvnich sekundach. Drz se prijezdu, parkovani, check-inu, FAQ, kontaktu a predprijezdoveho prehledu.
-    QuickWins nesmi byt stejna sablona pro kazdy hotel. Kazdy quickWin musi mit candidateSpecificity "specific" nebo "generic", sourceEvidence s konkretnim prvkem z webu a uniqueBusinessAngle. Pokud pouzivas jen obecne tema prijezd/check-in/FAQ bez konkretni evidence z webu, oznac ho jako generic. Preferuj konkretni prvky webu jako restaurace, relax centrum, reka, ostrov, svatebni altan, konferencni prostory, romanticky hotel, lokalita pod hradem, parkoviste nebo EV nabijeni. Nepouzivej generic FAQ jako treti napad, pokud existuji konkretni hotelove signaly.
+    QuickWins nesmi byt stejna sablona pro kazdy hotel. Kazdy quickWin musi mit candidateSpecificity "specific" nebo "generic", sourceEvidence s konkretnim prvkem z webu, uniqueBusinessAngle a usedSignals jako seznam konkretnich pozitivnich signalu pouzitych v napadu. Pokud pouzivas jen obecne tema prijezd/check-in/FAQ bez konkretni evidence z webu, oznac ho jako generic a usedSignals nech prazdne. Preferuj konkretni prvky webu jako Chram sv. Barbory, Jezuitska kolej, Kutna Hora, zahrada/gril, rodiny, klid, Zizkov/Praha 3, Restaurace Sklep, typy pokoju/apartmanu, kuchyn, tramvaj, restaurace, relax centrum, reka, ostrov, svatebni altan, konferencni prostory, romanticky hotel, lokalita pod hradem, parkoviste nebo EV nabijeni. Alespon 2 ze 3 quickWins maji byt specific, pokud evidence obsahuje aspon 3 konkretni signaly. Nepouzivej generic FAQ jako treti napad, pokud existuji konkretni hotelove signaly.
     Outreach musi obsahovat omluvu za nevyzadanou zpravu, vetu ze nevidime interní komunikaci po rezervaci, nabidku 3 napadu zdarma, transparentni zminku ze se pak muzeme domluvit treba na jednoduchem online pruvodci pro hosty nebo vetsi uprave komunikace za uplatu, a nenatlakovou otazku na konci. Nesmí tvrdit, ze maji problem nebo ze je hodnotime zvenku.
     OfferRecommendation ma byt nenatlakovy dalsi produkt: Guest Guide Starter, Guest Communication Setup, Ops Audit, nebo Skip/nepokracovat. Guest Guide Starter pouzij pro jednoduchy online pruvodce hosta. Guest Communication Setup pouzij pro hotely s vice provoznimi tematy a vice typy hostu. Ops Audit pouzij pro sirsi chaos/slabe oblasti. Skip pouzij, kdyz neni jasna prilezitost.
     Bez review/pain evidence nesmis tvrdit: "volaji zbytecne", "zbytecne pridava dotazy", "zpusobuje problem", "hoste jsou zmateni". Pro website-only setup lead pis opatrne: "muze snizit nejistotu hosta", "casto pomaha omezit opakovane dotazy", "pomaha hostovi rychleji najit prakticke informace", "muze usetrit cas recepci".
     Pokud quick win title je "Příjezd na jednu stránku", why musi byt presne: "Jasně soustředěné informace k příjezdu mohou snížit nejistotu hosta a omezit opakované dotazy před příjezdem."
     Limits: internalSummary max 700 znaku, clientMiniAudit max 700 znaku, outreachEmail 120-150 slov, followUp max 70 slov, offerRecommendation max 400 znaku. quickWins presne 3; kazde why/action max 180 znaku.
     leadDisplayName ocisti od titulku stranky, prefixu Kontakt/Contact/Rooms/Pokoje a suffixu po |.
-    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence,candidateSpecificity,uniqueBusinessAngle}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
+    JSON fields: leadDisplayName, internalSummary, clientMiniAudit, quickWins[{title,why,action,sourceEvidence,candidateSpecificity,uniqueBusinessAngle,usedSignals}], outreachEmail, followUp, offerRecommendation, confidence, fitVerdict, qualificationReason, evidenceLimits.
 Lead: ${JSON.stringify(compactInput)}
 Poznamky: ${trimText(body.userNotes || '', 400)}`;
 

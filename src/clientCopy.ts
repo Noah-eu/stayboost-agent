@@ -71,16 +71,27 @@ export function cleanLeadDisplayName(name = '') {
     const withoutPrefix = name.replace(prefixPattern, '').split('|')[0].trim();
     const normalized = normalizeForMatch(withoutPrefix || name);
 
+    if (normalized.includes('apartmany pod barborou')) return 'Apartmány Pod Barborou';
+    if (normalized.includes('sklep rest')) return 'SKLEP REST';
+
     if (normalized.includes('pension city center')) {
         return normalized.includes('prague') || normalizeForMatch(name).includes('prague')
             ? 'Pension City Center Prague'
             : 'Pension City Center';
     }
 
-    return (withoutPrefix || name)
+    const original = withoutPrefix || name;
+    const cleaned = original
         .replace(/\s+/g, ' ')
+        .replace(/[-_]+/g, ' ')
         .replace(/\s+-\s+$/, '')
-        .trim() || 'vybrane ubytovani';
+        .trim();
+
+    if (/[-_]/.test(original) || cleaned === cleaned.toLowerCase()) {
+        return cleaned.replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase('cs-CZ')) || 'vybrane ubytovani';
+    }
+
+    return cleaned || 'vybrane ubytovani';
 }
 
 export function humanizeSignal(signal = '') {
