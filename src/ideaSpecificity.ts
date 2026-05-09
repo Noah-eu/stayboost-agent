@@ -163,7 +163,7 @@ const matchers: Array<{ key: SignalKey; label: string; keywords: string[] }> = [
     { key: 'parkingDistance', label: 'parkoviště 250 m / 350 m', keywords: ['250 m', '350 m', 'parkingDistanceMeters', 'parkingdistancemeters'] },
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'nabijeni elektromobilu', 'elektromobil', 'ev charging', 'charging station'] },
-    { key: 'contact', label: 'kontakt / recepce', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
+    { key: 'contact', label: 'kontakt', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
     { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant', 'grill restaurant', 'bar ', ' menu ', 'snidane', 'snídaně'] },
     { key: 'breakfast', label: 'snídaně', keywords: ['snidane', 'snídaně', 'breakfast'] },
     { key: 'terrace', label: 'terasa', keywords: ['terasa', 'terrace'] },
@@ -373,9 +373,9 @@ const multiPropertyArrivalWins = (lead: Pick<Lead, 'websiteExtraction'>, signals
 const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => [
     makeWin(
         'Příjezd do historického centra bez nejistoty',
-        `Evidence ukazuje ubytování v historickém centru s vlastním vstupem a dohledatelným kontaktem: ${evidenceFor(signals, ['historicCentre', 'dlouhaAddress', 'privateEntry', 'contact'], 'historické centrum a kontakt')}.`,
+        'Ubytování je v historickém centru a má vlastní vstup; hostovi pomůže mít předem jasně shrnutou adresu, vstup a kontakt.',
         'Připravit krátký přehled pro hosty: adresa Dlouhá 92, jak se dostat ke vstupu, kdy volat, co čekat po příjezdu a co je potřeba vědět u apartmánů v centru Krumlova.',
-        evidenceFor(signals, ['dlouhaAddress', 'historicCentre', 'privateEntry', 'contact'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        'Dlouhá 92, historické centrum Českého Krumlova, vlastní vchod, veřejný kontakt.',
         'příjezd do historického centra s vlastním vstupem',
         firstSignals(signals, ['dlouhaAddress', 'historicCentre', 'privateEntry', 'contact'], 5),
     ),
@@ -389,9 +389,9 @@ const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, sign
     ),
     makeWin(
         'Mini průvodce Krumlovem a okolím',
-        `Web obsahuje lokální tipy pro hosty: ${evidenceFor(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], 'Možnosti rekreace a tipy v okolí')}.`,
-        'Z existující stránky Možnosti rekreace udělat přehled pro hosty: co pěšky v Krumlově, co s dětmi, kam za kulturou a kam na výlet v okolí.',
-        evidenceFor(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
+        'Web už obsahuje stránku Možnosti rekreace s konkrétními tipy; z toho jde udělat užitečný přehled pro hosty.',
+        'Převést tipy z Možností rekreace do krátkého hostovského průvodce: co pěšky v Krumlově, co za kulturou a kam na výlet v okolí.',
+        'Zámek Český Krumlov, Fotoateliér Seidl, otáčivé divadlo, plavba vorů po Vltavě, Lipno, Kleť.',
         'lokální průvodce z existující stránky Možnosti rekreace',
         firstSignals(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], 8),
     ),
@@ -406,7 +406,7 @@ const socialProfileWebPresenceWins = (lead: Pick<Lead, 'websiteExtraction'>): Qu
             'Vytvořit jednoduchou stránku s názvem ubytování, fotkami, adresou Pod Kamenem 170, telefonem, e-mailem, mapou a tlačítkem „zavolat / napsat“.',
             'Facebook profil, žádný vlastní web nenalezen, kontakt je veřejně vidět.',
             'malý web jako stabilní veřejná prezentace mimo Facebook',
-            ['Facebook / veřejný profil', 'žádný vlastní web nenalezen', 'kontakt / recepce'],
+            ['Facebook / veřejný profil', 'žádný vlastní web nenalezen', 'kontakt'],
         ),
         makeWin(
             'Přerovnat fotky tak, aby první ukazovaly ubytování',
@@ -422,7 +422,7 @@ const socialProfileWebPresenceWins = (lead: Pick<Lead, 'websiteExtraction'>): Qu
             'Na web/online stránku dát: adresa, mapa, jak se dostat ke vstupu, kontakt v den příjezdu, čas příjezdu, odjezd a nejčastější dotazy.',
             evidence.includes('Pod Kamenem') ? evidence : 'Facebook profil ukazuje kontakt, ale ne strukturované příjezdové informace.',
             'praktické informace pro hosta bez hledání ve feedu',
-            ['kontakt / recepce', 'Facebook / veřejný profil'],
+            ['kontakt', 'Facebook / veřejný profil'],
         ),
     ];
 };
@@ -585,6 +585,7 @@ const ideaUsesMissingSignal = (idea: QuickWin) => missingSignalPattern.test(`${i
 
 export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuickWins' | 'freeIdeas' | 'websiteExtraction' | 'strengths' | 'publicSignals' | 'checkInParkingInfo'>) => {
     const ideas = (lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []).slice(0, 3).map((win) => annotateQuickWinSpecificity(win, lead));
+    const structurallyCompleteIdeasCount = ideas.filter((idea) => idea.title.trim() && idea.why.trim() && idea.action.trim() && idea.sourceEvidence.trim() && idea.candidateSpecificity !== 'generic').length;
     const genericFreeIdeasCount = ideas.filter((idea) => idea.candidateSpecificity === 'generic').length;
     const candidateSpecificSignals = detectCandidateSpecificSignals(lead);
     const combinedIdeas = normalize(ideas.map((idea) => `${idea.title}\n${idea.why}\n${idea.action}\n${idea.sourceEvidence}\n${idea.uniqueBusinessAngle}\n${(idea.usedSignals ?? []).join('\n')}`).join('\n'));
@@ -607,6 +608,7 @@ export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuick
         || !(lead.websiteExtraction?.missedPriorityPages ?? []).includes('Možnosti rekreace')
         || (lead.websiteExtraction?.localExperienceSignals?.length ?? 0) >= 3;
     const freeIdeasReady = ideas.length === 3
+        && structurallyCompleteIdeasCount === 3
         && genericFreeIdeasCount <= 1
         && candidateSpecificSignalsUsed.length >= 3
         && positiveSignalsUsedCount >= 2
@@ -635,5 +637,6 @@ export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuick
         positiveSignalsUsedCount,
         missingSignalsUsedCount,
         localExperienceExtractionReady,
+        structurallyCompleteIdeasCount,
     };
 };

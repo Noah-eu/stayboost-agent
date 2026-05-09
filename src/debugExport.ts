@@ -4,6 +4,7 @@ import { validateEvidenceClaims } from './evidenceClaimValidator';
 import { freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { extractRejectedPhones, extractValidPhones, isLikelyPhoneNumber, mergePhones } from './phoneValidation';
 import { recommendProductForLead } from './productRecommendation';
+import { computeLeadWorkflowReadiness } from './readiness';
 import type { ContactQuality, Lead, LeadScreenshot, WebsiteExtractionResult } from './types';
 
 export type DebugExportType = 'run' | 'candidate' | 'lead' | 'website-extraction';
@@ -129,25 +130,21 @@ const contactQualityForLead = (lead: Lead): ContactQuality => {
 };
 
 const leadWorkflowState = (lead: Lead) => {
-    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
-    const hasAgentAnalysis = Boolean(lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
-    const hasQuickWins = (lead.structuredQuickWins ?? []).filter((win) => win.title?.trim() && win.why?.trim() && win.action?.trim()).length === 3;
     const clientOutputs = [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
-    const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
-    const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
     const evidenceDiagnostics = validateEvidenceClaims(lead);
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
     const isSocialSource = isSocialOwnershipStatus(ownershipStatus);
-    const needsOfficialWebsite = Boolean(lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official'));
+    const readiness = computeLeadWorkflowReadiness({ ...lead, contactQuality });
 
     return {
-        hasWebsiteExtraction,
-        hasAgentAnalysis,
-        hasQuickWins,
-        hasClientOutputs,
-        clientTextReady: clientDiagnostics.clientTextReady,
+        hasWebsiteExtraction: readiness.hasWebsiteExtraction,
+        hasAgentAnalysis: readiness.hasAgentAnalysis,
+        hasQuickWins: readiness.hasQuickWins,
+        hasClientOutputs: readiness.hasClientOutputs,
+        clientTextReady: readiness.clientTextReady,
+        rawClientTextReady: readiness.rawClientTextReady,
         contactReady: contactQuality.contactReady,
         contactQuality,
         sourceUrlClassification: lead.websiteExtraction?.sourceUrlClassification ?? lead.sourceUrlClassification,
@@ -155,7 +152,7 @@ const leadWorkflowState = (lead: Lead) => {
         ownedWebsiteDetected: lead.websiteExtraction?.ownedWebsiteDetected ?? lead.ownedWebsiteDetected ?? ownershipStatus === 'official',
         needsOwnedWebsite: lead.websiteExtraction?.needsOwnedWebsite ?? lead.needsOwnedWebsite ?? isSocialSource,
         needsScreenshotAnalysis: lead.needsScreenshotAnalysis ?? isSocialSource,
-        freeIdeasSpecificEnough: ideaDiagnostics.freeIdeasReady && !ideaDiagnostics.repeatedConceptWarning,
+        freeIdeasSpecificEnough: readiness.freeIdeasReady && !ideaDiagnostics.repeatedConceptWarning,
         leadPlaybook: ideaDiagnostics.leadPlaybook,
         leadPlaybookReason: ideaDiagnostics.leadPlaybookReason,
         playbookSignals: ideaDiagnostics.playbookSignals,
@@ -180,39 +177,22 @@ const leadWorkflowState = (lead: Lead) => {
             parkingLimited: lead.websiteExtraction?.parkingLimited,
             parkingDistanceMeters: lead.websiteExtraction?.parkingDistanceMeters,
         },
-        unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
-        unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
-        evidenceBlockedClaims: uniqueStrings([...(lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims), ...(lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims)]),
-        evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
-        clientOutputStatus: lead.clientOutputStatus ?? (ideaDiagnostics.freeIdeasReady && evidenceDiagnostics.evidenceClaimReady ? 'ready' : 'draft-needs-review'),
-        notReadyReasons: lead.notReadyReasons ?? [],
+        freeIdeasReady: readiness.freeIdeasReady,
+        guestGuidePreviewReady: readiness.guestGuidePreviewReady,
+        unsupportedClientClaims: readiness.unsupportedClientClaims,
+        unsupportedSignalClaims: readiness.unsupportedSignalClaims,
+        evidenceBlockedClaims: uniqueStrings([...readiness.unsupportedClientClaims, ...readiness.unsupportedSignalClaims]),
+        evidenceClaimReady: readiness.evidenceClaimReady,
+        clientOutputStatus: readiness.clientOutputStatus,
+        notReadyReasons: readiness.notReadyReasons,
+        freeIdeaStructuralIssues: readiness.freeIdeaStructuralIssues,
         positiveSignalsUsedCount: ideaDiagnostics.positiveSignalsUsedCount,
         missingSignalsUsedCount: ideaDiagnostics.missingSignalsUsedCount,
-        nextRecommendedAction: isSocialSource
-            ? contactQuality.contactReady ? 'ready-to-review' : 'needs-owned-website-or-screenshot-review'
-            : needsOfficialWebsite
-                ? 'needs-official-website'
-            : ideaDiagnostics.localExperienceExtractionReady === false
-                ? 'needs-extraction-review'
-            : (lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady) === false
-                ? 'needs-evidence-review'
-            : hasWebsiteExtraction && contactQuality.emailSource === 'discovery-fallback'
-            ? contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review'
-            : hasWebsiteExtraction && !contactQuality.contactReady
-                ? 'needs-contact-review'
-                : hasWebsiteExtraction && !hasAgentAnalysis
-            ? 'analyze-from-extracted-website'
-            : !hasWebsiteExtraction
-                ? 'extract-website-or-add-evidence'
-                : !hasQuickWins
-                    ? 'complete-agent-analysis'
-                    : !hasClientOutputs
-                        ? 'generate-client-outputs'
-                        : !clientDiagnostics.clientTextReady
-                            ? 'needs-copy-review'
-                            : !ideaDiagnostics.freeIdeasReady || ideaDiagnostics.repeatedConceptWarning
-                                ? 'needs-idea-review'
-                                : 'ready-to-review',
+        nextRecommendedAction: readiness.nextRecommendedAction,
+        statusLabel: readiness.statusLabel,
+        socialProfileEvidenceGate: isSocialSource,
+        rawClientTextSanitizer: clientTextSanitizerDiagnostics(clientOutputs),
+        rawEvidenceDiagnostics: evidenceDiagnostics,
     };
 };
 
@@ -303,10 +283,19 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const productRecommendation = recommendProductForLead(lead);
     const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
-    const evidenceDiagnostics = validateEvidenceClaims(lead);
+    const readiness = computeLeadWorkflowReadiness({ ...lead, contactQuality });
 
     return withMetadata('lead', {
-        lead,
+        lead: {
+            ...lead,
+            status: readiness.statusLabel,
+            clientOutputStatus: readiness.clientOutputStatus,
+            guestGuidePreviewStatus: readiness.guestGuidePreviewStatus,
+            evidenceClaimReady: readiness.evidenceClaimReady,
+            notReadyReasons: readiness.notReadyReasons,
+            unsupportedClientClaims: readiness.unsupportedClientClaims,
+            unsupportedSignalClaims: readiness.unsupportedSignalClaims,
+        },
         cleanedLeadDisplayName: cleanLeadDisplayName(lead.name),
         outreachIntent: lead.outreachIntent ?? 'ask-permission-to-send-free-ideas',
         outreachTone: lead.outreachTone ?? 'humble-transparent-low-pressure',
@@ -318,12 +307,20 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         productRecommendationSignals: lead.productRecommendationSignals ?? productRecommendation.productRecommendationSignals,
         paidOfferShort: lead.paidOfferShort ?? productRecommendation.paidOfferShort,
         paidOfferDetails: lead.paidOfferDetails ?? productRecommendation.paidOfferDetails,
-        clientOutputStatus: lead.clientOutputStatus ?? (ideaDiagnostics.freeIdeasReady && evidenceDiagnostics.evidenceClaimReady ? 'ready' : 'draft-needs-review'),
-        notReadyReasons: lead.notReadyReasons ?? [],
-        unsupportedClientClaims: lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims,
-        unsupportedSignalClaims: lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims,
-        evidenceBlockedClaims: uniqueStrings([...(lead.unsupportedClientClaims ?? evidenceDiagnostics.unsupportedClientClaims), ...(lead.unsupportedSignalClaims ?? evidenceDiagnostics.unsupportedSignalClaims)]),
-        evidenceClaimReady: lead.evidenceClaimReady ?? evidenceDiagnostics.evidenceClaimReady,
+        ...ideaDiagnostics,
+        ...clientTextSanitizerDiagnostics(clientOutputs),
+        clientTextReady: readiness.clientTextReady,
+        rawClientTextReady: readiness.rawClientTextReady,
+        freeIdeasReady: readiness.freeIdeasReady,
+        guestGuidePreviewReady: readiness.guestGuidePreviewReady,
+        clientOutputStatus: readiness.clientOutputStatus,
+        statusLabel: readiness.statusLabel,
+        notReadyReasons: readiness.notReadyReasons,
+        unsupportedClientClaims: readiness.unsupportedClientClaims,
+        unsupportedSignalClaims: readiness.unsupportedSignalClaims,
+        evidenceBlockedClaims: uniqueStrings([...readiness.unsupportedClientClaims, ...readiness.unsupportedSignalClaims]),
+        evidenceClaimReady: readiness.evidenceClaimReady,
+        freeIdeaStructuralIssues: readiness.freeIdeaStructuralIssues,
         extractedPriorityPages: lead.websiteExtraction?.extractedPriorityPages ?? [],
         missedPriorityPages: lead.websiteExtraction?.missedPriorityPages ?? [],
         discoveredNavigationLinks: lead.websiteExtraction?.discoveredNavigationLinks ?? [],
@@ -342,7 +339,7 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
             parkingLimited: lead.websiteExtraction?.parkingLimited,
             parkingDistanceMeters: lead.websiteExtraction?.parkingDistanceMeters,
         },
-        guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
+        guestGuidePreviewStatus: readiness.guestGuidePreviewStatus,
         guestGuidePreview: lead.guestGuidePreview,
         guestGuideSecondEmail: lead.guestGuideSecondEmail ?? '',
         contactQuality,
@@ -367,15 +364,13 @@ export function createLeadDebugExport(lead: Lead, context: { diagnostics?: LeadA
         skippedAssetUrls: lead.websiteExtraction?.skippedAssetUrls ?? lead.skippedAssetUrls ?? [],
         directoryContact: lead.websiteExtraction?.directoryContact ?? lead.directoryContact,
         contactOwnershipStatus: lead.websiteExtraction?.contactOwnershipStatus ?? lead.contactOwnershipStatus ?? 'unknown',
-        nextRecommendedAction: leadWorkflowState(lead).nextRecommendedAction,
-        ...ideaDiagnostics,
+        nextRecommendedAction: readiness.nextRecommendedAction,
         suppressedMissingSignals: lead.websiteExtraction?.suppressedMissingSignals ?? [],
         canonicalizationApplied: lead.evidenceCanonicalizationDiagnostic?.canonicalizationApplied ?? Boolean(lead.websiteExtraction),
         removedInvalidSignals: lead.evidenceCanonicalizationDiagnostic?.removedInvalidSignals ?? [],
         removedInvalidPhones: lead.evidenceCanonicalizationDiagnostic?.removedInvalidPhones ?? [],
         removedStaleSourceMaterials: lead.evidenceCanonicalizationDiagnostic?.removedStaleSourceMaterials ?? 0,
         staleSourceMaterialTitlesRemoved: lead.evidenceCanonicalizationDiagnostic?.staleSourceMaterialTitlesRemoved ?? [],
-        ...clientTextSanitizerDiagnostics(clientOutputs),
         openAIIncomplete: latestDiagnostic?.fallbackReason === 'openai_incomplete' || context.diagnostics?.fallbackReason === 'openai_incomplete',
         diagnostics: context.diagnostics,
         latestAnalysisDiagnostic: lead.latestAnalysisDiagnostic ?? context.diagnostics,

@@ -2,7 +2,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Image, LayoutDashboard, Mail, 
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
 import { analyzeLead, analyzeScreenshots, checkAgentHealth, discoverDemoLeads, discoverLeads, extractWebsite } from './agentApi';
 import { extractAuditObservations } from './auditExtractor';
-import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, clientTextSanitizerDiagnostics, hasClientCopyIssue, hasForbiddenOutreachLanguage, sanitizeClientText } from './clientCopy';
+import { buildWebsiteOnlyOutreach, cleanLeadDisplayName, hasForbiddenOutreachLanguage, sanitizeClientText } from './clientCopy';
 import { createCandidateDebugExport, createLeadDebugExport, createRunDebugExport, createWebsiteExtractionDebugExport, debugFileNames, downloadJsonFile } from './debugExport';
 import { sanitizeUnsupportedClaimsFromQuickWins, sanitizeUnsupportedClaimsFromText, validateEvidenceClaims } from './evidenceClaimValidator';
 import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, generateInternalAgentBrief, generateMiniAudit, generateOffer } from './generators';
@@ -11,6 +11,7 @@ import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificit
 import { mockLeads } from './mockData';
 import { extractRejectedPhones, extractValidPhones, isLikelyPhoneNumber, mergePhones } from './phoneValidation';
 import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
+import { computeLeadWorkflowReadiness } from './readiness';
 import { assessWebsiteOwnership, isAssetPage, isAssetUrl } from './websiteOwnership';
 import {
     LeadAgentAnalysis,
@@ -222,9 +223,7 @@ const removeContactContradictions = (values: string[], hasWebsiteEmail: boolean)
 
 const hasCompletedWebsiteExtraction = (lead: Pick<Lead, 'websiteExtraction'>) => Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
 const hasLeadClientOutputs = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => Boolean((lead.clientMiniAudit || lead.generatedMiniAudit).trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
-const hasLeadQuickWins = (lead: Pick<Lead, 'structuredQuickWins'>) => (lead.structuredQuickWins ?? []).filter((win) => win.title.trim() && win.why.trim() && win.action.trim()).length === 3;
 const needsWebsiteAnalysis = (lead: Lead) => hasCompletedWebsiteExtraction(lead) && lead.needsAgentAnalysis && !lead.createdFromAgentAnalysis;
-const clientOutputValues = (lead: Pick<Lead, 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer'>) => [lead.clientMiniAudit || lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedFollowUp, lead.generatedOffer];
 const notFoundPagePattern = /str[aá]nka nenalezena|page not found|\b404\b|po[zž]adovan[aá] str[aá]nka nebyla nalezena|not found|str[aá]nka byla p[řr]em[ií]st[eě]na nebo odstran[eě]na/i;
 const isInvalidExtractedPage = (page: { url?: string; title?: string; textPreview?: string; contentLength?: number }) => notFoundPagePattern.test(`${page.title ?? ''}\n${page.textPreview ?? ''}`) || isAssetPage({ url: page.url ?? '', title: page.title ?? '', textPreview: page.textPreview ?? '', contentLength: page.contentLength ?? 0 });
 const websiteOnlyOutreachMismatchPattern = /fotk|hlavn[ií] fot|recenz|redesign|galeri/i;
@@ -675,24 +674,14 @@ const casualOptOutPattern = /\s*Když ne, vůbec se nic neděje\.?/gi;
 const stripCasualOptOut = (value = '') => sanitizeClientText(value.replace(casualOptOutPattern, '').replace(/\n{3,}/g, '\n\n'));
 
 const clientOutputReadiness = (lead: Lead) => {
-    const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
-    const evidenceDiagnostics = validateEvidenceClaims(lead);
-    const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
-    const notReadyReasons = uniqueStrings([
-        !ideaDiagnostics.freeIdeasReady ? 'free ideas nejsou dost konkrétní' : '',
-        ideaDiagnostics.genericFreeIdeasCount > 0 ? `${ideaDiagnostics.genericFreeIdeasCount} nápad je generic / vyžaduje kontrolu` : '',
-        ideaDiagnostics.repeatedTemplateWarning ? 'free ideas opakují šablonu' : '',
-        ideaDiagnostics.repeatedConceptWarning ? 'free ideas opakují stejný koncept' : '',
-        ideaDiagnostics.localExperienceExtractionReady === false ? 'Chybí stránka Možnosti rekreace, která je pro tento lead důležitá.' : '',
-        evidenceDiagnostics.unsupportedClientClaims.length > 0 ? `chybí evidence pro klientské signály: ${evidenceDiagnostics.unsupportedClientClaims.join(', ')}` : '',
-        evidenceDiagnostics.unsupportedSignalClaims.length > 0 ? `chybí evidence pro interní signály: ${evidenceDiagnostics.unsupportedSignalClaims.join(', ')}` : '',
-        !contactQuality.contactReady ? 'kontakt není připravený' : '',
-    ]);
+    const readiness = computeLeadWorkflowReadiness(lead);
 
     return {
-        ...evidenceDiagnostics,
-        clientOutputStatus: notReadyReasons.length > 0 ? 'draft-needs-review' as const : 'ready' as const,
-        notReadyReasons,
+        unsupportedClientClaims: readiness.unsupportedClientClaims,
+        unsupportedSignalClaims: readiness.unsupportedSignalClaims,
+        evidenceClaimReady: readiness.evidenceClaimReady,
+        clientOutputStatus: readiness.clientOutputStatus,
+        notReadyReasons: readiness.notReadyReasons,
     };
 };
 
@@ -728,30 +717,13 @@ const applyClientOutputReadiness = (lead: Lead): Lead => {
         unsupportedSignalClaims,
         evidenceClaimReady,
         clientOutputStatus: notReadyReasons.length > 0 ? 'draft-needs-review' : readiness.clientOutputStatus,
+        guestGuidePreviewStatus: evidenceClaimReady && readiness.clientOutputStatus === 'ready' ? withoutUnsupportedClaims.guestGuidePreviewStatus : withoutUnsupportedClaims.guestGuidePreview ? 'draft-needs-review' : withoutUnsupportedClaims.guestGuidePreviewStatus,
+        status: evidenceClaimReady && readiness.clientOutputStatus === 'ready' ? 'Audit pripraven' : withoutUnsupportedClaims.status === 'Audit pripraven' ? 'Novy' : withoutUnsupportedClaims.status,
         notReadyReasons,
     };
 };
 
-const workflowNextAction = (lead: Lead) => {
-    const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
-    const contactQuality = lead.contactQuality ?? contactQualityForLead(lead);
-    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
-    const isSocialSource = isSocialOwnershipStatus(ownershipStatus);
-
-    if (isSocialSource) return contactQuality.contactReady ? 'ready-to-review' : 'needs-owned-website-or-screenshot-review';
-    if (lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official')) return 'needs-official-website';
-    if (ideaDiagnostics.localExperienceExtractionReady === false) return 'needs-extraction-review';
-    if (lead.evidenceClaimReady === false) return 'needs-evidence-review';
-    if (lead.websiteExtraction && contactQuality.emailSource === 'discovery-fallback') return contactQuality.contactReady ? 'needs-contact-review' : 'needs-extraction-review';
-    if (lead.websiteExtraction && !contactQuality.contactReady) return 'needs-contact-review';
-    if (needsWebsiteAnalysis(lead)) return 'analyze-from-extracted-website';
-    if (!hasCompletedWebsiteExtraction(lead)) return 'extract-website-or-add-evidence';
-    if (!hasLeadQuickWins(lead)) return 'complete-agent-analysis';
-    if (!hasLeadClientOutputs(lead)) return 'generate-client-outputs';
-    if (hasClientCopyIssue(clientOutputValues(lead))) return 'needs-copy-review';
-    if (!ideaDiagnostics.freeIdeasReady || ideaDiagnostics.repeatedConceptWarning) return 'needs-idea-review';
-    return 'ready-to-review';
-};
+const workflowNextAction = (lead: Lead) => computeLeadWorkflowReadiness(lead).nextRecommendedAction;
 
 const fallbackWebsiteQuickWins = (lead: Lead): QuickWin[] => buildSpecificFreeIdeas(lead, []);
 
@@ -2246,7 +2218,8 @@ function App() {
     const createGuestGuidePreviewForDraft = () => {
         const preview = createGuestGuidePreview(draftLead);
         const secondEmail = draftLead.guestGuideSecondEmail || createGuestGuideSecondEmail(draftLead, preview);
-        const needsReview = draftLead.clientOutputStatus === 'draft-needs-review' || draftLead.evidenceClaimReady === false;
+        const previewLead = { ...draftLead, guestGuidePreview: preview, guestGuideSecondEmail: secondEmail };
+        const needsReview = computeLeadWorkflowReadiness(previewLead).guestGuidePreviewReady === false || computeLeadWorkflowReadiness(previewLead).clientOutputStatus === 'draft-needs-review';
 
         persistLead({
             ...draftLead,
@@ -2258,13 +2231,15 @@ function App() {
 
     const prepareGuestGuideSecondEmail = () => {
         const preview = draftLead.guestGuidePreview ?? createGuestGuidePreview(draftLead);
-        const needsReview = draftLead.clientOutputStatus === 'draft-needs-review' || draftLead.evidenceClaimReady === false;
+        const secondEmail = createGuestGuideSecondEmail(draftLead, preview);
+        const previewLead = { ...draftLead, guestGuidePreview: preview, guestGuideSecondEmail: secondEmail };
+        const needsReview = computeLeadWorkflowReadiness(previewLead).guestGuidePreviewReady === false || computeLeadWorkflowReadiness(previewLead).clientOutputStatus === 'draft-needs-review';
 
         persistLead({
             ...draftLead,
             guestGuidePreviewStatus: needsReview ? 'draft-needs-review' : draftLead.guestGuidePreviewStatus === 'not-created' ? 'created' : draftLead.guestGuidePreviewStatus,
             guestGuidePreview: preview,
-            guestGuideSecondEmail: createGuestGuideSecondEmail(draftLead, preview),
+            guestGuideSecondEmail: secondEmail,
         });
     };
 
@@ -3244,8 +3219,8 @@ interface LeadEditorProps {
 function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onCreateGuestGuidePreview, onDeleteLead, onExportGuestGuideConfig, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onPrepareGuestGuideSecondEmail, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
     const showWebsiteAnalysisPanel = needsWebsiteAnalysis(draftLead);
     const latestAnalysisDiagnostic = draftLead.latestAnalysisDiagnostic as { userMessage?: string; fallbackReason?: string; analyzeProvider?: string; debugId?: string; model?: string | null } | undefined;
-    const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputValues(draftLead));
-    const hasCopyWarning = hasLeadClientOutputs(draftLead) && !clientDiagnostics.clientTextReady;
+    const workflowReadiness = computeLeadWorkflowReadiness(draftLead);
+    const hasCopyWarning = hasLeadClientOutputs(draftLead) && !workflowReadiness.rawClientTextReady;
     const agentBadges = [
         draftLead.opportunityType ? `Opportunity: ${draftLead.opportunityType}` : '',
         draftLead.fitVerdict ? `Fit: ${draftLead.fitVerdict}` : '',
@@ -3260,8 +3235,8 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
     const ownershipStatus = draftLead.websiteExtraction?.websiteOwnershipStatus ?? draftLead.websiteOwnershipStatus;
     const socialSource = isSocialOwnershipStatus(ownershipStatus);
     const showOfficialWebsiteGate = Boolean(draftLead.websiteExtraction && ownershipStatus && ownershipStatus !== 'official');
-    const nextAction = workflowNextAction(draftLead);
-    const clientOutputNeedsReview = draftLead.clientOutputStatus === 'draft-needs-review' || ['needs-idea-review', 'needs-evidence-review', 'needs-contact-review'].includes(nextAction);
+    const nextAction = workflowReadiness.nextRecommendedAction;
+    const clientOutputNeedsReview = workflowReadiness.clientOutputStatus === 'draft-needs-review' || ['needs-idea-review', 'needs-evidence-review', 'needs-contact-review'].includes(nextAction);
     const directoryCandidates = draftLead.websiteExtraction?.directoryExtractedCandidates ?? draftLead.directoryExtractedCandidates ?? [];
     const firstDirectoryCandidate = directoryCandidates[0];
     const officialCandidateUrl = draftLead.websiteExtraction?.officialWebsiteCandidateUrl ?? draftLead.officialWebsiteCandidateUrl ?? firstDirectoryCandidate?.websiteUrl ?? '';
@@ -3413,9 +3388,9 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
 
                 {clientOutputNeedsReview ? (
                     <div className="scope-note warning-note client-output-review-note">
-                        <strong>Výstup zatím není připravený k odeslání.</strong>
-                        {(draftLead.notReadyReasons?.length ? draftLead.notReadyReasons : ['Výstup čeká na kontrolu evidence nebo konkrétnosti nápadů.']).map((reason) => <span key={reason}>{reason}</span>)}
-                        {draftLead.unsupportedClientClaims?.length ? <span>Nepodložené klientské claimy: {draftLead.unsupportedClientClaims.join(', ')}</span> : null}
+                        <strong>{workflowReadiness.unsupportedClientClaims.length > 0 ? 'Výstup zatím není připravený. Obsahuje tvrzení bez evidence.' : 'Výstup zatím není připravený k odeslání.'}</strong>
+                        {(workflowReadiness.notReadyReasons.length ? workflowReadiness.notReadyReasons : ['Výstup čeká na kontrolu evidence nebo konkrétnosti nápadů.']).map((reason) => <span key={reason}>{reason}</span>)}
+                        {workflowReadiness.unsupportedClientClaims.length ? <span>Nepodložené klientské claimy: {workflowReadiness.unsupportedClientClaims.join(', ')}</span> : null}
                     </div>
                 ) : null}
 

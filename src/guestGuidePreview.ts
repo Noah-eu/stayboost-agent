@@ -51,7 +51,7 @@ const contactItems = (lead: Lead, extraction?: WebsiteExtractionResult) => uniqu
     ...(extraction?.contact.phones ?? []).map((phone) => `Telefon z veřejného webu: ${phone}`),
     lead.email ? `CRM e-mail: ${lead.email}` : '',
     extraction?.contact.contactPageUrl ? `Kontaktní stránka: ${extraction.contact.contactPageUrl}` : '',
-    'Doplnit, kdy má host použít recepci / e-mail / telefon před příjezdem.',
+    extraction?.receptionHours ? 'Doplnit, kdy má host použít recepci / e-mail / telefon před příjezdem.' : 'Doplnit, kdy má host použít e-mail nebo telefon před příjezdem.',
 ]);
 
 const hasAny = (text: string, needles: string[]) => needles.some((needle) => text.includes(needle));
@@ -99,7 +99,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const sources = evidenceSourceList(lead, extraction);
     const isSocialProfile = ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(extraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? '') || lead.leadPlaybook === 'social-profile-web-presence';
     const isMultiPropertyArrival = lead.leadPlaybook === 'multi-property-arrival-clarity' || hasAny(text, ['vila krumlov']) && hasAny(text, ['pension galko', 'galko siroka', 'galko široká']);
-    const hasParking = hasAny(text, ['parkoviste', 'parkovani', 'parking', 'nabijeci stanice', 'charging station', 'ev']);
+    const hasParking = (extraction?.parkingSignals.length ?? 0) > 0 || Boolean(extraction?.parkingReservationRequired || extraction?.parkingPaid || extraction?.parkingLimited);
     const hasRestaurant = hasAny(text, ['restaurace', 'restaurant', 'terasa', 'bar', 'grill']);
     const hasWellness = hasAny(text, ['wellness', 'relax', 'sauna', 'spa']);
     const hasEvents = hasAny(text, ['svatba', 'svatebni', 'altan', 'konference', 'firemni', 'event']);
@@ -110,8 +110,10 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const hasWifi = hasAny(text, ['wi-fi', 'wifi', 'internet']);
     const hasRules = hasAny(text, ['pravidla', 'domovni rad', 'pobyt', 'no smoking', 'zakaz koureni']);
     const hasFaq = hasAny(text, ['faq', 'casto kladene', 'nejcastejsi otazky']) || (extraction?.faqSignals.length ?? 0) > 0;
-    const hasCheckInTime = hasAny(text, ['check-in ', 'check in ', 'prijezd od', 'arrival from']);
+    const hasCheckInTime = (extraction?.arrivalSignals.length ?? 0) > 0 || Boolean(extraction?.checkInWindowStart || extraction?.checkInWindowEnd);
     const hasCheckoutTime = hasAny(text, ['check-out', 'check out', 'odjezd do', 'departure until']);
+    const hasReception = Boolean(extraction?.receptionHours);
+    const hasLateArrival = Boolean(extraction?.lateArrivalCondition);
     const contacts = contactItems(lead, extraction);
     const sourceEvidence = sources.length ? sources : ['Draft vychází z aktuálně uložené veřejné evidence u leadu.'];
     const commonEvidence = sourceEvidence.slice(0, 6);
@@ -200,8 +202,8 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
             section({
                 id: 'website-preview',
                 title: 'Website Preview / Landing Page Preview',
-                headline: 'Jednoduchý web i průvodce pro hosty',
-                overview: 'Z veřejného profilu může vzniknout jednoduchý web pro hosty i základ budoucího guest guide.',
+                headline: 'Jednoduchý web a předpříjezdový přehled',
+                overview: 'Z veřejného profilu může vzniknout jednoduchý web pro hosty i základ budoucího předpříjezdového přehledu.',
                 groups: [{ title: 'Co ukázat hned nahoře', items: ['Název ubytování', 'Fotky ubytování', 'Adresa Pod Kamenem 170', 'Telefon a e-mail', 'Tlačítko zavolat / napsat'] }],
                 sourceEvidence: commonEvidence,
             }),
@@ -278,7 +280,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
                     title: 'Před příjezdem doplnit',
                     items: [
                         hasCheckInTime ? 'Veřejný web zmiňuje check-in / příjezd; ověřit přesný čas a formulaci.' : placeholderCheckIn,
-                        placeholderEntry,
+                        hasCheckInTime ? placeholderEntry : '[DOPLNIT: čas a postup příjezdu]',
                         'Doplnit, kdy host dostane finální instrukce k příjezdu.',
                     ],
                 },
@@ -295,22 +297,22 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
                 {
                     title: 'Veřejně zmíněné informace',
                     items: [
-                        hasParking ? 'Web zmiňuje parkování / parkoviště.' : '[DOPLNIT: příjezd a orientační bod ke vstupu]',
+                        hasParking ? 'Web zmiňuje parkování / parkoviště.' : '[DOPLNIT: parkování, pokud ho chcete hostům popsat]',
                         hasAny(text, ['nabijeci stanice', 'charging station', 'elektromobil']) ? 'Web zmiňuje nabíjecí stanici pro elektromobily.' : '',
                     ],
                 },
-                { title: 'Doplnit do hotového průvodce', items: hasParking ? ['[DOPLNIT: přesná adresa parkování / navigační bod]', '[DOPLNIT: instrukce pro příjezd]'] : ['[DOPLNIT: přesný postup příjezdu]', '[DOPLNIT: kdy host volá nebo píše v den příjezdu]'] },
+                { title: 'Doplnit do hotového průvodce', items: hasParking ? ['[DOPLNIT: přesná adresa parkování / navigační bod]', '[DOPLNIT: instrukce pro příjezd]'] : ['[DOPLNIT: parkování, pokud ho chcete hostům popsat]', '[DOPLNIT: kdy host volá nebo píše v den příjezdu]'] },
             ],
             sourceEvidence: unique([...(extraction?.parkingSignals ?? []), ...commonEvidence]),
         }),
         section({
             id: 'contacts',
             title: 'Kontakty',
-            headline: 'Koho kontaktovat před příjezdem nebo během pobytu',
+            headline: hasReception ? 'Koho kontaktovat před příjezdem nebo během pobytu' : 'Jaký kontakt použít před příjezdem nebo během pobytu',
             overview: 'Kontaktní sekce má hostovi říct nejen kontakt, ale také kdy ho použít.',
             groups: [
                 { title: 'Dostupné veřejné kontakty', items: contacts },
-                { title: 'Doplnit interně', items: ['[DOPLNIT: kontakt pro urgentní situace]', '[DOPLNIT: jazyk / časy dostupnosti recepce]'] },
+                { title: 'Doplnit interně', items: ['[DOPLNIT: kontakt pro urgentní situace]', hasReception ? '[DOPLNIT: jazyk / časy dostupnosti recepce]' : '[DOPLNIT: jazyk / časy dostupnosti kontaktu]'] },
             ],
             sourceEvidence: unique([...(extraction?.contact.emails ?? []), ...(extraction?.contact.phones ?? []), extraction?.contact.contactPageUrl ?? '', ...commonEvidence]),
         }),
@@ -324,7 +326,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
             overview: 'Návrh sekce pro hosty, kteří chtějí předem vědět, jak funguje restaurace a terasa.',
             groups: [
                 { title: 'Signály z webu', items: ['Web zmiňuje restauraci / restaurant.', hasAny(text, ['terasa']) ? 'Web zmiňuje terasu.' : '', hasAny(text, ['bar']) ? 'Web zmiňuje bar.' : ''] },
-                { title: 'Doplnit do průvodce', items: ['[DOPLNIT: otevírací doba restaurace]', '[DOPLNIT: rezervace stolu / snídaně / večeře]'] },
+                { title: 'Doplnit do průvodce', items: ['[DOPLNIT: otevírací doba restaurace]', '[DOPLNIT: rezervace stolu / večeře]'] },
             ],
             sourceEvidence: commonEvidence,
         }));
@@ -378,7 +380,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
         headline: 'Nejčastější otázky před příjezdem',
         overview: 'Draft FAQ, které má navázat na 3 nápady zdarma a soustředit praktické odpovědi pro hosty.',
         groups: [
-            { title: hasFaq ? 'Veřejně strukturované / k ověření' : 'Doplnit před zveřejněním', items: [placeholderCheckIn, placeholderEntry, placeholderWifi, '[DOPLNIT: pozdní příjezd]', '[DOPLNIT: platba / kauce / storno podle vašeho procesu]'] },
+            { title: hasFaq ? 'Veřejně strukturované / k ověření' : 'Doplnit před zveřejněním', items: [hasCheckInTime ? placeholderCheckIn : '[DOPLNIT: čas a postup příjezdu]', placeholderEntry, placeholderWifi, hasLateArrival ? '[DOPLNIT: pozdní příjezd]' : '[DOPLNIT: postup při příjezdu mimo běžný čas]', '[DOPLNIT: platba / kauce / storno podle vašeho procesu]'] },
         ],
         sourceEvidence: unique([...(extraction?.faqSignals ?? []), ...commonEvidence]),
     }));

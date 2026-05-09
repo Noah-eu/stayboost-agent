@@ -37,6 +37,7 @@ const previewText = (preview?: GuestGuidePreview) => preview ? [
     preview.propertyName,
     preview.city,
     preview.address,
+    JSON.stringify(preview.configExport ?? {}),
     preview.sourceEvidence.join('\n'),
     preview.limitations.join('\n'),
     preview.sections.map((section) => [
@@ -87,8 +88,8 @@ const unsupportedClaimsInText = (text: string, evidenceText: string) => {
     const normalizedText = normalize(text);
     const normalizedEvidence = normalize(evidenceText);
     const sentences = normalizedText.split(/(?<=[.!?])\s+|\n+/g).filter(Boolean);
-    const proposalPattern = /\b(udelat|vytvorit|pripravit|mit|navrh|navazujici|placeny\s+krok|sel\s+udelat|slo\s+udelat|mohl\s+byt|muze\s+byt|dokazu\s+pripravit|ukazka|draft|preview|dostane\s+odkaz|predprijezdova\s+zprava)\b/i;
-    const proposalAllowedLabels = ['guest guide', 'QR guide'];
+    const proposalPattern = /\b(doplnit|udelat|vytvorit|pripravit|mit|navrh|budouci|budouciho|navazujici|placeny\s+krok|sel\s+udelat|slo\s+udelat|mohl\s+byt|muze\s+byt|dokazu\s+pripravit|ukazka|draft|preview|dostane\s+odkaz|predprijezdova\s+zprava)\b|\[doplnit:/i;
+    const proposalAllowedLabels = ['parkoviště', 'recepce', 'pozdní příjezd', 'guest guide', 'QR guide'];
 
     return claimGroups
         .filter((group) => {
