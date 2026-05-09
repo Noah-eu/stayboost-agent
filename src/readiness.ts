@@ -94,8 +94,8 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
         && hasQuickWins
         && unsupportedFreeIdeaClaims.length === 0
         && ideaSetForLead(lead).every((idea) => completeIdea(idea) && idea.candidateSpecificity !== 'generic');
-    const unsupportedClientClaims = uniqueStrings([...(lead.unsupportedClientClaims ?? []), ...evidenceDiagnostics.unsupportedClientClaims]);
-    const unsupportedSignalClaims = uniqueStrings([...(lead.unsupportedSignalClaims ?? []), ...evidenceDiagnostics.unsupportedSignalClaims]);
+    const unsupportedClientClaims = uniqueStrings(evidenceDiagnostics.unsupportedClientClaims);
+    const unsupportedSignalClaims = uniqueStrings(evidenceDiagnostics.unsupportedSignalClaims);
     const evidenceClaimReady = evidenceDiagnostics.evidenceClaimReady && unsupportedClientClaims.length === 0 && unsupportedSignalClaims.length === 0;
     const guestGuidePreviewDiagnostics = lead.guestGuidePreview || lead.guestGuideSecondEmail
         ? validateEvidenceClaims({

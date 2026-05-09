@@ -14,14 +14,14 @@ const normalize = (value = '') => value
 const unique = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 
 const claimGroups = [
-    { label: 'tramvaj / městská doprava', claim: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i, evidence: /\b(tramvaj|tram|metro|mhd|městsk[aá]\s+doprava|mestska\s+doprava|public\s+transport)\b/i },
+    { label: 'tramvaj / městská doprava', claim: /\b(tramvaj\w*|metro|mhd|mestska\s+doprava|zastav\w*\s+tramvaj\w*|tramvaj\w*\s+zastav\w*)\b/i, evidence: /\b(tramvaj\w*|metro|mhd|mestska\s+doprava|zastav\w*\s+tramvaj\w*|tramvaj\w*\s+zastav\w*)\b/i },
     { label: 'zahrada', claim: /\b(zahrad[ayěuou]|zahr[aá]dk[ayěuou]|venkovn[ií]\s+z[aá]zem[ií]|garden)\b/i, evidence: /\b(zahrad[ayěuou]|zahr[aá]dk[ayěuou]|garden)\b/i },
     { label: 'gril', claim: /\b(gril(?:u|em|ovat|ov[aá]n[ií])?|grill|barbecue|bbq)\b/i, evidence: /\b(gril(?:u|em|ovat|ov[aá]n[ií])?|grill|barbecue|bbq)\b/i },
     { label: 'restaurace', claim: /\b(restaurace|restaurant|bar|menu)\b/i, evidence: /\b(restaurace|restaurant|bar|menu)\b/i },
     { label: 'bistro', claim: /\b(bistro)\b/i, evidence: /\b(bistro)\b/i },
     { label: 'wellness / relax', claim: /\b(wellness|relax|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|relax\s+centrum|relaxačn[ií]\s+centrum|relaxacni\s+centrum|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i, evidence: /\b(wellness|spa|sauna|v[ií]řivka|virivka|mas[aá]ž|masaz|baz[eé]n|bazen|relax\s+centrum|relaxačn[ií]\s+centrum|relaxacni\s+centrum|l[aá]zeňsk[yý]|lazensky|koupelov[yý])\b/i },
     { label: 'romantický pobyt', claim: /\b(romantick[yý]\s+pobyt|romantick[yý]\s+sc[eé]n[aá][řr]|romantick[yý]\s+v[ií]kend)\b/i, evidence: /\b(romantick[yý]\s+pobyt|romantick[yý]\s+v[ií]kend)\b/i },
-    { label: 'rodinný pobyt / děti', claim: /\b(rodinn[yý]\s+pobyt|rodiny\s+s\s+d[eě]tmi|rodina\s+s\s+d[eě]tmi|s\s+d[eě]tmi|d[eě]ti|children|family\s+stay)\b/i, evidence: /\b(rodinn[yý]\s+pobyt|rodiny\s+s\s+d[eě]tmi|rodina\s+s\s+d[eě]tmi|s\s+d[eě]tmi|d[eě]ti|children|family\s+stay)\b/i },
+    { label: 'rodinný pobyt / děti', claim: /\b(rodinny\s+pobyt|pro\s+rodiny|rodiny\s+s\s+detmi|rodina\s+s\s+detmi|detsky\s+koutek|vybaveni\s+pro\s+deti|aktivity\s+pro\s+deti|detska\s+postylka|detske\s+postylky|pristylka|pristylky|children\s+activities|family\s+stay|baby\s+cot)\b/i, evidence: /\b(rodinny\s+pobyt|pro\s+rodiny|rodiny\s+s\s+detmi|rodina\s+s\s+detmi|detsky\s+koutek|vybaveni\s+pro\s+deti|aktivity\s+pro\s+deti|detska\s+postylka|detske\s+postylky|pristylka|pristylky|children\s+activities|family\s+stay|baby\s+cot)\b/i },
     { label: 'parkoviště', claim: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i, evidence: /\b(parkoviště|parkoviste|parkov[aá]n[ií]|parking|gar[aá]ž|garaz)\b/i },
     { label: 'recepce', claim: /\b(recepce|reception)\b/i, evidence: /\b(recepce|reception)\b/i },
     { label: 'pozdní příjezd', claim: /\b(pozdn[ií]\s+p[řr][ií]jezd|pozd[eě]j[šs][ií]\s+n[aá]stup|late\s+arrival)\b/i, evidence: /\b(pozdn[ií]\s+p[řr][ií]jezd|pozd[eě]j[šs][ií]\s+n[aá]stup|late\s+arrival)\b/i },
@@ -80,9 +80,20 @@ export const clientClaimTextForLead = (lead: Partial<Lead>) => [
 const signalClaimTextForLead = (lead: Partial<Lead>) => [
     ...(lead.playbookSignals ?? []),
     ...(lead.productRecommendationSignals ?? []),
-    ...(lead.publicSignals ?? []),
     quickWinText(lead.freeIdeas),
 ].filter(Boolean).join('\n');
+
+const babyCotClaimPattern = /\b(detska\s+postylka|detske\s+postylky|pristylka|pristylky|baby\s+cot)\b/i;
+const broadFamilyClaimPattern = /\b(rodinny\s+pobyt|pro\s+rodiny|rodiny\s+s\s+detmi|rodina\s+s\s+detmi|detsky\s+koutek|vybaveni\s+pro\s+deti|aktivity\s+pro\s+deti|children\s+activities|family\s+stay)\b/i;
+
+const familyClaimSupported = (claimSentences: string[], normalizedEvidence: string) => claimSentences.every((sentence) => {
+    const hasBabyCotClaim = babyCotClaimPattern.test(sentence);
+    const hasBroadFamilyClaim = broadFamilyClaimPattern.test(sentence);
+
+    if (hasBroadFamilyClaim) return broadFamilyClaimPattern.test(normalizedEvidence);
+    if (hasBabyCotClaim) return babyCotClaimPattern.test(normalizedEvidence);
+    return true;
+});
 
 const unsupportedClaimsInText = (text: string, evidenceText: string) => {
     const normalizedText = normalize(text);
@@ -93,8 +104,10 @@ const unsupportedClaimsInText = (text: string, evidenceText: string) => {
 
     return claimGroups
         .filter((group) => {
-            if (!group.claim.test(normalizedText) || group.evidence.test(normalizedEvidence)) return false;
             const claimSentences = sentences.filter((sentence) => group.claim.test(sentence));
+            if (claimSentences.length === 0) return false;
+            if (group.label === 'rodinný pobyt / děti') return !familyClaimSupported(claimSentences, normalizedEvidence);
+            if (group.evidence.test(normalizedEvidence)) return false;
             return !(proposalAllowedLabels.includes(group.label) && claimSentences.length > 0 && claimSentences.every((sentence) => proposalPattern.test(sentence)));
         })
         .map((group) => group.label);

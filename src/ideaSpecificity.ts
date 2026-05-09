@@ -377,7 +377,7 @@ const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, sign
         'Připravit krátký přehled pro hosty: adresa Dlouhá 92, jak se dostat ke vstupu, kdy volat, co čekat po příjezdu a co je potřeba vědět u apartmánů v centru Krumlova.',
         'Dlouhá 92, historické centrum Českého Krumlova, vlastní vchod, veřejný kontakt.',
         'příjezd do historického centra s vlastním vstupem',
-        firstSignals(signals, ['dlouhaAddress', 'historicCentre', 'privateEntry', 'contact'], 5),
+        ['Dlouhá 92', 'historické centrum Českého Krumlova', 'vlastní vchod', 'veřejný kontakt'],
     ),
     makeWin(
         'Využít příběh výhledu, zahrádky a historického domu',
@@ -385,7 +385,7 @@ const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, sign
         'Po rezervaci poslat hostům krátké „co si u nás nenechat ujít“: výhled na hrad a zámek, zahrádka u kanálu od Krumlovského mlýna, historické prvky domu, klidné prostředí.',
         evidenceFor(signals, ['castleView', 'canalGarden', 'historicElements', 'quietPrivacy'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
         'historický dům a konkrétní atmosféra pobytu',
-        firstSignals(signals, ['castleView', 'canalGarden', 'historicElements', 'quietPrivacy'], 5),
+        ['výhled na hrad a zámek', 'zahrádka u kanálu', 'historické prvky domu', 'klid a soukromí'],
     ),
     makeWin(
         'Mini průvodce Krumlovem a okolím',
@@ -393,7 +393,7 @@ const historicLocalExperienceWins = (lead: Pick<Lead, 'websiteExtraction'>, sign
         'Převést tipy z Možností rekreace do krátkého hostovského průvodce: co pěšky v Krumlově, co za kulturou a kam na výlet v okolí.',
         'Zámek Český Krumlov, Fotoateliér Seidl, otáčivé divadlo, plavba vorů po Vltavě, Lipno, Kleť.',
         'lokální průvodce z existující stránky Možnosti rekreace',
-        firstSignals(signals, ['krumlovRecreation', 'krumlovCastle', 'seidlAtelier', 'museums', 'revolvingTheatre', 'vltavaRafting', 'lipno', 'klet', 'rozmberk', 'hluboka', 'holasovice'], 8),
+        ['Možnosti rekreace', 'Zámek Český Krumlov', 'Fotoateliér Seidl', 'otáčivé divadlo', 'plavba vorů po Vltavě', 'Lipno', 'Kleť'],
     ),
 ];
 
@@ -527,7 +527,7 @@ export const annotateQuickWinSpecificity = (quickWin: QuickWin, lead: Pick<Lead,
         || genericTextPattern.test(combinedIdea) && matchedSignals.length < 2
         || matchedSignals.length === 0
         || missingOnlyPattern.test(combinedIdea) && matchedSignals.length === 0;
-    const usedSignals = uniqueStrings([...(quickWin.usedSignals ?? []), ...matchedSignals.map((signal) => signal.label)]);
+    const usedSignals = quickWin.usedSignals?.length ? uniqueStrings(quickWin.usedSignals) : uniqueStrings(matchedSignals.map((signal) => signal.label));
 
     return {
         ...quickWin,

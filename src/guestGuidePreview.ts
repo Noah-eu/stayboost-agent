@@ -11,6 +11,29 @@ const normalize = (value = '') => value.normalize('NFD').replace(/[\u0300-\u036f
 const clean = (value = '') => sanitizeClientText(value).replace(/\s+/g, ' ').trim();
 const unique = (values: string[]) => [...new Set(values.map(clean).filter(Boolean))];
 
+const knownAddressForText = (value = '') => {
+    const normalized = normalize(value);
+
+    if (/dlouha\s+92(?:\s+381\s*01)?(?:\s+cesky\s+krumlov)?/.test(normalized)) return 'Dlouhá 92, 381 01 Český Krumlov';
+    return '';
+};
+
+const resolvePreviewAddress = (lead: Lead, extraction?: WebsiteExtractionResult) => {
+    const explicitAddressCandidates = unique([
+        lead.contactQuality?.address ?? '',
+        ...(extraction?.directoryExtractedCandidates ?? []).map((candidate) => candidate.address ?? ''),
+        ...(lead.directoryExtractedCandidates ?? []).map((candidate) => candidate.address ?? ''),
+    ]);
+    const addressCandidates = unique([
+        ...explicitAddressCandidates,
+        ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content]),
+        extraction?.summary ?? '',
+        ...(extraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview]),
+    ]);
+
+    return addressCandidates.map(knownAddressForText).find(Boolean) || clean(explicitAddressCandidates.find(Boolean) ?? '');
+};
+
 const slugify = (value = 'guest-guide') => normalize(value)
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
@@ -25,7 +48,6 @@ const extractionEvidenceText = (lead: Lead) => [
     lead.guestFrictionSignals,
     lead.businessOpportunity,
     lead.websiteExtraction?.summary,
-    ...(lead.publicSignals ?? []),
     ...(lead.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview, page.url]),
     ...(lead.websiteExtraction?.websiteSignals ?? []),
     ...(lead.websiteExtraction?.arrivalSignals ?? []),
@@ -43,7 +65,6 @@ const evidenceSourceList = (lead: Lead, extraction?: WebsiteExtractionResult) =>
     ...(extraction?.parkingSignals ?? []),
     ...(extraction?.arrivalSignals ?? []),
     ...(extraction?.faqSignals ?? []),
-    ...(lead.publicSignals ?? []),
 ]).slice(0, 18);
 
 const contactItems = (lead: Lead, extraction?: WebsiteExtractionResult) => unique([
@@ -115,6 +136,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const hasReception = Boolean(extraction?.receptionHours);
     const hasLateArrival = Boolean(extraction?.lateArrivalCondition);
     const contacts = contactItems(lead, extraction);
+    const resolvedAddress = resolvePreviewAddress(lead, extraction);
     const sourceEvidence = sources.length ? sources : ['Draft vychází z aktuálně uložené veřejné evidence u leadu.'];
     const commonEvidence = sourceEvidence.slice(0, 6);
     if (isMultiPropertyArrival) {
@@ -280,6 +302,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
                     title: 'Před příjezdem doplnit',
                     items: [
                         hasCheckInTime ? 'Veřejný web zmiňuje check-in / příjezd; ověřit přesný čas a formulaci.' : placeholderCheckIn,
+                        resolvedAddress ? `Adresa: ${resolvedAddress}` : '',
                         hasCheckInTime ? placeholderEntry : '[DOPLNIT: čas a postup příjezdu]',
                         'Doplnit, kdy host dostane finální instrukce k příjezdu.',
                     ],
@@ -434,7 +457,7 @@ export function createGuestGuidePreview(lead: Lead): GuestGuidePreview {
     const previewBase: Omit<GuestGuidePreview, 'configExport'> = {
         propertyName: clean(lead.name) || 'Název ubytování',
         city: clean(lead.city) || '[DOPLNIT: město]',
-        address: '[DOPLNIT: adresa]',
+        address: resolvedAddress || '[DOPLNIT: adresa]',
         suggestedSlug: slugify(`${lead.name}-${lead.city}`),
         language: 'cs',
         sections,
