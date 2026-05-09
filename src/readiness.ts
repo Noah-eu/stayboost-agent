@@ -1,6 +1,7 @@
 import { clientTextSanitizerDiagnostics } from './clientCopy';
 import { validateEvidenceClaims } from './evidenceClaimValidator';
 import { freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
+import { resolveOfficialWebsite } from './officialWebsiteResolver';
 import type { ClientOutputStatus, GuestGuidePreviewStatus, Lead, LeadStatus, QuickWin } from './types';
 
 export type LeadNextRecommendedAction =
@@ -8,6 +9,7 @@ export type LeadNextRecommendedAction =
     | 'needs-idea-review'
     | 'needs-extraction-review'
     | 'needs-official-website'
+    | 'needs-official-website-extraction'
     | 'needs-owned-website-or-screenshot-review'
     | 'needs-contact-review'
     | 'analyze-from-extracted-website'
@@ -82,15 +84,23 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
     const clientDiagnostics = clientTextSanitizerDiagnostics(clientOutputs);
     const ideaDiagnostics = freeIdeaSpecificityDiagnostics(lead);
     const evidenceDiagnostics = validateEvidenceClaims(lead);
+    const officialResolution = resolveOfficialWebsite(lead);
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus;
     const isSocialSource = isSocialOwnershipStatus(ownershipStatus);
-    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status));
+    const hasExtractedOfficialCandidate = Boolean(lead.websiteExtraction
+        && lead.websiteExtraction.websiteOwnershipStatus === 'official'
+        && ['completed', 'partial'].includes(lead.websiteExtraction.status)
+        && lead.websiteExtraction.validPagesCount > 0
+        && (!officialResolution.officialWebsiteCandidateUrl || lead.websiteExtraction.websiteUrl === officialResolution.officialWebsiteCandidateUrl));
+    const officialWebsiteExtractionPending = (lead.shouldReextractOfficialWebsite ?? officialResolution.shouldReextractOfficialWebsite) && !hasExtractedOfficialCandidate;
+    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status) && !officialWebsiteExtractionPending);
     const hasAgentAnalysis = Boolean(lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
     const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
     const freeIdeaStructuralIssues = freeIdeaStructuralIssuesForLead(lead);
     const unsupportedFreeIdeaClaims = uniqueStrings(freeIdeaUnsupportedClaims(lead));
     const hasQuickWins = ideaSetForLead(lead).length === 3 && freeIdeaStructuralIssues.length === 0;
-    const freeIdeasReady = ideaDiagnostics.freeIdeasReady
+    const freeIdeasReady = !officialWebsiteExtractionPending
+        && ideaDiagnostics.freeIdeasReady
         && hasQuickWins
         && unsupportedFreeIdeaClaims.length === 0
         && ideaSetForLead(lead).every((idea) => completeIdea(idea) && idea.candidateSpecificity !== 'generic');
@@ -110,12 +120,13 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
             structuredQuickWins: [],
         })
         : { evidenceClaimReady: true, unsupportedClientClaims: [], unsupportedSignalClaims: [] };
-    const guestGuidePreviewReady = guestGuidePreviewDiagnostics.evidenceClaimReady;
+    const guestGuidePreviewReady = !officialWebsiteExtractionPending && guestGuidePreviewDiagnostics.evidenceClaimReady;
     const contactReady = lead.contactQuality?.contactReady ?? Boolean((lead.websiteExtraction?.contact.emails.length ?? 0) + (lead.websiteExtraction?.contact.phones.length ?? 0));
     const needsOfficialWebsite = Boolean(lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official'));
     const rawClientTextReady = clientDiagnostics.clientTextReady;
-    const clientTextReady = rawClientTextReady && evidenceClaimReady && freeIdeasReady && guestGuidePreviewReady;
+    const clientTextReady = !officialWebsiteExtractionPending && rawClientTextReady && evidenceClaimReady && freeIdeasReady && guestGuidePreviewReady;
     const notReadyReasons = uniqueStrings([
+        officialWebsiteExtractionPending ? 'Zdroj je katalog/agregátor; před výstupem je potřeba extrahovat nalezený oficiální web.' : '',
         !evidenceClaimReady ? 'Výstup obsahuje tvrzení bez evidence.' : '',
         unsupportedClientClaims.length > 0 ? `chybí evidence pro klientské signály: ${unsupportedClientClaims.join(', ')}` : '',
         unsupportedSignalClaims.length > 0 ? `chybí evidence pro interní signály: ${unsupportedSignalClaims.join(', ')}` : '',
@@ -131,10 +142,11 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
     ]);
 
     let nextRecommendedAction: LeadNextRecommendedAction = 'ready-to-review';
-    if (!evidenceClaimReady || !guestGuidePreviewReady) nextRecommendedAction = 'needs-evidence-review';
+    if (officialWebsiteExtractionPending) nextRecommendedAction = 'needs-official-website-extraction';
+    else if (!evidenceClaimReady || !guestGuidePreviewReady) nextRecommendedAction = 'needs-evidence-review';
     else if (!freeIdeasReady || ideaDiagnostics.repeatedConceptWarning) nextRecommendedAction = 'needs-idea-review';
     else if (isSocialSource && !contactReady) nextRecommendedAction = 'needs-owned-website-or-screenshot-review';
-    else if (needsOfficialWebsite) nextRecommendedAction = 'needs-official-website';
+    else if (needsOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') nextRecommendedAction = 'needs-official-website';
     else if (ideaDiagnostics.localExperienceExtractionReady === false) nextRecommendedAction = 'needs-extraction-review';
     else if (hasWebsiteExtraction && lead.contactQuality?.emailSource === 'discovery-fallback') nextRecommendedAction = contactReady ? 'needs-contact-review' : 'needs-extraction-review';
     else if (hasWebsiteExtraction && !contactReady) nextRecommendedAction = 'needs-contact-review';

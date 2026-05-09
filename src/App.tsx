@@ -9,6 +9,7 @@ import { generateFirstOutreach, generateFollowUp, generateFreeIdeaTeaser, genera
 import { createGuestGuidePreview, createGuestGuideSecondEmail } from './guestGuidePreview';
 import { annotateQuickWinSpecificity, buildSpecificFreeIdeas, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
 import { mockLeads } from './mockData';
+import { classifyPublicLinkLabel, isDiscoverySourceClassification, resolveOfficialWebsite } from './officialWebsiteResolver';
 import { extractRejectedPhones, extractValidPhones, isLikelyPhoneNumber, mergePhones } from './phoneValidation';
 import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
 import { computeLeadWorkflowReadiness } from './readiness';
@@ -45,6 +46,7 @@ import {
     sourceMaterialTypeLabels,
     SourceMaterial,
     SourceMaterialType,
+    WebsiteExtractionContact,
     WebsiteExtractionResult,
 } from './types';
 
@@ -157,6 +159,13 @@ const emptyLead = (): Lead => ({
     websiteOwnershipStatus: 'unknown',
     websiteOwnershipReason: '',
     officialWebsiteCandidateUrl: '',
+    selectedExtractionUrl: '',
+    selectedExtractionReason: '',
+    selectedExtractionSource: 'none',
+    originalUrlClassification: undefined,
+    directoryUrl: '',
+    shouldReextractOfficialWebsite: false,
+    extractionBlockedReason: '',
     directoryExtractedCandidates: [],
     extractionAllowed: true,
     skippedAssetUrls: [],
@@ -284,6 +293,15 @@ const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction' | 
         phoneSource: validWebsitePhones.length > 0 && discoveryPhones.length > 0 ? 'website-and-discovery' : validWebsitePhones.length > 0 ? 'website' : discoveryPhones.length > 0 ? 'discovery-fallback' : 'missing',
         addressSource: address ? 'search-or-social-profile' : 'missing',
         contactReady: validEmails.length > 0 || validPhones.length > 0,
+    };
+};
+
+const discoveryContactForLead = (lead: Pick<Lead, 'websiteExtraction' | 'sourceMaterials' | 'notes'> & Partial<Pick<Lead, 'email'>>): WebsiteExtractionContact => {
+    const evidenceText = discoveryPhoneText(lead);
+    return {
+        emails: uniqueStrings([...(evidenceText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []).map(normalizeEmail), ...(lead.websiteExtraction?.directoryContact?.emails ?? []), ...(lead.websiteExtraction?.contact.emails ?? [])].filter(validEmail)),
+        phones: mergePhones(extractValidPhones(evidenceText), [...(lead.websiteExtraction?.directoryContact?.phones ?? []), ...(lead.websiteExtraction?.contact.phones ?? [])].filter((phone) => isLikelyPhoneNumber(phone))),
+        contactPageUrl: lead.websiteExtraction?.directoryContact?.contactPageUrl ?? lead.websiteExtraction?.contact.contactPageUrl ?? null,
     };
 };
 const decimalCoordinatePattern = /\b\d{1,3}\.\d{5,}\b/g;
@@ -448,6 +466,21 @@ const softenQuickWinWhy = (quickWin: QuickWin): QuickWin => {
 const prepareFreeIdeas = (lead: Lead, quickWins: QuickWin[]) => buildSpecificFreeIdeas(lead, quickWins).map((win) => softenQuickWinWhy(annotateQuickWinSpecificity(win, lead)));
 
 const withProductRecommendation = (lead: Lead): Lead => {
+    const officialResolution = resolveOfficialWebsite(lead);
+    if (officialResolution.shouldReextractOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') {
+        return {
+            ...lead,
+            recommendedProduct: 'skip',
+            recommendedProductReason: officialResolution.shouldReextractOfficialWebsite
+                ? 'Nejdřív je potřeba extrahovat nalezený oficiální web; katalog není zdroj pro obchodní výstup.'
+                : 'Chybí oficiální web provozu; katalog není zdroj pro obchodní výstup.',
+            productRecommendationSignals: ['official-website-required', `originalUrlClassification:${officialResolution.originalUrlClassification}`],
+            freeIdeaPurpose: '',
+            paidOfferShort: '',
+            paidOfferDetails: '',
+            targetOffer: 'skip',
+        };
+    }
     const recommendation = recommendProductForLead(lead);
 
     return {
@@ -544,6 +577,12 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     normalizedExtraction.validPagesCount = normalizedExtraction.pagesExtracted.length;
     normalizedExtraction.invalidPagesCount = normalizedExtraction.skippedPages.length;
     normalizedExtraction.summary = websiteExtractionSummary(lead.name, normalizedExtraction);
+    const officialResolution = resolveOfficialWebsite({ ...lead, websiteExtraction: normalizedExtraction });
+    const hasExtractedOfficialCandidate = Boolean(normalizedExtraction.websiteOwnershipStatus === 'official'
+        && ['completed', 'partial'].includes(normalizedExtraction.status)
+        && normalizedExtraction.validPagesCount > 0
+        && (!officialResolution.officialWebsiteCandidateUrl || normalizedExtraction.websiteUrl === officialResolution.officialWebsiteCandidateUrl));
+    const officialWebsiteExtractionPending = officialResolution.shouldReextractOfficialWebsite && !hasExtractedOfficialCandidate;
 
     const hasWebsiteEmail = normalizedExtraction.contact.emails.length > 0;
     const cleanContactSignals = [
@@ -590,9 +629,15 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         createdAt: new Date().toISOString(),
     };
 
-    const preparedStructuredQuickWins = prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []);
-    const preparedFreeIdeas = prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []);
-    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({
+    const preparedStructuredQuickWins = officialWebsiteExtractionPending ? [] : prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.structuredQuickWins ?? []);
+    const preparedFreeIdeas = officialWebsiteExtractionPending ? [] : prepareFreeIdeas({ ...lead, websiteExtraction: normalizedExtraction }, lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []);
+    const ideaDiagnostics = officialWebsiteExtractionPending ? {
+        leadPlaybook: 'skip' as const,
+        leadPlaybookReason: 'Zdroj je katalog; před playbookem je potřeba extrahovat oficiální web.',
+        playbookSignals: ['official-website-required'],
+        freeIdeasDiversityScore: 0,
+        repeatedConceptWarning: false,
+    } : freeIdeaSpecificityDiagnostics({
         ...lead,
         websiteExtraction: normalizedExtraction,
         structuredQuickWins: preparedStructuredQuickWins,
@@ -613,28 +658,34 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
         analysisSource: normalizedExtraction.analysisSource,
         extractionAllowedForWebsiteAudit: normalizedExtraction.extractionAllowedForWebsiteAudit,
         websiteOwnershipReason: normalizedExtraction.websiteOwnershipReason,
-        officialWebsiteCandidateUrl: normalizedExtraction.officialWebsiteCandidateUrl,
+        officialWebsiteCandidateUrl: officialResolution.officialWebsiteCandidateUrl ?? normalizedExtraction.officialWebsiteCandidateUrl,
+        selectedExtractionUrl: officialResolution.selectedExtractionUrl,
+        selectedExtractionReason: officialResolution.selectedExtractionReason,
+        selectedExtractionSource: officialResolution.selectedExtractionSource,
+        originalUrlClassification: officialResolution.originalUrlClassification,
+        directoryUrl: officialResolution.directoryUrl ?? '',
+        shouldReextractOfficialWebsite: officialWebsiteExtractionPending,
+        extractionBlockedReason: officialWebsiteExtractionPending ? 'needs-official-website-extraction' : officialResolution.extractionBlockedReason ?? '',
         directoryExtractedCandidates: normalizedExtraction.directoryExtractedCandidates,
         extractionAllowed: normalizedExtraction.extractionAllowed,
         skippedAssetUrls: normalizedExtraction.skippedAssetUrls,
         directoryContact: normalizedExtraction.directoryContact,
-        contactOwnershipStatus: normalizedExtraction.contactOwnershipStatus,
         publicSignals: nextPublicSignals,
         sourceMaterials: [...cleanedSourceMaterials, websiteSourceMaterial],
         structuredQuickWins: preparedStructuredQuickWins,
-        clientMiniAudit: sanitizeClientText(lead.clientMiniAudit),
-        generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit),
-        generatedOutreach: sanitizeClientText(lead.generatedOutreach),
-        generatedFollowUp: sanitizeClientText(lead.generatedFollowUp),
-        generatedOffer: sanitizeClientText(lead.generatedOffer),
-        freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
+        clientMiniAudit: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.clientMiniAudit),
+        generatedMiniAudit: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedMiniAudit),
+        generatedOutreach: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedOutreach),
+        generatedFollowUp: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedFollowUp),
+        generatedOffer: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedOffer),
+        freeIdeaTeaser: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.freeIdeaTeaser || generateFreeIdeaTeaser(lead)),
         freeIdeas: preparedFreeIdeas,
         leadPlaybook: ideaDiagnostics.leadPlaybook,
         leadPlaybookReason: ideaDiagnostics.leadPlaybookReason,
         playbookSignals: ideaDiagnostics.playbookSignals,
         freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
         repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
-        paidNextStep: sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(withProductRecommendation({ ...lead, websiteExtraction: normalizedExtraction }))),
+        paidNextStep: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.paidNextStep || lead.generatedOffer || generateOffer(withProductRecommendation({ ...lead, websiteExtraction: normalizedExtraction }))),
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         strengths: joinLines(removeContactContradictions(uniqueStrings([...splitLines(lead.strengths), ...normalizedExtraction.strengths]).filter((signal) => !invalidSignalReason(signal, hasWebsiteEmail)), hasWebsiteEmail)),
@@ -648,7 +699,14 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
             removedStaleSourceMaterials,
             staleSourceMaterialTitlesRemoved,
         },
+        guestGuidePreviewStatus: officialWebsiteExtractionPending ? 'not-created' : lead.guestGuidePreviewStatus,
+        guestGuidePreview: officialWebsiteExtractionPending ? undefined : lead.guestGuidePreview,
+        guestGuideSecondEmail: officialWebsiteExtractionPending ? '' : lead.guestGuideSecondEmail,
+        discoveryContact: discoveryContactForLead({ ...lead, websiteExtraction: normalizedExtraction }),
+        contactOwnershipStatus: officialWebsiteExtractionPending ? 'directory-contact' : normalizedExtraction.contactOwnershipStatus,
     });
+
+    if (officialWebsiteExtractionPending) return applyClientOutputReadiness(leadWithRecommendation);
 
     const staleOpsAuditPaidStep = leadWithRecommendation.recommendedProduct !== 'ops-audit' && /ops audit|rychl[yý] audit|provozn[ií] audit/i.test(`${lead.generatedOffer}\n${lead.paidNextStep}`);
     const nextGeneratedOffer = staleOpsAuditPaidStep ? generateOffer(leadWithRecommendation) : lead.generatedOffer || generateOffer(leadWithRecommendation);
@@ -734,12 +792,16 @@ const ensureThreeQuickWins = (lead: Lead, quickWins: QuickWin[]) => {
     return prepareFreeIdeas(lead, [...completeWins, ...fallbackWins].slice(0, 3).map((win) => ({ ...win, id: win.id || `quick-win-${crypto.randomUUID()}` })));
 };
 
-const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'facebook.', 'instagram.', 'linktr.ee', 'business.site', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com'];
+const blockedWebsiteExtractorHosts = ['booking.', 'airbnb.', 'google.', 'maps.google.', 'facebook.', 'instagram.', 'linktr.ee', 'business.site', 'tripadvisor.', 'expedia.', 'agoda.', 'trivago.', 'slevomat.', 'hotelscombined.', 'hotels.com', 'zivefirmy.', 'firmy.', 'najisto.'];
 const isOtaOrAggregatorUrl = (url = '') => blockedWebsiteExtractorHosts.some((host) => url.toLowerCase().includes(host));
 const hasOwnWebsiteUrl = (candidate: Pick<LeadAgentCandidate, 'websiteUrl' | 'sourceUrls'>) => Boolean(candidate.websiteUrl && !isOtaOrAggregatorUrl(candidate.websiteUrl)) || candidate.sourceUrls.some((url) => !isOtaOrAggregatorUrl(url));
 
 const detectSourceType = (url: string): PublicProfileSourceType => {
     const normalizedUrl = url.toLowerCase();
+    const linkLabel = classifyPublicLinkLabel(url);
+
+    if (linkLabel === 'Katalog / directory') return 'other';
+    if (linkLabel === 'OTA / agregátor / recenze') return 'other';
 
     if (normalizedUrl.includes('booking.')) {
         return 'booking';
@@ -763,6 +825,8 @@ const detectSourceType = (url: string): PublicProfileSourceType => {
 
     return normalizedUrl ? 'website' : 'other';
 };
+
+const publicLinkLabelForUrl = (url: string, sourceType: PublicProfileSourceType) => classifyPublicLinkLabel(url) || publicProfileSourceLabels[sourceType];
 
 const emptyPublicLink = (): PublicProfileLink => ({
     id: `link-${crypto.randomUUID()}`,
@@ -810,7 +874,14 @@ const offerAngleForAgentLead = (opportunityType: LeadAgentOpportunityType, targe
 
 const migratePublicLinks = (lead: Partial<Lead>): PublicProfileLink[] => {
     if (lead.publicLinks && lead.publicLinks.length > 0) {
-        return lead.publicLinks;
+        return lead.publicLinks.map((link) => {
+            const sourceType = detectSourceType(link.url) || link.sourceType;
+            return {
+                ...link,
+                sourceType,
+                label: publicLinkLabelForUrl(link.url, sourceType),
+            };
+        });
     }
 
     const url = lead.publicProfileUrl || lead.websiteOrOtaUrl || '';
@@ -825,7 +896,7 @@ const migratePublicLinks = (lead: Partial<Lead>): PublicProfileLink[] => {
             id: `link-${crypto.randomUUID()}`,
             sourceType,
             url,
-            label: publicProfileSourceLabels[sourceType],
+            label: publicLinkLabelForUrl(url, sourceType),
             notes: 'Migrovano ze starsiho pole publicProfileUrl / web odkaz.',
         },
     ];
@@ -907,6 +978,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const guardedTargetOffer = hasUnanalyzedWebsiteExtraction && lead.targetOffer === 'self-checkin-setup' && !sourceText.includes('self check-in') ? 'guest-guide' : lead.targetOffer ?? '';
     const normalizedName = (lead.createdFromAgentAnalysis || lead.websiteExtraction) && lead.name ? displayNameFromLeadEvidence(lead, lead.name) : lead.name ?? '';
     const normalizedMiniAudit = sanitizeClientText(lead.clientMiniAudit ?? lead.generatedMiniAudit ?? '');
+    const migratedPublicLinks = migratePublicLinks(lead);
     const rawPagesExtracted = lead.websiteExtraction?.pagesExtracted ?? [];
     const invalidPagesFromExtraction = rawPagesExtracted
         .filter(isInvalidExtractedPage)
@@ -917,7 +989,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         url: lead.websiteExtraction.websiteUrl ?? lead.websiteOrOtaUrl ?? lead.publicProfileUrl ?? '',
         pageText: [lead.websiteExtraction.summary, ...rawPagesExtracted.flatMap((page) => [page.url, page.title, page.textPreview])].join('\n'),
         notes: [lead.notes, lead.firstImpression, ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content])].join('\n'),
-        sourceUrls: [lead.websiteOrOtaUrl, lead.publicProfileUrl, ...(lead.publicLinks ?? []).map((link) => link.url)].filter(isPresentString),
+        sourceUrls: [lead.websiteOrOtaUrl, lead.publicProfileUrl, ...migratedPublicLinks.map((link) => link.url)].filter(isPresentString),
     }) : undefined;
     const nonOfficialExtraction = ownership && ownership.websiteOwnershipStatus !== 'official';
     const normalizedDirectoryContact = nonOfficialExtraction
@@ -968,7 +1040,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         },
         directoryContact: normalizedDirectoryContact,
         contactOwnershipStatus: nonOfficialExtraction ? 'directory-contact' : lead.websiteExtraction.contactOwnershipStatus ?? 'official-contact',
-        skippedAssetUrls: uniqueStrings([...(lead.websiteExtraction.skippedAssetUrls ?? []), ...rawPagesExtracted.filter(isAssetPage).map((page) => page.url), ...(lead.publicLinks ?? []).map((link) => link.url).filter(isAssetUrl)]),
+        skippedAssetUrls: uniqueStrings([...(lead.websiteExtraction.skippedAssetUrls ?? []), ...rawPagesExtracted.filter(isAssetPage).map((page) => page.url), ...migratedPublicLinks.map((link) => link.url).filter(isAssetUrl)]),
         websiteSignals: lead.websiteExtraction.websiteSignals ?? [],
         arrivalSignals: lead.websiteExtraction.arrivalSignals ?? [],
         parkingSignals: lead.websiteExtraction.parkingSignals ?? [],
@@ -986,6 +1058,18 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         summary: lead.websiteExtraction.summary ?? '',
         debug: lead.websiteExtraction.debug ?? { debugId: '', elapsedMs: 0, partial: false, reason: null },
     }) : undefined;
+    const officialResolution = resolveOfficialWebsite({
+        ...lead,
+        publicLinks: migratedPublicLinks,
+        websiteExtraction: normalizedWebsiteExtraction,
+        directoryExtractedCandidates: normalizedWebsiteExtraction?.directoryExtractedCandidates ?? lead.directoryExtractedCandidates,
+    });
+    const hasExtractedOfficialCandidate = Boolean(normalizedWebsiteExtraction
+        && normalizedWebsiteExtraction.websiteOwnershipStatus === 'official'
+        && ['completed', 'partial'].includes(normalizedWebsiteExtraction.status)
+        && normalizedWebsiteExtraction.validPagesCount > 0
+        && (!officialResolution.officialWebsiteCandidateUrl || normalizedWebsiteExtraction.websiteUrl === officialResolution.officialWebsiteCandidateUrl));
+    const officialWebsiteExtractionPending = officialResolution.shouldReextractOfficialWebsite && !hasExtractedOfficialCandidate;
     const sanitizedGeneratedOutreach = sanitizeClientText(lead.generatedOutreach ?? '');
     const shouldRegenerateWebsiteOutreach = normalizedWebsiteExtraction && (lead.screenshots ?? []).length === 0 && (
         websiteOnlyOutreachMismatchPattern.test(sanitizedGeneratedOutreach)
@@ -996,9 +1080,15 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
     const normalizedGeneratedOutreach = shouldRegenerateWebsiteOutreach
         ? buildWebsiteOnlyOutreach({ leadName: normalizedName, websiteExtraction: normalizedWebsiteExtraction, signals: lead.publicSignals ?? [] })
         : sanitizedGeneratedOutreach;
-    const migratedQuickWins = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, migrateQuickWins(lead));
-    const normalizedFreeIdeas = prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, lead.freeIdeas ?? migratedQuickWins);
-    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({
+    const migratedQuickWins = officialWebsiteExtractionPending ? [] : prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, migrateQuickWins(lead));
+    const normalizedFreeIdeas = officialWebsiteExtractionPending ? [] : prepareFreeIdeas({ ...emptyLead(), ...lead, websiteExtraction: normalizedWebsiteExtraction }, lead.freeIdeas ?? migratedQuickWins);
+    const ideaDiagnostics = officialWebsiteExtractionPending ? {
+        leadPlaybook: 'skip' as const,
+        leadPlaybookReason: 'Zdroj je katalog; před playbookem je potřeba extrahovat oficiální web.',
+        playbookSignals: ['official-website-required'],
+        freeIdeasDiversityScore: 0,
+        repeatedConceptWarning: false,
+    } : freeIdeaSpecificityDiagnostics({
         ...emptyLead(),
         ...lead,
         websiteExtraction: normalizedWebsiteExtraction,
@@ -1013,7 +1103,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         notes: isDemoLead && !baseNotes.toLowerCase().includes('nejde o skutecneho klienta')
             ? `${demoLeadNotice}\n\n${baseNotes}`.trim()
             : baseNotes,
-        publicLinks: migratePublicLinks(lead),
+        publicLinks: migratedPublicLinks,
         sourceMaterials: lead.sourceMaterials ?? [],
         extractionStatus: lead.extractionStatus ?? 'idle',
         publicSignals: lead.publicSignals ?? [],
@@ -1022,19 +1112,19 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         structuredQuickWins: migratedQuickWins,
         selectedOfferAngle: lead.selectedOfferAngle ?? 'main-photo',
         internalAgentBrief: lead.internalAgentBrief ?? '',
-        clientMiniAudit: normalizedMiniAudit,
-        generatedMiniAudit: sanitizeClientText(lead.generatedMiniAudit ?? normalizedMiniAudit),
-        generatedOutreach: normalizedGeneratedOutreach,
-        generatedFollowUp: sanitizeClientText(lead.generatedFollowUp ?? ''),
-        generatedOffer: sanitizeClientText(lead.generatedOffer ?? ''),
-        freeIdeaTeaser: sanitizeClientText(lead.freeIdeaTeaser ?? ''),
+        clientMiniAudit: officialWebsiteExtractionPending ? '' : normalizedMiniAudit,
+        generatedMiniAudit: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedMiniAudit ?? normalizedMiniAudit),
+        generatedOutreach: officialWebsiteExtractionPending ? '' : normalizedGeneratedOutreach,
+        generatedFollowUp: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedFollowUp ?? ''),
+        generatedOffer: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.generatedOffer ?? ''),
+        freeIdeaTeaser: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.freeIdeaTeaser ?? ''),
         freeIdeas: normalizedFreeIdeas,
         leadPlaybook: ideaDiagnostics.leadPlaybook,
         leadPlaybookReason: sanitizeClientText(ideaDiagnostics.leadPlaybookReason),
         playbookSignals: ideaDiagnostics.playbookSignals,
         freeIdeasDiversityScore: ideaDiagnostics.freeIdeasDiversityScore,
         repeatedConceptWarning: ideaDiagnostics.repeatedConceptWarning,
-        paidNextStep: sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
+        paidNextStep: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.paidNextStep ?? lead.generatedOffer ?? ''),
         recommendedProduct: lead.recommendedProduct,
         recommendedProductReason: sanitizeClientText(lead.recommendedProductReason ?? ''),
         productRecommendationSignals: lead.productRecommendationSignals ?? [],
@@ -1046,10 +1136,10 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         unsupportedClientClaims: lead.unsupportedClientClaims ?? [],
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? [],
         evidenceClaimReady: lead.evidenceClaimReady ?? true,
-        guestGuidePreviewStatus: lead.guestGuidePreviewStatus ?? 'not-created',
-        guestGuidePreview: lead.guestGuidePreview,
-        guestGuideSecondEmail: sanitizeClientText(lead.guestGuideSecondEmail ?? ''),
-        contactQuality: lead.contactQuality,
+        guestGuidePreviewStatus: officialWebsiteExtractionPending ? 'not-created' : lead.guestGuidePreviewStatus ?? 'not-created',
+        guestGuidePreview: officialWebsiteExtractionPending ? undefined : lead.guestGuidePreview,
+        guestGuideSecondEmail: officialWebsiteExtractionPending ? '' : sanitizeClientText(lead.guestGuideSecondEmail ?? ''),
+        contactQuality: officialWebsiteExtractionPending ? contactQualityForLead({ email: lead.email ?? '', notes: lead.notes ?? '', sourceMaterials: lead.sourceMaterials ?? [], websiteExtraction: normalizedWebsiteExtraction }) : lead.contactQuality,
         outreachIntent: 'ask-permission-to-send-free-ideas',
         outreachTone: 'humble-transparent-low-pressure',
         createdFromAgentAnalysis: lead.createdFromAgentAnalysis ?? false,
@@ -1087,15 +1177,25 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         analysisSource: normalizedWebsiteExtraction?.analysisSource ?? lead.analysisSource ?? 'unknown',
         extractionAllowedForWebsiteAudit: normalizedWebsiteExtraction?.extractionAllowedForWebsiteAudit ?? lead.extractionAllowedForWebsiteAudit ?? normalizedWebsiteExtraction?.websiteOwnershipStatus === 'official',
         websiteOwnershipReason: normalizedWebsiteExtraction?.websiteOwnershipReason ?? lead.websiteOwnershipReason ?? '',
-        officialWebsiteCandidateUrl: normalizedWebsiteExtraction?.officialWebsiteCandidateUrl ?? lead.officialWebsiteCandidateUrl ?? '',
+        officialWebsiteCandidateUrl: officialResolution.officialWebsiteCandidateUrl ?? normalizedWebsiteExtraction?.officialWebsiteCandidateUrl ?? lead.officialWebsiteCandidateUrl ?? '',
+        selectedExtractionUrl: officialResolution.selectedExtractionUrl,
+        selectedExtractionReason: officialResolution.selectedExtractionReason,
+        selectedExtractionSource: officialResolution.selectedExtractionSource,
+        originalUrlClassification: officialResolution.originalUrlClassification,
+        directoryUrl: officialResolution.directoryUrl ?? '',
+        shouldReextractOfficialWebsite: officialWebsiteExtractionPending,
+        extractionBlockedReason: officialWebsiteExtractionPending ? 'needs-official-website-extraction' : officialResolution.extractionBlockedReason ?? '',
         directoryExtractedCandidates: normalizedWebsiteExtraction?.directoryExtractedCandidates ?? lead.directoryExtractedCandidates ?? [],
         extractionAllowed: normalizedWebsiteExtraction?.extractionAllowed ?? lead.extractionAllowed ?? true,
         skippedAssetUrls: normalizedWebsiteExtraction?.skippedAssetUrls ?? lead.skippedAssetUrls ?? [],
         directoryContact: normalizedWebsiteExtraction?.directoryContact ?? lead.directoryContact ?? { emails: [], phones: [], contactPageUrl: null },
-        contactOwnershipStatus: normalizedWebsiteExtraction?.contactOwnershipStatus ?? lead.contactOwnershipStatus ?? 'unknown',
+        discoveryContact: discoveryContactForLead({ email: lead.email ?? '', notes: lead.notes ?? '', sourceMaterials: lead.sourceMaterials ?? [], websiteExtraction: normalizedWebsiteExtraction }),
+        contactOwnershipStatus: officialWebsiteExtractionPending ? 'directory-contact' : normalizedWebsiteExtraction?.contactOwnershipStatus ?? lead.contactOwnershipStatus ?? 'unknown',
     });
 
-    return canonicalizeLeadEvidence(normalizedLead);
+    return officialWebsiteExtractionPending || officialResolution.extractionBlockedReason === 'needs-official-website'
+        ? applyClientOutputReadiness(normalizedLead)
+        : canonicalizeLeadEvidence(normalizedLead);
 };
 
 const emptyAgentRequest = (): LeadAgentSearchRequest => ({
@@ -1879,10 +1979,27 @@ function App() {
 
     const extractCandidateWebsite = async (candidate: LeadAgentCandidate) => {
         if (!hasOwnWebsiteUrl(candidate)) return;
+        const candidatePublicLinks = candidate.sourceUrls.map((url) => ({
+            id: `link-${crypto.randomUUID()}`,
+            sourceType: detectSourceType(url),
+            url,
+            label: publicLinkLabelForUrl(url, detectSourceType(url)),
+            notes: 'Agentni kandidat ze search API; URL nebyla scrapovana.',
+        }));
+        const officialResolution = resolveOfficialWebsite({
+            websiteOrOtaUrl: candidate.websiteUrl,
+            publicLinks: candidatePublicLinks,
+            sourceMaterials: [{ id: 'candidate-snippets', type: 'pasted-text', title: 'Candidate source snippets', content: candidate.sourceSnippets.join('\n'), createdAt: candidate.createdAt }],
+        });
+        const extractionCandidate = officialResolution.selectedExtractionUrl ? {
+            ...candidate,
+            websiteUrl: officialResolution.selectedExtractionUrl,
+            sourceUrls: uniqueStrings([officialResolution.selectedExtractionUrl, ...candidate.sourceUrls]),
+        } : candidate;
 
         setExtractingWebsiteCandidateIds((current) => [...new Set([...current, candidate.id])]);
         try {
-            const websiteExtraction = await extractWebsite(candidate, leadAgentSession.request.notes);
+            const websiteExtraction = await extractWebsite(extractionCandidate, leadAgentSession.request.notes);
             setLeadAgentSession((currentSession) => ({
                 ...currentSession,
                 candidates: currentSession.candidates.map((currentCandidate) => currentCandidate.id === candidate.id
@@ -1944,7 +2061,7 @@ function App() {
                 id: `link-${crypto.randomUUID()}`,
                 sourceType: detectSourceType(url),
                 url,
-                label: publicProfileSourceLabels[detectSourceType(url)],
+                label: publicLinkLabelForUrl(url, detectSourceType(url)),
                 notes: candidate.isMock ? 'Demo agentni kandidat; URL nebyla automaticky ctena.' : 'Agentni kandidat ze search API; URL nebyla scrapovana.',
             })),
             sourceMaterials: [
@@ -2159,6 +2276,49 @@ function App() {
         persistLead(nextLead);
     };
 
+    const extractOfficialWebsiteForDraft = async (lead: Lead) => {
+        const officialResolution = resolveOfficialWebsite(lead);
+        if (!officialResolution.selectedExtractionUrl) return;
+
+        const runningLead: Lead = {
+            ...lead,
+            websiteOrOtaUrl: officialResolution.selectedExtractionUrl,
+            publicProfileUrl: officialResolution.selectedExtractionUrl,
+            extractionStatus: 'running',
+            selectedExtractionUrl: officialResolution.selectedExtractionUrl,
+            selectedExtractionReason: officialResolution.selectedExtractionReason,
+            selectedExtractionSource: officialResolution.selectedExtractionSource,
+            originalUrlClassification: officialResolution.originalUrlClassification,
+            officialWebsiteCandidateUrl: officialResolution.officialWebsiteCandidateUrl ?? officialResolution.selectedExtractionUrl,
+            directoryUrl: officialResolution.directoryUrl ?? lead.directoryUrl,
+            shouldReextractOfficialWebsite: false,
+            extractionBlockedReason: '',
+        };
+        setDraftLead(runningLead);
+        persistLead(runningLead);
+
+        try {
+            const extractionCandidate = {
+                ...candidateFromLead(runningLead),
+                websiteUrl: officialResolution.selectedExtractionUrl,
+                sourceUrls: uniqueStrings([officialResolution.selectedExtractionUrl, ...runningLead.publicLinks.map((link) => link.url)]),
+            };
+            const websiteExtraction = await extractWebsite(extractionCandidate, runningLead.notes);
+            persistLead(canonicalizeLeadEvidence({
+                ...runningLead,
+                websiteExtraction,
+                extractionStatus: websiteExtraction.status === 'error' ? 'error' : 'completed',
+                needsAgentAnalysis: true,
+            }));
+        } catch (error) {
+            persistLead({
+                ...runningLead,
+                extractionStatus: 'error',
+                sourceLimitations: [...new Set([...runningLead.sourceLimitations, error instanceof Error ? error.message : 'Extrakce oficiálního webu selhala.'])],
+            });
+        }
+    };
+
     const prepareAuditObservations = () => {
         const runningLead: Lead = { ...draftLead, extractionStatus: 'running' };
         setDraftLead(runningLead);
@@ -2195,6 +2355,15 @@ function App() {
     };
 
     const generateText = (field: 'internalAgentBrief' | 'clientMiniAudit' | 'generatedMiniAudit' | 'generatedOutreach' | 'generatedFollowUp' | 'generatedOffer') => {
+        const officialResolution = resolveOfficialWebsite(draftLead);
+        if (officialResolution.shouldReextractOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') {
+            persistLead({
+                ...draftLead,
+                clientOutputStatus: 'draft-needs-review',
+                notReadyReasons: ['Nejdřív extrahuj oficiální web; katalog není zdroj pro klientský výstup.'],
+            });
+            return;
+        }
         const generators = {
             internalAgentBrief: generateInternalAgentBrief,
             clientMiniAudit: generateMiniAudit,
@@ -2216,6 +2385,17 @@ function App() {
     };
 
     const createGuestGuidePreviewForDraft = () => {
+        const officialResolution = resolveOfficialWebsite(draftLead);
+        if (officialResolution.shouldReextractOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') {
+            persistLead({
+                ...draftLead,
+                guestGuidePreviewStatus: 'draft-needs-review',
+                guestGuidePreview: undefined,
+                guestGuideSecondEmail: '',
+                notReadyReasons: ['Nejdřív extrahuj oficiální web; katalog není zdroj pro Guest Guide Preview.'],
+            });
+            return;
+        }
         const preview = createGuestGuidePreview(draftLead);
         const secondEmail = draftLead.guestGuideSecondEmail || createGuestGuideSecondEmail(draftLead, preview);
         const previewLead = { ...draftLead, guestGuidePreview: preview, guestGuideSecondEmail: secondEmail };
@@ -2230,6 +2410,17 @@ function App() {
     };
 
     const prepareGuestGuideSecondEmail = () => {
+        const officialResolution = resolveOfficialWebsite(draftLead);
+        if (officialResolution.shouldReextractOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') {
+            persistLead({
+                ...draftLead,
+                guestGuidePreviewStatus: 'draft-needs-review',
+                guestGuidePreview: undefined,
+                guestGuideSecondEmail: '',
+                notReadyReasons: ['Nejdřív extrahuj oficiální web; katalog není zdroj pro Guest Guide Preview.'],
+            });
+            return;
+        }
         const preview = draftLead.guestGuidePreview ?? createGuestGuidePreview(draftLead);
         const secondEmail = createGuestGuideSecondEmail(draftLead, preview);
         const previewLead = { ...draftLead, guestGuidePreview: preview, guestGuideSecondEmail: secondEmail };
@@ -2404,6 +2595,7 @@ function App() {
                 onExportGuestGuideConfig={exportGuestGuideConfig}
                 onExportLead={exportLeadJson}
                 onExportWebsiteExtraction={exportWebsiteExtractionJson}
+                onExtractOfficialWebsite={extractOfficialWebsiteForDraft}
                 onGenerateText={generateText}
                 includeScreenshotDataUrlsInExport={includeScreenshotDataUrlsInExport}
                 onToggleIncludeScreenshotDataUrls={setIncludeScreenshotDataUrlsInExport}
@@ -3210,13 +3402,14 @@ interface LeadEditorProps {
     onExportLead?: (lead: Lead) => void;
     onExportGuestGuideConfig?: (lead: Lead) => void;
     onExportWebsiteExtraction?: (extraction: WebsiteExtractionResult, candidate?: LeadAgentCandidate, lead?: Lead) => void;
+    onExtractOfficialWebsite?: (lead: Lead) => void;
     includeScreenshotDataUrlsInExport?: boolean;
     onToggleIncludeScreenshotDataUrls?: (include: boolean) => void;
     onSave: (event?: FormEvent) => void;
     copiedTextId?: string;
 }
 
-function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onCreateGuestGuidePreview, onDeleteLead, onExportGuestGuideConfig, onExportLead, onExportWebsiteExtraction, onGenerateText, onPrepareAudit, onPrepareGuestGuideSecondEmail, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
+function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInExport = false, isCreating = false, onAnalyzeLead, onAnalyzeScreenshots, onChange, onCopyText, onCreateGuestGuidePreview, onDeleteLead, onExportGuestGuideConfig, onExportLead, onExportWebsiteExtraction, onExtractOfficialWebsite, onGenerateText, onPrepareAudit, onPrepareGuestGuideSecondEmail, onSave, onToggleIncludeScreenshotDataUrls }: LeadEditorProps) {
     const showWebsiteAnalysisPanel = needsWebsiteAnalysis(draftLead);
     const latestAnalysisDiagnostic = draftLead.latestAnalysisDiagnostic as { userMessage?: string; fallbackReason?: string; analyzeProvider?: string; debugId?: string; model?: string | null } | undefined;
     const workflowReadiness = computeLeadWorkflowReadiness(draftLead);
@@ -3240,6 +3433,8 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
     const directoryCandidates = draftLead.websiteExtraction?.directoryExtractedCandidates ?? draftLead.directoryExtractedCandidates ?? [];
     const firstDirectoryCandidate = directoryCandidates[0];
     const officialCandidateUrl = draftLead.websiteExtraction?.officialWebsiteCandidateUrl ?? draftLead.officialWebsiteCandidateUrl ?? firstDirectoryCandidate?.websiteUrl ?? '';
+    const officialResolution = resolveOfficialWebsite(draftLead);
+    const showDirectoryOfficialResolver = isDiscoverySourceClassification(officialResolution.originalUrlClassification) || Boolean(draftLead.shouldReextractOfficialWebsite);
     const applyDirectoryCandidate = () => {
         if (!firstDirectoryCandidate) return;
         onChange('name', firstDirectoryCandidate.name);
@@ -3369,6 +3564,33 @@ function LeadDetail({ copiedTextId = '', draftLead, includeScreenshotDataUrlsInE
                                 <ExternalLink size={16} aria-hidden="true" />
                                 Použít oficiální web
                             </button>
+                            <button className="secondary-button compact-button" onClick={markAsUnsuitableLead} type="button">
+                                <X size={16} aria-hidden="true" />
+                                Označit jako nevhodný lead
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {showDirectoryOfficialResolver ? (
+                    <div className="scope-note warning-note website-ownership-note">
+                        <strong>{officialResolution.officialWebsiteCandidateUrl ? 'Zdroj je katalog, ne vlastní web. Byl nalezen pravděpodobný oficiální web.' : 'Zdroj je katalog, ne vlastní web.'}</strong>
+                        {officialResolution.officialWebsiteCandidateUrl ? <span>Nalezen katalog. Pro analýzu použiji oficiální web: {officialResolution.officialWebsiteCandidateUrl}</span> : <span>Doplň oficiální web, nebo lead označ jako nevhodný.</span>}
+                        {draftLead.discoveryContact && (draftLead.discoveryContact.emails.length > 0 || draftLead.discoveryContact.phones.length > 0)
+                            ? <span>Kontakt z katalogu / discovery: {[...draftLead.discoveryContact.emails, ...draftLead.discoveryContact.phones].join(', ')}</span>
+                            : null}
+                        <div className="button-group inline-actions">
+                            {officialResolution.officialWebsiteCandidateUrl ? (
+                                <button className="primary-button compact-button" onClick={() => onExtractOfficialWebsite?.(draftLead)} type="button">
+                                    <ExternalLink size={16} aria-hidden="true" />
+                                    Extrahovat oficiální web
+                                </button>
+                            ) : (
+                                <button className="secondary-button compact-button" onClick={applyOfficialCandidateUrl} type="button">
+                                    <ExternalLink size={16} aria-hidden="true" />
+                                    Doplň oficiální web
+                                </button>
+                            )}
                             <button className="secondary-button compact-button" onClick={markAsUnsuitableLead} type="button">
                                 <X size={16} aria-hidden="true" />
                                 Označit jako nevhodný lead

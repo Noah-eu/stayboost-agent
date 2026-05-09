@@ -1,4 +1,5 @@
 import { detectCandidateSpecificSignals, freeIdeaSpecificityDiagnostics } from './ideaSpecificity';
+import { resolveOfficialWebsite } from './officialWebsiteResolver';
 import type { Lead, RecommendedProduct, WebsiteExtractionResult } from './types';
 
 interface ProductRecommendation {
@@ -132,7 +133,20 @@ export const recommendedProductLabels: Record<RecommendedProduct, string> = {
     skip: 'Skip / nepokračovat',
 };
 
-export const recommendProductForLead = (lead: Pick<Lead, 'websiteExtraction' | 'strengths' | 'risks' | 'guestFrictionSignals' | 'checkInParkingInfo' | 'businessOpportunity' | 'publicSignals' | 'structuredQuickWins' | 'freeIdeas' | 'publicMaturityScore' | 'confidence' | 'fitVerdict' | 'leadPlaybook' | 'contactQuality' | 'websiteOwnershipStatus' | 'extractionAllowed'>): ProductRecommendation => {
+export const recommendProductForLead = (lead: Pick<Lead, 'websiteOrOtaUrl' | 'publicProfileUrl' | 'publicLinks' | 'sourceMaterials' | 'officialWebsiteCandidateUrl' | 'shouldReextractOfficialWebsite' | 'websiteExtraction' | 'strengths' | 'risks' | 'guestFrictionSignals' | 'checkInParkingInfo' | 'businessOpportunity' | 'publicSignals' | 'structuredQuickWins' | 'freeIdeas' | 'publicMaturityScore' | 'confidence' | 'fitVerdict' | 'leadPlaybook' | 'contactQuality' | 'websiteOwnershipStatus' | 'extractionAllowed'>): ProductRecommendation => {
+    const officialResolution = resolveOfficialWebsite(lead);
+    if (lead.shouldReextractOfficialWebsite || officialResolution.shouldReextractOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') {
+        return {
+            recommendedProduct: 'skip',
+            recommendedProductReason: officialResolution.shouldReextractOfficialWebsite
+                ? 'Nejdřív je potřeba extrahovat nalezený oficiální web; katalog není zdroj pro obchodní výstup.'
+                : 'Chybí oficiální web provozu; katalog není zdroj pro obchodní výstup.',
+            productRecommendationSignals: ['official-website-required', `originalUrlClassification:${officialResolution.originalUrlClassification}`],
+            freeIdeaPurpose: '',
+            paidOfferShort: '',
+            paidOfferDetails: '',
+        };
+    }
     const extraction = lead.websiteExtraction;
     const topics = operationalTopics(lead);
     const specificSignals = detectCandidateSpecificSignals(lead).map((signal) => signal.label);

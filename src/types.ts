@@ -37,7 +37,7 @@ export type SourceUrlClassification = 'official-property-website' | 'social-prof
 
 export type WebsiteOwnershipStatus = 'official' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory' | 'municipal-catalog' | 'aggregator' | 'asset' | 'unknown';
 
-export type ContactOwnershipStatus = 'official-contact' | 'directory-contact' | 'source-contact' | 'unknown';
+export type ContactOwnershipStatus = 'official-contact' | 'directory-contact' | 'discovery-contact' | 'source-contact' | 'unknown';
 
 export interface DirectoryCandidate {
     name: string;
@@ -404,6 +404,7 @@ export interface Lead {
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;
     contactQuality?: ContactQuality;
+    discoveryContact?: WebsiteExtractionContact;
     websiteOwnershipStatus?: WebsiteOwnershipStatus;
     sourceUrlClassification?: SourceUrlClassification;
     socialProfileStatus?: 'none' | 'social-profile' | 'social-profile-limited' | 'social-platform-login';
@@ -414,6 +415,13 @@ export interface Lead {
     extractionAllowedForWebsiteAudit?: boolean;
     websiteOwnershipReason?: string;
     officialWebsiteCandidateUrl?: string;
+    selectedExtractionUrl?: string;
+    selectedExtractionReason?: string;
+    selectedExtractionSource?: 'official-public-link' | 'user-provided-official-url' | 'directory-candidate' | 'original-url' | 'none';
+    originalUrlClassification?: SourceUrlClassification;
+    directoryUrl?: string;
+    shouldReextractOfficialWebsite?: boolean;
+    extractionBlockedReason?: string;
     directoryExtractedCandidates?: DirectoryCandidate[];
     extractionAllowed?: boolean;
     skippedAssetUrls?: string[];

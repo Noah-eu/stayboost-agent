@@ -260,6 +260,11 @@ const socialProfileSignalsForLead = (lead: Pick<Lead, 'websiteExtraction' | 'pub
 };
 
 export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'strengths' | 'publicSignals' | 'checkInParkingInfo'>): PlaybookAssessment => {
+    const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus;
+    const sourceClassification = lead.websiteExtraction?.sourceUrlClassification;
+    if (ownershipStatus && ['directory', 'municipal-catalog', 'aggregator'].includes(ownershipStatus) || sourceClassification && ['directory-listing', 'municipal-catalog', 'ota-or-aggregator'].includes(sourceClassification)) {
+        return { leadPlaybook: 'skip', leadPlaybookReason: 'Zdroj je katalog/agregátor, ne vlastní web provozu; před nápady je potřeba oficiální web.', playbookSignals: ['official-website-required'] };
+    }
     const signals = detectCandidateSpecificSignals(lead);
     const multiPropertySignals = firstSignals(signals, ['vilaKrumlov', 'pensionGalko', 'linkedDomains', 'sharedReception', 'checkInWindow', 'lateArrival', 'checkoutTime', 'parkingReservation', 'parkingPaid', 'parkingLimited', 'parkingDistance'], 10);
     const restaurantSignals = firstSignals(signals, ['sklepRestaurant', 'restaurant', 'breakfast']);
@@ -510,6 +515,7 @@ const playbookWins = (playbook: LeadPlaybook, lead: Pick<Lead, 'websiteExtractio
     if (playbook === 'social-profile-web-presence') return socialProfileWebPresenceWins(lead);
     if (playbook === 'romantic-wellness-stay') return romanticWellnessWins(lead, signals);
     if (playbook === 'event-wedding-hotel') return eventWeddingWins(lead, signals);
+    if (playbook === 'skip') return [];
     return basicGuestGuideWins(lead, signals);
 };
 
@@ -552,6 +558,7 @@ export const buildSpecificFreeIdeas = (lead: Pick<Lead, 'name' | 'websiteExtract
     const signals = detectCandidateSpecificSignals(lead);
     const playbook = determineLeadPlaybook(lead).leadPlaybook;
     const wins = playbookWins(playbook, lead, signals);
+    if (playbook === 'skip') return [];
     const annotatedExisting = existingWins.map((win) => annotateQuickWinSpecificity(win, lead));
     const nonDuplicateExisting = annotatedExisting.filter((win) => !wins.some((candidate) => normalize(candidate.title) === normalize(win.title)));
     const merged = [...wins, ...nonDuplicateExisting].slice(0, 3);
