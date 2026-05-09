@@ -262,7 +262,7 @@ const socialProfileSignalsForLead = (lead: Pick<Lead, 'websiteExtraction' | 'pub
 export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'strengths' | 'publicSignals' | 'checkInParkingInfo'>): PlaybookAssessment => {
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus;
     const sourceClassification = lead.websiteExtraction?.sourceUrlClassification;
-    if (ownershipStatus && ['directory', 'municipal-catalog', 'aggregator'].includes(ownershipStatus) || sourceClassification && ['directory-listing', 'municipal-catalog', 'ota-or-aggregator'].includes(sourceClassification)) {
+    if (ownershipStatus && ['directory', 'municipal-catalog', 'aggregator', 'platform-listing'].includes(ownershipStatus) || sourceClassification && ['directory-listing', 'municipal-catalog', 'ota-or-aggregator', 'platform-hosted-profile', 'platform-listing'].includes(sourceClassification)) {
         return { leadPlaybook: 'skip', leadPlaybookReason: 'Zdroj je katalog/agregátor, ne vlastní web provozu; před nápady je potřeba oficiální web.', playbookSignals: ['official-website-required'] };
     }
     const signals = detectCandidateSpecificSignals(lead);
@@ -293,10 +293,11 @@ export const determineLeadPlaybook = (lead: Pick<Lead, 'websiteExtraction' | 'st
 const cityOrientationWin = (lead: Pick<Lead, 'websiteExtraction'>, signals: SpecificSignal[]) => {
     const usedSignals = firstSignals(signals, ['zizkov', 'pragueCentre', 'brnoCentre', 'tram', 'cityArrival', 'contact'], 5);
     const cityName = hasSignal(signals, ['zizkov', 'pragueCentre']) ? 'Praze' : hasSignal(signals, ['brnoCentre']) ? 'Brně' : 'městě';
+    const orientationPlace = hasSignal(signals, ['zizkov']) ? 'orientace v Praze 3/Žižkově' : hasSignal(signals, ['pragueCentre']) ? 'orientace v centru Prahy' : hasSignal(signals, ['brnoCentre']) ? 'orientace v centru Brna' : 'orientace v okolí ubytování';
     return makeWin(
         `První večer v ${cityName} bez hledání`,
         `Host má po příjezdu rychle pochopit okolí a první kroky: ${usedSignals.join(', ') || 'městská orientace'}.`,
-        'Po rezervaci poslat krátký blok: příjezd do ulice, orientace v Praze 3/Žižkově nebo centru, nejbližší doprava, kontakt a co udělat první večer.',
+        `Po rezervaci poslat krátký blok: příjezd do ulice, ${orientationPlace}, nejbližší doprava, kontakt a co udělat první večer.`,
         evidenceFor(signals, ['zizkov', 'pragueCentre', 'brnoCentre', 'tram', 'cityArrival', 'contact'], lead.websiteExtraction?.summary || 'Veřejný web provozu'),
         'městská orientace a první večer po příjezdu',
         usedSignals,
@@ -605,7 +606,8 @@ export const freeIdeaSpecificityDiagnostics = (lead: Pick<Lead, 'structuredQuick
     const missingSignalsUsedCount = ideas.filter(ideaUsesMissingSignal).length;
     const repeatedTemplateWarning = genericFreeIdeasCount >= 2
         || templateThemeCount >= 2
-        || ideas.filter((idea) => genericTitlePattern.test(idea.title) && (idea.usedSignals ?? []).length < 2).length >= 2;
+        || ideas.filter((idea) => genericTitlePattern.test(idea.title) && (idea.usedSignals ?? []).length < 2).length >= 2
+        || (/rozdelit\W+pokyny\W+pro\W+apartman\W+s\W+kuchyni\W+rodinny\W+apartman\W+a\W+pokoj/.test(combinedIdeas) && !/apartman\w*\s+s\s+kuchyni|rodinny\s+apartman|typy\s+(?:apartmanu|pokoju)|studio|family\s+room/.test(normalize(textForExtraction(lead.websiteExtraction))));
     const repeatedConceptWarning = uniqueConceptCount <= 1
         || concepts.every((concept) => arrivalOnlyConcepts.has(concept))
         || concepts.filter((concept) => arrivalOnlyConcepts.has(concept)).length === ideas.length;

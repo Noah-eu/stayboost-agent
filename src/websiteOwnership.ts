@@ -11,6 +11,8 @@ const directoryHostPattern = /(^|\.)(katalog|catalog|directory)\.|seznam\.|firmy
 const municipalCatalogPattern = /praha\d*\.cz\/.*(?:katalog|redakce\/index\.php|hlkat)|(?:mesto|mestsk|obec|obecn)[^\n]{0,80}(?:katalog|portal)|oficialni internetove stranky mestske casti|městská část|mestska cast|hlkat|redakce\/index\.php/i;
 const directoryContentPattern = /\bkatalog\b|\bdirectory\b|hlkat|redakce\/index\.php|firemn[ií] katalog|seznam firem/i;
 const otaPattern = /booking\.com|airbnb\.|google\.|maps\.google\.|tripadvisor\.|expedia\.|agoda\.|trivago\.|slevomat\.|hotelscombined\.|hotels\.com|vrbo\.|hostelworld\.|hrs\.|ebookers\.|kayak\.|momondo\.|skyscanner\.|trip\.com/i;
+const hotelPlatformHostPattern = /(^|\.)(hotely\.cz|hotel\.cz)$/i;
+const hotelPlatformContentPattern = /hotely\.cz|ubytov[aá]n[ií]\s+[^|\n]{0,80}\|\s*hotely\.cz|hotely\s+a\s+ubytov[aá]n[ií]|slevy\s+pro\s+[čc]leny|obl[ií]ben[eé]\s+slu[zž]by|typ\s+ubytov[aá]n[ií]|na\s+z[aá]klad[eě]\s+hodnocen[ií]|vhodn[eé]\s+pro\s+rodiny\s+s\s+d[eě]tmi|vybaven[ií]|zobrazit\s+detail/i;
 const socialHostPattern = /(^|\.)(facebook\.com|instagram\.com|linktr\.ee|business\.site)$/i;
 const socialLoginPathPattern = /^\/?$|\/login|\/privacy|\/help|\/policies|\/unsupportedbrowser|\/recover|\/kontakt\/?$|\/contact\/?$|\/rekreace\.php\/?$|\/moznosti-rekreace\/?$|\/cenik\.php\/?$|\/rezervace\.php\/?$/i;
 const binaryPreviewPattern = /^(GIF89a|GIF87a|PNG\r?\n|%PDF-|PNG)/;
@@ -25,7 +27,41 @@ const safeUrl = (value = '') => {
 
 const withProtocol = (value = '') => /^https?:\/\//i.test(value) ? value : `https://${value}`;
 
+export const propertySlugFromName = (name = '') => normalize(name)
+    .replace(/\b(apartmany|apartmany|apartments|apartment|hotel|penzion|pension|ubytovani|restaurace|restaurant)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+export const propertyNameMatchScore = (propertyName = '', pageText = '') => {
+    const normalizedName = normalize(propertyName).replace(/[^a-z0-9]+/g, ' ').trim();
+    const normalizedText = normalize(pageText).replace(/[^a-z0-9]+/g, ' ');
+    const expectedSlug = propertySlugFromName(propertyName);
+    if (!normalizedName) return 0;
+    if (normalizedText.includes(normalizedName)) return 100;
+    if (expectedSlug && normalize(pageText).includes(expectedSlug)) return 85;
+    const tokens = normalizedName.split(/\s+/).filter((token) => token.length > 2);
+    if (tokens.length === 0) return 0;
+    const matches = tokens.filter((token) => normalizedText.includes(token)).length;
+    return Math.round(matches / tokens.length * 100);
+};
+
+export const platformListingContaminationDetected = (input: { url?: string; pageText?: string; candidateName?: string }) => {
+    const text = `${input.url || ''}\n${input.pageText || ''}`;
+    if (!isHotelPlatformUrl(input.url || '') && !isPlatformListingContent(text)) return false;
+    if (isPlatformListingContent(text)) return true;
+    return Boolean(input.candidateName && propertyNameMatchScore(input.candidateName, text) < 60);
+};
+
 export const isAssetUrl = (value = '') => assetExtensionPattern.test(value) || assetPathPattern.test(value);
+
+export const isHotelPlatformUrl = (value = '') => {
+    const parsed = safeUrl(value);
+    const host = parsed?.hostname.replace(/^www\./, '') || value.toLowerCase();
+
+    return hotelPlatformHostPattern.test(host);
+};
+
+export const isPlatformListingContent = (text = '') => hotelPlatformContentPattern.test(text);
 
 export const isSocialPlatformUrl = (value = '') => {
     const parsed = safeUrl(value);
@@ -66,6 +102,7 @@ export const classifySourceUrl = (url = '', pageText = ''): SourceUrlClassificat
     if (isAssetUrl(url)) return 'asset-or-file';
     if (isSocialPlatformLoginUrl(url)) return 'social-platform-login';
     if (isSocialPlatformUrl(url)) return 'social-profile';
+    if (isHotelPlatformUrl(url)) return isPlatformListingContent(combined) ? 'platform-listing' : 'platform-hosted-profile';
     if (otaPattern.test(`${host}${pathname}${url}`)) return 'ota-or-aggregator';
     if (municipalCatalogPattern.test(`${host}${pathname}`) || /praha\d*\.cz/i.test(host) && /(katalog|redakce\/index\.php|hlkat)/i.test(pathname)) return 'municipal-catalog';
     if (directoryHostPattern.test(host)) return 'directory-listing';
@@ -83,6 +120,7 @@ export const ownershipStatusForClassification = (classification: SourceUrlClassi
     if (classification === 'municipal-catalog') return 'municipal-catalog';
     if (classification === 'directory-listing') return 'directory';
     if (classification === 'ota-or-aggregator') return 'aggregator';
+    if (classification === 'platform-hosted-profile' || classification === 'platform-listing') return 'platform-listing';
     if (classification === 'asset-or-file') return 'asset';
     return 'unknown';
 };
@@ -97,6 +135,7 @@ export const ownershipReason = (status: WebsiteOwnershipStatus, url = '') => {
     if (status === 'municipal-catalog') return 'URL nebo obsah odpovídá městskému katalogu / portálu, ne vlastnímu webu ubytování.';
     if (status === 'directory') return 'URL nebo obsah odpovídá katalogu / directory listingu, ne vlastnímu webu ubytování.';
     if (status === 'aggregator') return 'URL odpovídá OTA nebo agregátoru, Website Extractor ji nečte jako vlastní web.';
+    if (status === 'platform-listing') return 'URL nebo obsah odpovídá profilu / listingu Hotely.cz nebo Hotel.cz, ne vlastnímu webu provozu.';
     if (status === 'asset') return `URL je soubor nebo asset (${url}), nelze ji analyzovat jako web.`;
     return 'Původ URL nejde bezpečně určit; před obchodním výstupem je potřeba ověřit vlastní web.';
 };
@@ -172,7 +211,7 @@ export const assessWebsiteOwnership = (input: { url?: string; pageText?: string;
         websiteOwnershipStatus,
         socialProfileStatus: websiteOwnershipStatus === 'social-profile' ? 'social-profile' as const : websiteOwnershipStatus === 'social-platform-login' ? 'social-platform-login' as const : 'none' as const,
         ownedWebsiteDetected: websiteOwnershipStatus === 'official',
-        needsOwnedWebsite: ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(websiteOwnershipStatus),
+        needsOwnedWebsite: ['social-profile', 'social-platform-login', 'no-owned-website-detected', 'platform-listing', 'aggregator', 'directory', 'municipal-catalog'].includes(websiteOwnershipStatus),
         analysisSource: websiteOwnershipStatus === 'official' ? 'owned-website' as const : websiteOwnershipStatus === 'social-profile' ? 'social-profile' as const : websiteOwnershipStatus === 'social-platform-login' ? 'search-or-social-profile' as const : 'unknown' as const,
         extractionAllowedForWebsiteAudit: websiteOwnershipStatus === 'official',
         websiteOwnershipReason: ownershipReason(websiteOwnershipStatus, input.url || ''),

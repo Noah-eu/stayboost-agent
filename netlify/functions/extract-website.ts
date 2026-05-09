@@ -1,4 +1,4 @@
-import { assessWebsiteOwnership, isAssetPage, isAssetUrl, isSocialPlatformLoginUrl, isSocialPlatformUrl } from '../../src/websiteOwnership';
+import { assessWebsiteOwnership, isAssetPage, isAssetUrl, isSocialPlatformLoginUrl, isSocialPlatformUrl, propertyNameMatchScore, propertySlugFromName } from '../../src/websiteOwnership';
 import { extractValidPhones, isLikelyPhoneNumber } from '../../src/phoneValidation';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -79,6 +79,8 @@ const blockedAggregatorHosts = [
     'slevomat.',
     'hotelscombined.',
     'hotels.com',
+    'hotely.cz',
+    'hotel.cz',
     'vrbo.',
     'hostelworld.',
     'hrs.',
@@ -268,6 +270,10 @@ const fallbackResult = (request: ExtractWebsiteRequest, debugId: string, started
     extractedPriorityPages: [],
     missedPriorityPages: priorityPageDefinitions.map((definition) => definition.label),
     priorityPagesFoundButNotExtracted: [],
+    platformListingContamination: false,
+    propertyNameMatchScore: 0,
+    expectedPropertySlug: propertySlugFromName(request.candidateName || ''),
+    crossPropertyLinksRejected: [],
     missingClaimsSuppressedByNavigation: [],
     needsPriorityPageExtraction: false,
     localExperienceSignals: [],
@@ -337,9 +343,20 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
     const ownership = assessWebsiteOwnership({
         url: candidateWebsiteUrl(request),
         pageText: content,
+        candidateName: request.candidateName,
         notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'),
         sourceUrls: request.sourceUrls || [],
     });
+    const platformListingContamination = ownership.websiteOwnershipStatus === 'platform-listing' || ownership.sourceUrlClassification === 'platform-listing' || ownership.sourceUrlClassification === 'platform-hosted-profile';
+    const expectedPropertySlug = propertySlugFromName(request.candidateName || '');
+    const currentPropertyNameMatchScore = propertyNameMatchScore(request.candidateName || '', content);
+    const crossPropertyLinksRejected = platformListingContamination
+        ? strategy.discoveredNavigationLinks.filter((link) => {
+            if (!expectedPropertySlug) return false;
+            const parsed = safeUrl(link.url);
+            return !normalizeForMatch(`${parsed?.pathname ?? link.url}\n${link.text}\n${link.label}`).includes(expectedPropertySlug);
+        })
+        : [];
     const sourceText = [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n');
     const rawEmails = extractEmails(`${rawText}\n${sourceText}`);
     const rawPhones = extractPhones(`${rawText}\n${sourceText}`);
@@ -458,33 +475,37 @@ const analyzePages = (request: ExtractWebsiteRequest, debugId: string, startedAt
         discoveredInternalLinksCount: strategy.discoveredInternalLinksCount,
         discoveredNavigationLinks: strategy.discoveredNavigationLinks,
         guessedUrlsUsed: strategy.guessedUrlsUsed,
-        pagesExtracted: pages,
+        platformListingContamination,
+        propertyNameMatchScore: currentPropertyNameMatchScore,
+        expectedPropertySlug,
+        crossPropertyLinksRejected,
+        pagesExtracted: platformListingContamination ? [] : pages,
         skippedPages,
-        validPagesCount: pages.length,
-        invalidPagesCount: skippedPages.length,
+        validPagesCount: platformListingContamination ? 0 : pages.length,
+        invalidPagesCount: platformListingContamination ? skippedPages.length + pages.length : skippedPages.length,
         contact: { emails, phones, contactPageUrl: contactPage },
         directoryContact: { ...directoryContact, contactPageUrl: ownership.websiteOwnershipStatus === 'official' ? null : contactPage },
         contactOwnershipStatus: ownership.websiteOwnershipStatus === 'official' ? 'official-contact' as const : isSocialProfile ? 'source-contact' as const : 'directory-contact' as const,
-        websiteSignals,
+        websiteSignals: platformListingContamination ? [] : websiteSignals,
         extractedPriorityPages,
         missedPriorityPages,
         priorityPagesFoundButNotExtracted,
         missingClaimsSuppressedByNavigation,
         needsPriorityPageExtraction: priorityPagesFoundButNotExtracted.length > 0,
-        localExperienceSignals,
+        localExperienceSignals: platformListingContamination ? [] : localExperienceSignals,
         ...arrivalParkingDetails,
-        arrivalSignals,
-        parkingSignals,
-        faqSignals,
-        guestGuideSignals,
-        automationSignals,
+        arrivalSignals: platformListingContamination ? [] : arrivalSignals,
+        parkingSignals: platformListingContamination ? [] : parkingSignals,
+        faqSignals: platformListingContamination ? [] : faqSignals,
+        guestGuideSignals: platformListingContamination ? [] : guestGuideSignals,
+        automationSignals: platformListingContamination ? [] : automationSignals,
         missingPublicInfoSignals,
         suppressedMissingSignals,
         likelyManualProcessSignals,
-        strengths,
+        strengths: platformListingContamination ? [] : strengths,
         risks,
-        setupOpportunitySignals: unique(setupOpportunitySignals),
-        fixOpportunitySignals: unique(fixOpportunitySignals),
+        setupOpportunitySignals: platformListingContamination ? [] : unique(setupOpportunitySignals),
+        fixOpportunitySignals: platformListingContamination ? [] : unique(fixOpportunitySignals),
         evidenceLimits: unique([
             ownership.websiteOwnershipStatus === 'social-profile' ? 'Zdroj je sociální profil; nejde o vlastní web a obsah může být omezen loginem.' : ownership.extractionAllowed ? 'Website Extractor cetl pouze vlastni verejny web provozu.' : 'Website Extractor rozpoznal katalog/directory/social zdroj; kontakty z teto stranky nejsou automaticky vlastni web provozu.',
             'OTA profily jako Booking/Airbnb/Google Maps nebyly cteny.',
@@ -558,7 +579,25 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
             });
         }
 
-        const preflightOwnership = assessWebsiteOwnership({ url: websiteUrl, notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'), sourceUrls: request.sourceUrls || [] });
+        const preflightOwnership = assessWebsiteOwnership({ url: websiteUrl, candidateName: request.candidateName, notes: [request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n'), sourceUrls: request.sourceUrls || [] });
+        if (['platform-listing', 'aggregator', 'directory', 'municipal-catalog'].includes(preflightOwnership.websiteOwnershipStatus)) {
+            return json(200, {
+                ...fallbackResult(request, debugId, startedAt, 'unsupported', `unsupported_source: ${preflightOwnership.sourceUrlClassification}`, 'error'),
+                ...preflightOwnership,
+                websiteUrl,
+                platformListingContamination: preflightOwnership.websiteOwnershipStatus === 'platform-listing',
+                propertyNameMatchScore: propertyNameMatchScore(request.candidateName || '', websiteUrl),
+                expectedPropertySlug: propertySlugFromName(request.candidateName || ''),
+                crossPropertyLinksRejected: [],
+                pagesExtracted: [],
+                validPagesCount: 0,
+                contact: { emails: [], phones: [], contactPageUrl: null },
+                directoryContact: { emails: extractEmails([request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n')), phones: extractPhones([request.notes, ...(request.sourceSnippets || [])].filter(Boolean).join('\n')), contactPageUrl: null },
+                contactOwnershipStatus: 'directory-contact',
+                evidenceLimits: ['Zdroj je platforma/katalog/agregátor, ne vlastní web provozu.', 'Website Extractor čeká na oficiální web mimo platformu.'],
+                summary: `${request.candidateName || 'Kandidat'}: aktuální zdroj je platforma/katalog/agregátor, ne vlastní web provozu.`,
+            });
+        }
         if (preflightOwnership.websiteOwnershipStatus === 'asset') {
             return json(200, {
                 ...fallbackResult(request, debugId, startedAt, 'unsupported', 'unsupported_source: asset_or_file', 'error', [], [{ url: websiteUrl, title: websiteUrl, reason: 'asset_or_binary_file' }]),

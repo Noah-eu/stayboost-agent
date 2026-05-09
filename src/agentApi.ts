@@ -508,6 +508,8 @@ const blockedAggregatorHosts = [
     'slevomat.',
     'hotelscombined.',
     'hotels.com',
+    'hotely.cz',
+    'hotel.cz',
 ];
 
 const isBlockedAggregatorUrl = (url = '') => blockedAggregatorHosts.some((host) => url.toLowerCase().includes(host));

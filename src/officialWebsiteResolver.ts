@@ -15,7 +15,7 @@ export interface OfficialWebsiteResolution {
 }
 
 const unique = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-const directoryClassifications: SourceUrlClassification[] = ['directory-listing', 'municipal-catalog', 'ota-or-aggregator'];
+const directoryClassifications: SourceUrlClassification[] = ['directory-listing', 'municipal-catalog', 'ota-or-aggregator', 'platform-hosted-profile', 'platform-listing'];
 
 const normalizeUrl = (value = '') => {
     const trimmed = value.trim();
@@ -27,6 +27,7 @@ export const isDiscoverySourceClassification = (classification?: SourceUrlClassi
 
 export const classifyPublicLinkLabel = (url = '') => {
     const classification = classifySourceUrl(url);
+    if (classification === 'platform-hosted-profile' || classification === 'platform-listing') return 'Platforma / Hotely.cz profil';
     if (classification === 'directory-listing' || classification === 'municipal-catalog') return 'Katalog / directory';
     if (classification === 'ota-or-aggregator') return 'OTA / agregátor / recenze';
     if (classification === 'official-property-website') return 'Vlastní web';
@@ -60,14 +61,15 @@ export const resolveOfficialWebsite = (lead: Partial<Lead>): OfficialWebsiteReso
     const publicLinkCandidate = officialUrlFromLinks(lead.publicLinks ?? []);
     const directoryCandidate = officialUrlFromDirectoryCandidates([...(lead.directoryExtractedCandidates ?? []), ...(lead.websiteExtraction?.directoryExtractedCandidates ?? [])]);
     const sourceMaterialCandidate = officialUrlFromSourceMaterials(lead.sourceMaterials ?? []);
-    const officialWebsiteCandidateUrl = publicLinkCandidate || directoryCandidate || sourceMaterialCandidate || lead.officialWebsiteCandidateUrl || lead.websiteExtraction?.officialWebsiteCandidateUrl || '';
+    const manualCandidate = lead.officialWebsiteCandidateUrl || lead.websiteExtraction?.officialWebsiteCandidateUrl || '';
+    const officialWebsiteCandidateUrl = manualCandidate || publicLinkCandidate || directoryCandidate || sourceMaterialCandidate || '';
 
     if (isDiscoverySourceClassification(originalUrlClassification)) {
         if (officialWebsiteCandidateUrl) {
             return {
                 selectedExtractionUrl: officialWebsiteCandidateUrl,
-                selectedExtractionReason: `Původní URL je katalog/agregátor; pro analýzu použít oficiální web ${officialWebsiteCandidateUrl}.`,
-                selectedExtractionSource: publicLinkCandidate ? 'official-public-link' : directoryCandidate ? 'directory-candidate' : sourceMaterialCandidate ? 'user-provided-official-url' : 'directory-candidate',
+                selectedExtractionReason: `Původní URL je katalog/agregátor/platforma; pro analýzu použít oficiální web ${officialWebsiteCandidateUrl}.`,
+                selectedExtractionSource: manualCandidate ? 'user-provided-official-url' : publicLinkCandidate ? 'official-public-link' : directoryCandidate ? 'directory-candidate' : sourceMaterialCandidate ? 'user-provided-official-url' : 'directory-candidate',
                 originalUrlClassification,
                 officialWebsiteCandidateUrl,
                 directoryUrl,
@@ -77,7 +79,7 @@ export const resolveOfficialWebsite = (lead: Partial<Lead>): OfficialWebsiteReso
 
         return {
             selectedExtractionUrl: '',
-            selectedExtractionReason: 'Původní URL je katalog/agregátor a zatím není známý oficiální web provozu.',
+            selectedExtractionReason: 'Původní URL je katalog/agregátor/platforma a zatím není známý oficiální web provozu.',
             selectedExtractionSource: 'none',
             originalUrlClassification,
             directoryUrl,

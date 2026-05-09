@@ -93,13 +93,15 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
         && lead.websiteExtraction.validPagesCount > 0
         && (!officialResolution.officialWebsiteCandidateUrl || lead.websiteExtraction.websiteUrl === officialResolution.officialWebsiteCandidateUrl));
     const officialWebsiteExtractionPending = (lead.shouldReextractOfficialWebsite ?? officialResolution.shouldReextractOfficialWebsite) && !hasExtractedOfficialCandidate;
-    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status) && !officialWebsiteExtractionPending);
+    const officialWebsiteMissing = officialResolution.extractionBlockedReason === 'needs-official-website';
+    const hasWebsiteExtraction = Boolean(lead.websiteExtraction && ['completed', 'partial'].includes(lead.websiteExtraction.status) && !officialWebsiteExtractionPending && !officialWebsiteMissing);
     const hasAgentAnalysis = Boolean(lead.createdFromAgentAnalysis && !lead.needsAgentAnalysis);
     const hasClientOutputs = Boolean(clientOutputs[0].trim() && lead.generatedOutreach.trim() && lead.generatedFollowUp.trim() && lead.generatedOffer.trim());
     const freeIdeaStructuralIssues = freeIdeaStructuralIssuesForLead(lead);
     const unsupportedFreeIdeaClaims = uniqueStrings(freeIdeaUnsupportedClaims(lead));
     const hasQuickWins = ideaSetForLead(lead).length === 3 && freeIdeaStructuralIssues.length === 0;
     const freeIdeasReady = !officialWebsiteExtractionPending
+        && !officialWebsiteMissing
         && ideaDiagnostics.freeIdeasReady
         && hasQuickWins
         && unsupportedFreeIdeaClaims.length === 0
@@ -120,13 +122,14 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
             structuredQuickWins: [],
         })
         : { evidenceClaimReady: true, unsupportedClientClaims: [], unsupportedSignalClaims: [] };
-    const guestGuidePreviewReady = !officialWebsiteExtractionPending && guestGuidePreviewDiagnostics.evidenceClaimReady;
+    const guestGuidePreviewReady = !officialWebsiteExtractionPending && !officialWebsiteMissing && guestGuidePreviewDiagnostics.evidenceClaimReady;
     const contactReady = lead.contactQuality?.contactReady ?? Boolean((lead.websiteExtraction?.contact.emails.length ?? 0) + (lead.websiteExtraction?.contact.phones.length ?? 0));
     const needsOfficialWebsite = Boolean(lead.websiteExtraction && (lead.websiteExtraction.extractionAllowed === false || ownershipStatus && ownershipStatus !== 'official'));
     const rawClientTextReady = clientDiagnostics.clientTextReady;
-    const clientTextReady = !officialWebsiteExtractionPending && rawClientTextReady && evidenceClaimReady && freeIdeasReady && guestGuidePreviewReady;
+    const clientTextReady = !officialWebsiteExtractionPending && !officialWebsiteMissing && rawClientTextReady && evidenceClaimReady && freeIdeasReady && guestGuidePreviewReady;
     const notReadyReasons = uniqueStrings([
         officialWebsiteExtractionPending ? 'Zdroj je katalog/agregátor; před výstupem je potřeba extrahovat nalezený oficiální web.' : '',
+        officialWebsiteMissing ? 'Zdroj je platforma/katalog/agregátor; před výstupem je potřeba doplnit oficiální web.' : '',
         !evidenceClaimReady ? 'Výstup obsahuje tvrzení bez evidence.' : '',
         unsupportedClientClaims.length > 0 ? `chybí evidence pro klientské signály: ${unsupportedClientClaims.join(', ')}` : '',
         unsupportedSignalClaims.length > 0 ? `chybí evidence pro interní signály: ${unsupportedSignalClaims.join(', ')}` : '',
@@ -143,10 +146,11 @@ export function computeLeadWorkflowReadiness(lead: Lead): LeadWorkflowReadiness 
 
     let nextRecommendedAction: LeadNextRecommendedAction = 'ready-to-review';
     if (officialWebsiteExtractionPending) nextRecommendedAction = 'needs-official-website-extraction';
+    else if (officialWebsiteMissing) nextRecommendedAction = 'needs-official-website';
     else if (!evidenceClaimReady || !guestGuidePreviewReady) nextRecommendedAction = 'needs-evidence-review';
     else if (!freeIdeasReady || ideaDiagnostics.repeatedConceptWarning) nextRecommendedAction = 'needs-idea-review';
     else if (isSocialSource && !contactReady) nextRecommendedAction = 'needs-owned-website-or-screenshot-review';
-    else if (needsOfficialWebsite || officialResolution.extractionBlockedReason === 'needs-official-website') nextRecommendedAction = 'needs-official-website';
+    else if (needsOfficialWebsite) nextRecommendedAction = 'needs-official-website';
     else if (ideaDiagnostics.localExperienceExtractionReady === false) nextRecommendedAction = 'needs-extraction-review';
     else if (hasWebsiteExtraction && lead.contactQuality?.emailSource === 'discovery-fallback') nextRecommendedAction = contactReady ? 'needs-contact-review' : 'needs-extraction-review';
     else if (hasWebsiteExtraction && !contactReady) nextRecommendedAction = 'needs-contact-review';

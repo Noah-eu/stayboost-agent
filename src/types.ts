@@ -33,9 +33,9 @@ export type ExtractionStatus = 'idle' | 'ready' | 'running' | 'completed' | 'nee
 
 export type RecommendedProduct = 'guest-guide-starter' | 'guest-communication-setup' | 'simple-website-starter' | 'ops-audit' | 'skip';
 
-export type SourceUrlClassification = 'official-property-website' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory-listing' | 'municipal-catalog' | 'ota-or-aggregator' | 'asset-or-file' | 'unknown';
+export type SourceUrlClassification = 'official-property-website' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory-listing' | 'municipal-catalog' | 'ota-or-aggregator' | 'platform-hosted-profile' | 'platform-listing' | 'asset-or-file' | 'unknown';
 
-export type WebsiteOwnershipStatus = 'official' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory' | 'municipal-catalog' | 'aggregator' | 'asset' | 'unknown';
+export type WebsiteOwnershipStatus = 'official' | 'social-profile' | 'social-platform-login' | 'no-owned-website-detected' | 'directory' | 'municipal-catalog' | 'aggregator' | 'platform-listing' | 'asset' | 'unknown';
 
 export type ContactOwnershipStatus = 'official-contact' | 'directory-contact' | 'discovery-contact' | 'source-contact' | 'unknown';
 
@@ -222,6 +222,10 @@ export interface WebsiteExtractionResult {
     extractedPriorityPages?: string[];
     missedPriorityPages?: string[];
     priorityPagesFoundButNotExtracted?: WebsiteNavigationLink[];
+    platformListingContamination?: boolean;
+    propertyNameMatchScore?: number;
+    expectedPropertySlug?: string;
+    crossPropertyLinksRejected?: WebsiteNavigationLink[];
     missingClaimsSuppressedByNavigation?: string[];
     needsPriorityPageExtraction?: boolean;
     localExperienceSignals?: string[];

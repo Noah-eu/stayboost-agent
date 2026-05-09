@@ -129,11 +129,30 @@ const socialUnsupportedClaimsInText = (text: string, lead: Partial<Lead>) => {
     return socialLead && ownedWebsiteClaimPattern.test(text) ? ['vlastní web / přečetl jsem váš web'] : [];
 };
 
+const wrongCityClaimsInText = (text: string, lead: Partial<Lead>) => {
+    const normalizedCity = normalize(lead.city ?? '');
+    const normalizedEvidence = normalize(evidenceTextForLead(lead));
+    const normalizedText = normalize(text);
+    const isKutnaHoraLead = normalizedCity.includes('kutna hora') || normalizedEvidence.includes('kutna hora');
+    const evidenceSupportsPrague = /\bpraha\b|praha\s*3|zizkov|centrum\s+prahy/.test(normalizedEvidence);
+
+    return isKutnaHoraLead && !evidenceSupportsPrague && /\bpraha\b|praha\s*3|zizkov|centrum\s+prahy/.test(normalizedText) ? ['wrong-city-claim'] : [];
+};
+
+const templateLeakClaimsInText = (text: string, lead: Partial<Lead>) => {
+    const normalizedText = normalize(text);
+    const normalizedEvidence = normalize(evidenceTextForLead(lead));
+    const hasTemplateLeak = /rozdelit\s+pokyny\s+pro\s+apartman\s+s\s+kuchyni,?\s+rodinny\s+apartman\s+a\s+pokoj/.test(normalizedText);
+    const hasEvidence = /apartman\w*\s+s\s+kuchyni|rodinny\s+apartman|typy\s+(?:apartmanu|pokoju)|studio|family\s+room/.test(normalizedEvidence);
+
+    return hasTemplateLeak && !hasEvidence ? ['template-leak'] : [];
+};
+
 export const validateEvidenceClaims = (lead: Partial<Lead>): EvidenceClaimDiagnostics => {
     const evidenceText = evidenceTextForLead(lead);
     const clientText = clientClaimTextForLead(lead);
-    const unsupportedClientClaims = [...unsupportedClaimsInText(clientText, evidenceText), ...socialUnsupportedClaimsInText(clientText, lead)];
-    const unsupportedSignalClaims = unsupportedClaimsInText(signalClaimTextForLead(lead), evidenceText);
+    const unsupportedClientClaims = [...unsupportedClaimsInText(clientText, evidenceText), ...socialUnsupportedClaimsInText(clientText, lead), ...wrongCityClaimsInText(clientText, lead), ...templateLeakClaimsInText(clientText, lead)];
+    const unsupportedSignalClaims = [...unsupportedClaimsInText(signalClaimTextForLead(lead), evidenceText), ...wrongCityClaimsInText(signalClaimTextForLead(lead), lead), ...templateLeakClaimsInText(signalClaimTextForLead(lead), lead)];
 
     return {
         unsupportedClientClaims: unique(unsupportedClientClaims),
@@ -145,12 +164,14 @@ export const validateEvidenceClaims = (lead: Partial<Lead>): EvidenceClaimDiagno
 export const sanitizeUnsupportedClaimsFromText = (text = '', lead: Partial<Lead>) => {
     const unsupportedClaims = unsupportedClaimsInText(text, evidenceTextForLead(lead));
     const socialUnsupportedClaims = socialUnsupportedClaimsInText(text, lead);
-    if (unsupportedClaims.length === 0 && socialUnsupportedClaims.length === 0) return text;
+    const cityClaims = wrongCityClaimsInText(text, lead);
+    const templateClaims = templateLeakClaimsInText(text, lead);
+    if (unsupportedClaims.length === 0 && socialUnsupportedClaims.length === 0 && cityClaims.length === 0 && templateClaims.length === 0) return text;
 
     const unsupportedGroups = claimGroups.filter((group) => unsupportedClaims.includes(group.label));
     return text
         .split(/(?<=[.!?])\s+|\n+/g)
-        .filter((sentence) => !unsupportedGroups.some((group) => group.claim.test(normalize(sentence))) && !socialUnsupportedClaimsInText(sentence, lead).length)
+        .filter((sentence) => !unsupportedGroups.some((group) => group.claim.test(normalize(sentence))) && !socialUnsupportedClaimsInText(sentence, lead).length && !wrongCityClaimsInText(sentence, lead).length && !templateLeakClaimsInText(sentence, lead).length)
         .join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
