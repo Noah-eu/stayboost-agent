@@ -109,6 +109,7 @@ ${lead.qualificationReason || lead.businessOpportunity || 'Doplnit podklady, pot
 }
 
 export function generateMiniAudit(lead: Lead) {
+    if (lead.safeMinimumOutputApplied && (lead.clientMiniAudit || lead.generatedMiniAudit)) return sanitizeGeneratedText(lead.clientMiniAudit || lead.generatedMiniAudit, 260);
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {
@@ -141,6 +142,7 @@ ${paidStep}.`, 260);
 }
 
 export function generateFirstOutreach(lead: Lead) {
+    if (lead.safeMinimumOutputApplied && lead.generatedOutreach) return sanitizeGeneratedText(lead.generatedOutreach, 155);
     const gate = qualityGate(lead);
 
     if (!gate.isReady) {

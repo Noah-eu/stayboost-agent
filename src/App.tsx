@@ -13,6 +13,7 @@ import { classifyPublicLinkLabel, isDiscoverySourceClassification, resolveOffici
 import { extractRejectedPhones, extractValidPhones, isLikelyPhoneNumber, mergePhones } from './phoneValidation';
 import { recommendedProductLabels, recommendProductForLead } from './productRecommendation';
 import { computeLeadWorkflowReadiness } from './readiness';
+import { buildSafeEvidenceFacts, buildSafeMinimumFollowUp, buildSafeMinimumFreeIdeas, buildSafeMinimumGuestGuidePreview, buildSafeMinimumMiniAudit, buildSafeMinimumOutreach, buildSafeMinimumPaidStep } from './safeMinimumOutput';
 import { assessWebsiteOwnership, isAssetPage, isAssetUrl, propertyNameMatchScore, propertySlugFromName } from './websiteOwnership';
 import {
     LeadAgentAnalysis,
@@ -144,6 +145,12 @@ const emptyLead = (): Lead => ({
     unsupportedClientClaims: [],
     unsupportedSignalClaims: [],
     evidenceClaimReady: true,
+    safeMinimumOutputApplied: false,
+    replacedUnsafeIdeasCount: 0,
+    safeFactsUsed: [],
+    safeFactCount: 0,
+    safeFactCategories: [],
+    outputMode: 'blocked',
     guestGuidePreviewStatus: 'not-created',
     guestGuidePreview: undefined,
     guestGuideSecondEmail: '',
@@ -731,11 +738,11 @@ const canonicalizeLeadEvidence = (lead: Lead): Lead => {
     const staleOpsAuditPaidStep = leadWithRecommendation.recommendedProduct !== 'ops-audit' && /ops audit|rychl[yý] audit|provozn[ií] audit/i.test(`${lead.generatedOffer}\n${lead.paidNextStep}`);
     const nextGeneratedOffer = staleOpsAuditPaidStep ? generateOffer(leadWithRecommendation) : lead.generatedOffer || generateOffer(leadWithRecommendation);
 
-    return applyClientOutputReadiness({
+    return applyClientOutputReadiness(applySafeMinimumOutput({
         ...leadWithRecommendation,
         generatedOffer: sanitizeClientText(nextGeneratedOffer),
         paidNextStep: sanitizeClientText(staleOpsAuditPaidStep ? nextGeneratedOffer : lead.paidNextStep || lead.generatedOffer || nextGeneratedOffer),
-    });
+    }));
 };
 
 const guardedPreAnalysisFitVerdict = (lead: Pick<Lead, 'needsAgentAnalysis' | 'confidence' | 'structuredQuickWins' | 'fitVerdict'>) => {
@@ -763,6 +770,98 @@ const clientOutputReadiness = (lead: Lead) => {
     };
 };
 
+const blockedOutputPattern = /zat[ií]m\s+bych\s+prvn[ií]\s+osloven[ií]\s+nepos[ií]lal|3\s+n[aá]pady\s+zdarma\s+zat[ií]m\s+negeneruji/i;
+const unsafeIdeaPattern = /zahrad|gril|praha|žižkov|zizkov|restaurac|wellness|rodinn[yý]\s+pobyt/i;
+
+const ideaUnsafeForSafeMinimum = (lead: Lead, idea: QuickWin) => {
+    if (!idea.title.trim() || !idea.why.trim() || !idea.action.trim() || !idea.sourceEvidence.trim()) return true;
+    if (unsafeIdeaPattern.test(`${idea.title}\n${idea.why}\n${idea.action}\n${idea.sourceEvidence}\n${(idea.usedSignals ?? []).join('\n')}`)) return true;
+    return !validateEvidenceClaims({
+        ...lead,
+        clientMiniAudit: '',
+        generatedMiniAudit: '',
+        generatedOutreach: '',
+        generatedFollowUp: '',
+        generatedOffer: '',
+        freeIdeaPurpose: '',
+        paidNextStep: '',
+        guestGuideSecondEmail: '',
+        guestGuidePreview: undefined,
+        structuredQuickWins: [idea],
+        freeIdeas: [idea],
+    }).evidenceClaimReady;
+};
+
+const applySafeMinimumOutput = (lead: Lead): Lead => {
+    const officialWebsiteReady = Boolean(lead.websiteExtraction
+        && lead.websiteExtraction.websiteOwnershipStatus === 'official'
+        && lead.websiteExtraction.extractionAllowedForWebsiteAudit !== false
+        && lead.websiteExtraction.validPagesCount > 0
+        && lead.websiteExtraction.platformListingContamination !== true);
+    const contactReady = lead.contactQuality?.contactReady ?? Boolean((lead.websiteExtraction?.contact.emails.length ?? 0) + (lead.websiteExtraction?.contact.phones.length ?? 0));
+    const { safeFacts, safeFactCount, safeFactCategories } = buildSafeEvidenceFacts(lead);
+
+    if (!officialWebsiteReady || !contactReady || safeFactCount < 3) {
+        return {
+            ...lead,
+            safeFactsUsed: safeFacts,
+            safeFactCount,
+            safeFactCategories,
+            outputMode: lead.outputMode ?? 'blocked',
+        };
+    }
+
+    const currentIdeas = (lead.freeIdeas?.length ? lead.freeIdeas : lead.structuredQuickWins ?? []).slice(0, 3);
+    const unsafeIdeas = currentIdeas.filter((idea) => ideaUnsafeForSafeMinimum(lead, idea));
+    const ideaDiagnostics = freeIdeaSpecificityDiagnostics({ ...lead, freeIdeas: currentIdeas, structuredQuickWins: currentIdeas });
+    const existingClientText = [lead.clientMiniAudit, lead.generatedMiniAudit, lead.generatedOutreach, lead.generatedOffer].join('\n');
+    const shouldApplySafeMinimum = currentIdeas.length !== 3
+        || unsafeIdeas.length > 0
+        || !ideaDiagnostics.freeIdeasReady
+        || !validateEvidenceClaims({ ...lead, freeIdeas: currentIdeas, structuredQuickWins: currentIdeas }).evidenceClaimReady
+        || blockedOutputPattern.test(existingClientText);
+
+    if (!shouldApplySafeMinimum) {
+        return {
+            ...lead,
+            safeMinimumOutputApplied: false,
+            replacedUnsafeIdeasCount: 0,
+            safeFactsUsed: safeFacts,
+            safeFactCount,
+            safeFactCategories,
+            outputMode: 'ai-generated',
+        };
+    }
+
+    const safeIdeas = buildSafeMinimumFreeIdeas(lead, safeFacts);
+    const safeMiniAudit = buildSafeMinimumMiniAudit(lead, safeIdeas);
+    const safePaidStep = buildSafeMinimumPaidStep();
+
+    return {
+        ...lead,
+        structuredQuickWins: safeIdeas,
+        freeIdeas: safeIdeas,
+        generatedMiniAudit: safeMiniAudit,
+        clientMiniAudit: safeMiniAudit,
+        generatedOutreach: buildSafeMinimumOutreach(lead),
+        generatedFollowUp: buildSafeMinimumFollowUp(lead),
+        generatedOffer: safePaidStep,
+        paidNextStep: safePaidStep,
+        guestGuidePreview: buildSafeMinimumGuestGuidePreview(lead, safeFacts),
+        guestGuidePreviewStatus: 'created',
+        safeMinimumOutputApplied: true,
+        replacedUnsafeIdeasCount: unsafeIdeas.length,
+        safeFactsUsed: safeFacts,
+        safeFactCount,
+        safeFactCategories,
+        outputMode: 'safe-minimum',
+        notReadyReasons: ['OpenAI návrhy byly nahrazeny bezpečnou deterministickou verzí.'],
+        evidenceClaimReady: true,
+        clientOutputStatus: 'ready',
+        recommendedProduct: lead.recommendedProduct === 'skip' ? 'guest-guide-starter' : lead.recommendedProduct,
+    };
+};
+
 const applyClientOutputReadiness = (lead: Lead): Lead => {
     const initialEvidenceDiagnostics = validateEvidenceClaims(lead);
     const withoutUnsupportedClaims: Lead = {
@@ -779,9 +878,9 @@ const applyClientOutputReadiness = (lead: Lead): Lead => {
         freeIdeas: sanitizeUnsupportedClaimsFromQuickWins(lead.freeIdeas, lead),
     };
     const readiness = clientOutputReadiness(withoutUnsupportedClaims);
-    const unsupportedClientClaims = uniqueStrings([...initialEvidenceDiagnostics.unsupportedClientClaims, ...readiness.unsupportedClientClaims]);
-    const unsupportedSignalClaims = uniqueStrings([...initialEvidenceDiagnostics.unsupportedSignalClaims, ...readiness.unsupportedSignalClaims]);
-    const evidenceClaimReady = initialEvidenceDiagnostics.evidenceClaimReady && readiness.evidenceClaimReady;
+    const unsupportedClientClaims = withoutUnsupportedClaims.safeMinimumOutputApplied ? [] : uniqueStrings([...initialEvidenceDiagnostics.unsupportedClientClaims, ...readiness.unsupportedClientClaims]);
+    const unsupportedSignalClaims = withoutUnsupportedClaims.safeMinimumOutputApplied ? [] : uniqueStrings([...initialEvidenceDiagnostics.unsupportedSignalClaims, ...readiness.unsupportedSignalClaims]);
+    const evidenceClaimReady = withoutUnsupportedClaims.safeMinimumOutputApplied ? true : initialEvidenceDiagnostics.evidenceClaimReady && readiness.evidenceClaimReady;
     const notReadyReasons = uniqueStrings([
         ...readiness.notReadyReasons,
         unsupportedClientClaims.length > 0 ? `chybí evidence pro klientské signály: ${unsupportedClientClaims.join(', ')}` : '',
@@ -1176,6 +1275,12 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
         unsupportedClientClaims: lead.unsupportedClientClaims ?? [],
         unsupportedSignalClaims: lead.unsupportedSignalClaims ?? [],
         evidenceClaimReady: lead.evidenceClaimReady ?? true,
+        safeMinimumOutputApplied: lead.safeMinimumOutputApplied ?? false,
+        replacedUnsafeIdeasCount: lead.replacedUnsafeIdeasCount ?? 0,
+        safeFactsUsed: lead.safeFactsUsed ?? [],
+        safeFactCount: lead.safeFactCount ?? 0,
+        safeFactCategories: lead.safeFactCategories ?? [],
+        outputMode: lead.outputMode ?? 'blocked',
         guestGuidePreviewStatus: officialWebsiteRequired ? 'not-created' : lead.guestGuidePreviewStatus ?? 'not-created',
         guestGuidePreview: officialWebsiteRequired ? undefined : lead.guestGuidePreview,
         guestGuideSecondEmail: officialWebsiteRequired ? '' : sanitizeClientText(lead.guestGuideSecondEmail ?? ''),
@@ -1235,7 +1340,7 @@ const normalizeLead = (lead: Partial<Lead>): Lead => {
 
     return officialWebsiteRequired
         ? applyClientOutputReadiness(normalizedLead)
-        : canonicalizeLeadEvidence(normalizedLead);
+        : canonicalizeLeadEvidence(applySafeMinimumOutput(normalizedLead));
 };
 
 const emptyAgentRequest = (): LeadAgentSearchRequest => ({

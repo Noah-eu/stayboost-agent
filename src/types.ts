@@ -87,6 +87,13 @@ export interface QuickWin {
     usedSignals?: string[];
 }
 
+export interface EvidenceFact {
+    type: 'contact' | 'address' | 'location' | 'view' | 'room-type' | 'navigation' | 'nearby' | 'website-strength' | 'missing-public-info';
+    label: string;
+    value: string;
+    source: string;
+}
+
 export interface ContactQuality {
     validEmails: string[];
     validPhones: string[];
@@ -404,6 +411,12 @@ export interface Lead {
     unsupportedClientClaims?: string[];
     unsupportedSignalClaims?: string[];
     evidenceClaimReady?: boolean;
+    safeMinimumOutputApplied?: boolean;
+    replacedUnsafeIdeasCount?: number;
+    safeFactsUsed?: EvidenceFact[];
+    safeFactCount?: number;
+    safeFactCategories?: EvidenceFact['type'][];
+    outputMode?: 'ai-generated' | 'safe-minimum' | 'blocked';
     guestGuidePreviewStatus?: GuestGuidePreviewStatus;
     guestGuidePreview?: GuestGuidePreview;
     guestGuideSecondEmail?: string;
