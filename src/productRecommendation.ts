@@ -84,7 +84,23 @@ const hasStrongChaosOpsSignals = (lead: Pick<Lead, 'websiteExtraction' | 'streng
     return explicitChaos && (weakAreas >= 2 || broadMissing && topics.length >= 2 || broadMissing);
 };
 
-const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlaybook']) => {
+const propertyAddressFromText = (text = '') => text.match(/(?:Baarova\s+49\/3,?\s*460\s*01\s*Liberec|[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž]?[A-Za-zÁ-ž.-]+){0,3}\s+\d+\/?\d*,?\s*\d{3}\s*\d{2}\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+){0,2})/i)?.[0] ?? '';
+
+const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlaybook'], lead?: Pick<Lead, 'websiteExtraction' | 'publicSignals'>) => {
+    const text = extractionText({
+        websiteExtraction: lead?.websiteExtraction,
+        strengths: '',
+        risks: '',
+        guestFrictionSignals: '',
+        checkInParkingInfo: '',
+        businessOpportunity: '',
+        publicSignals: lead?.publicSignals ?? [],
+    });
+    const hasMileniumRestaurant = /restaurace\s+milenium/.test(text);
+    const hasTrips = /tipy\s+na\s+vylety|tipy\s+v\s+okoli|prozkoumejte\s+okoli|vylety/.test(text);
+    const hasEbike = /elektrokol|e-bike|ebike/.test(text);
+    const address = propertyAddressFromText(text);
+
     if (product === 'guest-guide-starter') {
         return {
             paidOfferShort: 'Guest Guide Starter',
@@ -96,7 +112,17 @@ const productCopy = (product: RecommendedProduct, leadPlaybook?: Lead['leadPlayb
         return {
             paidOfferShort: 'Guest Communication Setup',
             paidOfferDetails: leadPlaybook === 'restaurant-linked-stay'
-                ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty. Host dostane odkaz nebo QR kód s praktickými informacemi: příjezd, první večer, restaurace, Wi-Fi, kontakt a odjezd. Sekce se dají upravit podle typu pokoje/apartmánu a navázat na zprávy po rezervaci.'
+                ? hasMileniumRestaurant && hasTrips && hasEbike
+                    ? 'Jednoduchý online průvodce a předpříjezdová komunikace pro hosty Apartmánů Milenium: příjezd na Baarovu 49/3, kontakty, restaurace Milenium v přízemí, tipy na výlety, možnost zapůjčení elektrokola, Wi-Fi a odjezd.'
+                    : `Jednoduchý online průvodce a předpříjezdová komunikace pro hosty: ${[
+                        address ? `příjezd na ${address}` : 'příjezd',
+                        'kontakty',
+                        hasMileniumRestaurant ? 'restaurace Milenium v přízemí' : 'restaurace',
+                        hasTrips ? 'tipy na výlety' : 'tipy v okolí',
+                        hasEbike ? 'možnost zapůjčení elektrokola' : '',
+                        'Wi-Fi',
+                        'odjezd',
+                    ].filter(Boolean).join(', ')}.`
                 : leadPlaybook === 'multi-property-arrival-clarity'
                     ? 'Předpříjezdová komunikace a jednoduchý online průvodce pro dvě propojené provozovny: příjezd do 18:00, pozdní příjezd po domluvě, recepce, kontakty, parkování s rezervací předem, rozdíl mezi Vila Krumlov a Pension Galko a odjezd.'
                 : leadPlaybook === 'historic-local-experience-stay'
@@ -168,6 +194,9 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteOrOtaUrl' | 'pu
         `freeIdeasReady:${ideaDiagnostics.freeIdeasReady}`,
         `repeatedTemplateWarning:${ideaDiagnostics.repeatedTemplateWarning}`,
         `repeatedConceptWarning:${ideaDiagnostics.repeatedConceptWarning}`,
+        `freeIdeasSpecificityScore:${ideaDiagnostics.freeIdeasSpecificityScore}`,
+        `genericFreeIdeasCount:${ideaDiagnostics.genericFreeIdeasCount}`,
+        `candidateSpecificSignalsUsed:${ideaDiagnostics.candidateSpecificSignalsUsed.slice(0, 8).join('|')}`,
         `weakAreas:${weakAreas}`,
         `topics:${topics.length}`,
         `stayTypes:${typeCount}`,
@@ -224,7 +253,7 @@ export const recommendProductForLead = (lead: Pick<Lead, 'websiteOrOtaUrl' | 'pu
         recommendedProductReason = 'Lead nemá dost konkrétní free ideas ani specializovaný playbook, proto je bezpečnější širší audit evidence než productized setup.';
     }
 
-    const copy = productCopy(recommendedProduct, leadPlaybook);
+    const copy = productCopy(recommendedProduct, leadPlaybook, lead);
 
     return {
         recommendedProduct,

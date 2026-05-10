@@ -78,7 +78,9 @@ const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 const discoveryPhoneText = (lead: Pick<Lead, 'sourceMaterials' | 'notes'>) => [lead.notes, ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content])].filter(Boolean).join('\n');
 const isSocialOwnershipStatus = (status?: string) => ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(status ?? '');
-const extractAddressFromEvidence = (text = '') => text.match(/Pod\s+Kamenem\s+170(?:,\s*Český\s+Krumlov|,\s*Cesky\s+Krumlov)?/i)?.[0] || '';
+const extractAddressFromEvidence = (text = '') => text.match(/Pod\s+Kamenem\s+170(?:,\s*Český\s+Krumlov|,\s*Cesky\s+Krumlov)?/i)?.[0]
+    || text.match(/(?:Baarova\s+49\/3,?\s*460\s*01\s*Liberec|[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž]?[A-Za-zÁ-ž.-]+){0,3}\s+\d+\/?\d*,?\s*\d{3}\s*\d{2}\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+){0,2})/i)?.[0]
+    || '';
 const contactQualityForLead = (lead: Lead): ContactQuality => {
     const ownershipStatus = lead.websiteExtraction?.websiteOwnershipStatus ?? lead.websiteOwnershipStatus ?? 'official';
     const allPhones = lead.websiteExtraction?.contact.phones ?? [];
@@ -88,7 +90,13 @@ const contactQualityForLead = (lead: Lead): ContactQuality => {
     const validPhones = mergePhones(websitePhones, discoveryPhones);
     const rejectedPhones = uniqueStrings([...allPhones.filter((phone) => !isLikelyPhoneNumber(phone)), ...extractRejectedPhones(evidenceText)]);
     const socialEmails = uniqueStrings([...(evidenceText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []), lead.email].map((email) => email.trim().toLowerCase()).filter((email) => emailPattern.test(email)));
-    const address = extractAddressFromEvidence(evidenceText);
+    const extractionText = [
+        lead.websiteExtraction?.summary,
+        ...(lead.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview]),
+        ...(lead.safeFactsUsed ?? []).filter((fact) => fact.type === 'address').map((fact) => fact.value),
+        lead.guestGuidePreview?.address,
+    ].filter(Boolean).join('\n');
+    const address = extractAddressFromEvidence([extractionText, evidenceText].filter(Boolean).join('\n'));
     if (isSocialOwnershipStatus(ownershipStatus)) {
         return {
             validEmails: socialEmails,
@@ -124,7 +132,7 @@ const contactQualityForLead = (lead: Lead): ContactQuality => {
         address,
         emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
         phoneSource: websitePhones.length > 0 && discoveryPhones.length > 0 ? 'website-and-discovery' : websitePhones.length > 0 ? 'website' : discoveryPhones.length > 0 ? 'discovery-fallback' : 'missing',
-        addressSource: address ? 'search-or-social-profile' : 'missing',
+        addressSource: address ? 'website' : 'missing',
         contactReady: validEmails.length > 0 || validPhones.length > 0,
     };
 };

@@ -66,6 +66,11 @@ const normalizeForMatch = (value = '') => value
 
 const trimSentence = (value = '') => value.replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '');
 const sentenceBoundaryPattern = /(?<=[.!?])\s+|\n+/g;
+const toCsTitleCase = (value = '') => value.replace(/\b\p{L}[\p{L}\p{M}]*/gu, (word) => {
+    const [first = '', ...rest] = [...word.toLocaleLowerCase('cs-CZ')];
+    return first.toLocaleUpperCase('cs-CZ') + rest.join('');
+});
+const hasBrokenWordCasing = (value = '') => /\p{Ll}\p{Lu}|\p{Lu}{2,}/u.test(value);
 
 export function cleanLeadDisplayName(name = '') {
     const withoutPrefix = name.replace(prefixPattern, '').split('|')[0].trim();
@@ -87,8 +92,8 @@ export function cleanLeadDisplayName(name = '') {
         .replace(/\s+-\s+$/, '')
         .trim();
 
-    if (/[-_]/.test(original) || cleaned === cleaned.toLowerCase()) {
-        return cleaned.replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase('cs-CZ')) || 'vybrane ubytovani';
+    if (/[-_]/.test(original) || cleaned === cleaned.toLowerCase() || hasBrokenWordCasing(cleaned)) {
+        return toCsTitleCase(cleaned) || 'vybrane ubytovani';
     }
 
     return cleaned || 'vybrane ubytovani';

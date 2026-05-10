@@ -188,6 +188,12 @@ const normalizeForMatch = (value = '') => value
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
+const toCsTitleCase = (value = '') => value.replace(/\b\p{L}[\p{L}\p{M}]*/gu, (word) => {
+    const [first = '', ...rest] = [...word.toLocaleLowerCase('cs-CZ')];
+    return first.toLocaleUpperCase('cs-CZ') + rest.join('');
+});
+const hasBrokenWordCasing = (value = '') => /\p{Ll}\p{Lu}|\p{Lu}{2,}/u.test(value);
+
 const cleanLeadDisplayName = (name = '') => {
     const withoutPrefix = name.replace(/^(kontakt|contact|rooms|pokoje)\s*[-:|]\s*/i, '').split('|')[0].trim();
     const normalized = normalizeForMatch(withoutPrefix || name);
@@ -196,7 +202,9 @@ const cleanLeadDisplayName = (name = '') => {
         return normalized.includes('prague') || normalizeForMatch(name).includes('prague') ? 'Pension City Center Prague' : 'Pension City Center';
     }
 
-    return (withoutPrefix || name).replace(/\s+/g, ' ').trim() || 'vybrane ubytovani';
+    const cleaned = (withoutPrefix || name).replace(/\s+/g, ' ').trim();
+    if (hasBrokenWordCasing(cleaned)) return toCsTitleCase(cleaned) || 'vybrane ubytovani';
+    return cleaned || 'vybrane ubytovani';
 };
 
 const humanizeSignal = (signal = '') => {

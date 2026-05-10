@@ -65,7 +65,9 @@ type SignalKey =
     | 'parkingReservation'
     | 'parkingPaid'
     | 'parkingLimited'
-    | 'parkingDistance';
+    | 'parkingDistance'
+    | 'trips'
+    | 'ebike';
 
 interface SpecificSignal {
     key: SignalKey;
@@ -164,7 +166,9 @@ const matchers: Array<{ key: SignalKey; label: string; keywords: string[] }> = [
     { key: 'parking', label: 'parkoviště', keywords: ['parkoviste', 'parkovani', 'parking'] },
     { key: 'ev', label: 'nabíjecí stanice pro elektromobily', keywords: ['nabijeci stanice', 'nabijeni elektromobilu', 'elektromobil', 'ev charging', 'charging station'] },
     { key: 'contact', label: 'kontakt', keywords: ['recepce', 'kontakt', 'telefon', 'e-mail', 'email', 'rezervace'] },
-    { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant', 'grill restaurant', 'bar ', ' menu ', 'snidane', 'snídaně'] },
+    { key: 'restaurant', label: 'restaurace', keywords: ['restaurace', 'restaurant', 'grill restaurant', 'bar ', ' menu ', 'snidane', 'snídaně', 'restaurace milenium'] },
+    { key: 'trips', label: 'tipy na výlety', keywords: ['tipy na vylety', 'tipy na výlety', 'vylety', 'výlety', 'prozkoumejte okoli', 'prozkoumejte okolí'] },
+    { key: 'ebike', label: 'elektrokolo', keywords: ['elektrokolo', 'elektrokol', 'e-bike', 'ebike', 'zapujcit elektrokolo', 'zapůjčit elektrokolo'] },
     { key: 'breakfast', label: 'snídaně', keywords: ['snidane', 'snídaně', 'breakfast'] },
     { key: 'terrace', label: 'terasa', keywords: ['terasa', 'terrace'] },
     { key: 'relax', label: 'relax centrum', keywords: ['relax centrum', 'relaxacni centrum', 'relaxační centrum'] },

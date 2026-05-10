@@ -221,8 +221,9 @@ const priorityPageLabel = (page: Pick<ExtractedPage, 'url' | 'title'>) => {
 const priorityLabelForText = (value = '') => priorityPageDefinitions.find((definition) => includesAny(value, definition.keywords))?.label ?? null;
 
 const extractDiscoveredNavigationLinks = (results: TavilyExtractResult[], baseUrl: URL) => {
-    if (isSocialPlatformUrl(baseUrl.toString())) return [];
+    if (isSocialPlatformUrl(baseUrl.toString())) return { links: [] as NavigationLink[], skippedAssetUrls: [] as string[] };
     const links: NavigationLink[] = [];
+    const skippedAssetUrls: string[] = [];
     const text = results.map((result) => `${result.raw_content || ''}\n${result.content || ''}`).join('\n');
     const markdownOrHrefPattern = /\[([^\]]+)\]\(([^)]+)\)|<a\s+[^>]*href=["']([^"']+)["'][^>]*>([^<]{0,120})<\/a>|href=["']([^"']+)["']/gi;
     let match: RegExpExecArray | null;
@@ -232,19 +233,27 @@ const extractDiscoveredNavigationLinks = (results: TavilyExtractResult[], baseUr
         const rawUrl = (match[2] || match[3] || match[5] || '').trim();
         const parsed = rawUrl.startsWith('/') ? new URL(rawUrl, baseUrl) : safeUrl(rawUrl);
         if (!parsed || hostWithoutWww(parsed) !== hostWithoutWww(baseUrl) || isBlockedAggregatorUrl(parsed.toString())) continue;
+        const normalizedUrl = parsed.toString().split('#')[0];
+        if (isAssetUrl(normalizedUrl)) {
+            skippedAssetUrls.push(normalizedUrl);
+            continue;
+        }
 
         const searchable = `${linkText}\n${parsed.pathname}`;
         const label = priorityLabelForText(searchable);
         if (!label) continue;
-        links.push({ label, url: parsed.toString().split('#')[0], text: linkText || label });
+        links.push({ label, url: normalizedUrl, text: linkText || label });
     }
 
-    return unique(links.map((link) => `${link.label}|${link.url}|${link.text}`))
-        .map((encoded) => {
-            const [label, url, textValue] = encoded.split('|');
-            return { label, url, text: textValue };
-        })
-        .slice(0, 20);
+    return {
+        links: unique(links.map((link) => `${link.label}|${link.url}|${link.text}`))
+            .map((encoded) => {
+                const [label, url, textValue] = encoded.split('|');
+                return { label, url, text: textValue };
+            })
+            .slice(0, 20),
+        skippedAssetUrls: unique(skippedAssetUrls),
+    };
 };
 
 const priorityUrlGuesses = (websiteUrl: string, existingUrls: string[]) => buildFallbackGuessUrls(websiteUrl, existingUrls)
@@ -626,7 +635,8 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
         const baseUrl = safeUrl(websiteUrl);
         const initialOutcome = await tavilyExtract(apiKey, initialUrls);
-        const discoveredNavigationLinks = baseUrl ? extractDiscoveredNavigationLinks(initialOutcome.results, baseUrl) : [];
+        const navigationDiscovery = baseUrl ? extractDiscoveredNavigationLinks(initialOutcome.results, baseUrl) : { links: [], skippedAssetUrls: [] };
+        const discoveredNavigationLinks = navigationDiscovery.links;
         const discoveredUrls = baseUrl ? extractDiscoveredInternalLinks(initialOutcome.results, baseUrl, initialUrls) : [];
         const guessedUrlsUsed = isSocialPlatformUrl(websiteUrl) ? [] : priorityUrlGuesses(websiteUrl, [...initialUrls, ...discoveredUrls]).slice(0, Math.max(0, MAX_URLS - initialUrls.length - discoveredUrls.length));
         const secondaryUrls = [...discoveredUrls, ...guessedUrlsUsed].filter((url) => !isAssetUrl(url)).slice(0, Math.max(0, MAX_URLS - initialUrls.length));
@@ -677,7 +687,7 @@ export const handler = async (event: { httpMethod: string; body?: string | null 
 
         return json(200, {
             ...analyzePages(request, debugId, startedAt, pages, failedCount + skippedPages.length, skippedPages, { discoveredInternalLinksCount: discoveredUrls.length, guessedUrlsUsed, discoveredNavigationLinks }),
-            skippedAssetUrls: skippedPages.filter((page) => page.reason === 'asset_or_binary_file').map((page) => page.url),
+            skippedAssetUrls: unique([...skippedPages.filter((page) => page.reason === 'asset_or_binary_file').map((page) => page.url), ...navigationDiscovery.skippedAssetUrls]),
         });
     } catch (error) {
         return json(500, fallbackResult({}, debugId, startedAt, 'error', error instanceof Error ? error.message : 'function_runtime_error', 'error'));

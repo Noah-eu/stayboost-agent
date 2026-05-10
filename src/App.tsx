@@ -250,6 +250,7 @@ const discoveryPhoneText = (lead: Pick<Lead, 'sourceMaterials' | 'notes'>) => [
     ...(lead.sourceMaterials ?? []).flatMap((material) => [material.title, material.content]),
 ].filter(Boolean).join('\n');
 const extractAddressFromEvidence = (text = '') => text.match(/Pod\s+Kamenem\s+170(?:,\s*Český\s+Krumlov|,\s*Cesky\s+Krumlov)?/i)?.[0]
+    || text.match(/(?:Baarova\s+49\/3,?\s*460\s*01\s*Liberec|[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž]?[A-Za-zÁ-ž.-]+){0,3}\s+\d+\/?\d*,?\s*\d{3}\s*\d{2}\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+(?:\s+[A-ZÁ-Ž][A-Za-zÁ-ž.-]+){0,2})/i)?.[0]
     || text.match(/[A-ZÁ-Ž][A-Za-zÁ-ž.]+(?:\s+[A-ZÁ-Ž]?[A-Za-zÁ-ž.]+){0,2}\s+\d{1,4},\s*(?:Český|Cesky)\s+Krumlov/i)?.[0]
     || '';
 const isSocialOwnershipStatus = (status?: string) => ['social-profile', 'social-platform-login', 'no-owned-website-detected'].includes(status ?? '');
@@ -264,7 +265,11 @@ const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction' | 
     const websiteEmails = uniqueStrings((lead.websiteExtraction?.contact.emails ?? []).map(normalizeEmail).filter(validEmail));
     const fallbackEmail = normalizeEmail(lead.email || '');
     const socialEmails = uniqueStrings([...(evidenceText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []).map(normalizeEmail), fallbackEmail].filter(validEmail));
-    const address = extractAddressFromEvidence(evidenceText);
+    const extractionText = [
+        lead.websiteExtraction?.summary,
+        ...(lead.websiteExtraction?.pagesExtracted ?? []).flatMap((page) => [page.title, page.textPreview]),
+    ].filter(Boolean).join('\n');
+    const address = extractAddressFromEvidence([extractionText, evidenceText].filter(Boolean).join('\n'));
     if (isSocialOwnershipStatus(ownershipStatus)) {
         return {
             validEmails: socialEmails,
@@ -298,7 +303,7 @@ const contactQualityForLead = (lead: Pick<Lead, 'email' | 'websiteExtraction' | 
         address,
         emailSource: websiteEmails.length > 0 ? 'website' : validEmails.length > 0 ? 'discovery-fallback' : 'missing',
         phoneSource: validWebsitePhones.length > 0 && discoveryPhones.length > 0 ? 'website-and-discovery' : validWebsitePhones.length > 0 ? 'website' : discoveryPhones.length > 0 ? 'discovery-fallback' : 'missing',
-        addressSource: address ? 'search-or-social-profile' : 'missing',
+        addressSource: address ? 'website' : 'missing',
         contactReady: validEmails.length > 0 || validPhones.length > 0,
     };
 };
@@ -835,9 +840,10 @@ const applySafeMinimumOutput = (lead: Lead): Lead => {
 
     const safeIdeas = buildSafeMinimumFreeIdeas(lead, safeFacts);
     const safeMiniAudit = buildSafeMinimumMiniAudit(lead, safeIdeas);
-    const safePaidStep = buildSafeMinimumPaidStep();
-
-    return {
+    const safePaidStep = buildSafeMinimumPaidStep(lead, safeFacts);
+    const safeAddress = safeFacts.find((fact) => fact.type === 'address')?.value || lead.contactQuality?.address || '';
+    const safePreview = buildSafeMinimumGuestGuidePreview(lead, safeFacts);
+    const leadWithSafeCore: Lead = {
         ...lead,
         structuredQuickWins: safeIdeas,
         freeIdeas: safeIdeas,
@@ -847,7 +853,7 @@ const applySafeMinimumOutput = (lead: Lead): Lead => {
         generatedFollowUp: buildSafeMinimumFollowUp(lead),
         generatedOffer: safePaidStep,
         paidNextStep: safePaidStep,
-        guestGuidePreview: buildSafeMinimumGuestGuidePreview(lead, safeFacts),
+        guestGuidePreview: safePreview,
         guestGuidePreviewStatus: 'created',
         safeMinimumOutputApplied: true,
         replacedUnsafeIdeasCount: unsafeIdeas.length,
@@ -859,6 +865,18 @@ const applySafeMinimumOutput = (lead: Lead): Lead => {
         evidenceClaimReady: true,
         clientOutputStatus: 'ready',
         recommendedProduct: lead.recommendedProduct === 'skip' ? 'guest-guide-starter' : lead.recommendedProduct,
+        contactQuality: {
+            ...(lead.contactQuality ?? contactQualityForLead(lead)),
+            address: safeAddress,
+            addressSource: safeAddress ? 'website' : (lead.contactQuality?.addressSource ?? 'missing'),
+        },
+    };
+    const leadWithRecommendation = withProductRecommendation(leadWithSafeCore);
+    const safeSecondEmail = createGuestGuideSecondEmail(leadWithRecommendation, safePreview);
+
+    return {
+        ...leadWithRecommendation,
+        guestGuideSecondEmail: safeSecondEmail,
     };
 };
 
